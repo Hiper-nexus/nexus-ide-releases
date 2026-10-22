@@ -2125,11 +2125,13 @@ export async function prepareProviderSpawnAuthoritative(
       const identity = await verifyManagedClaudeAccountForSpawn(account.id, (blob) => {
         verifiedClaudeBlob = blob;
       });
-      if (identity !== 'match') {
+      // F-1637: `renewable` é token vencido só pelo relógio, que a CLI do pane
+      // renova; recusar ali era pedir login de uma conta que não o precisava.
+      if (identity !== 'match' && identity !== 'renewable') {
         return { ok: false as const, error: identity === 'mismatch'
           ? `A credencial de “${account.label}” pertence a outra conta Claude — entre novamente antes de abrir um pane.`
           : identity === 'auth-expired'
-            ? `A sessão de “${account.label}” expirou — entre novamente antes de abrir um pane.`
+            ? `A sessão de “${account.label}” expirou — use «Entrar novamente» nessa conta em Configurações › Contas de IA.`
             : `Não foi possível verificar a identidade de “${account.label}” — tente novamente.` };
       }
       const current = getAccount(account.id);
