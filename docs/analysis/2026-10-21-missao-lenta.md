@@ -307,3 +307,46 @@ for confiável.
    worker que transmite desde o boot. **Não mexi**: é o caminho de prova do
    spawn (F-723 depende desses recibos) e 120 s é teto, não medição. Instrumentar
    `pane-spawn-timing` numa missão real responde se vale.
+
+## Notas de release prontas (preencher a versão no corte)
+
+O número só pode ser escolhido no instante do corte: em 22/10 as tags já iam
+até a v0.76.390, reservadas por outra sessão que publica da própria branch.
+Confira `git ls-remote --tags origin` antes de bumpar.
+
+### A missão para de refazer o que já estava feito
+
+Uma landing page feita num painel só saía em cerca de uma hora; a mesma coisa
+como missão levava duas ou três. Esta versão ataca as seis voltas que o motor
+dava, medidas uma por uma.
+
+- **A verificação válida não é mais jogada no lixo.** O Nexus refazia
+  typecheck, auditoria e a suíte de testes inteira sobre código idêntico byte a
+  byte, enquanto o juiz independente ainda lia aquela mesma entrega. Era o "faz
+  teste, volta, faz teste" que aparecia na tela. Agora, enquanto ninguém mexe no
+  código, a verificação feita continua valendo.
+- **Entrega devolvida não recomeça do zero.** O painel do trabalhador fechava no
+  instante em que ele entregava, antes de o Maestro ler. Quando o Maestro pedia
+  ajuste, não havia mais painel: o pedido caía num painel novo com o briefing
+  original e o trabalho era refeito inteiro — inclusive o teste visual. Agora o
+  painel espera o veredito: aceito, fecha; ajuste, recebe a nota ainda morno,
+  sabendo o que já tentou.
+- **A captura do navegador conta como prova.** Numa landing page não existe
+  teste de unidade que prove aparência, mas o Nexus exigia saída de teste e
+  devolvia a entrega por "sem evidência de verificação" — mesmo tendo pedido, e
+  recebido, a captura do navegador. A mesma entrega era cobrada duas vezes.
+- **O Maestro aprendeu a aceitar.** A doutrina ensinava a devolver trabalho e
+  nunca a aceitar, então o laço tinha uma saída só, e ela custa outra rodada
+  inteira. E a prova exigida era sempre "rode o teste": agora é a prova que cabe
+  ao trabalho — teste para comportamento, captura do navegador para aparência.
+- **Um turno de coordenação a menos.** Em pedido de uma linha o Maestro gastava
+  o primeiro turno consultando uma lista de entregas vazia, porque o kickoff
+  anunciava uma primeira onda de trabalhadores que não existia.
+- **O trabalhador sobe o preview antes de desistir.** "Ambiente indisponível"
+  era o caminho mais curto para devolver a tarefa, mesmo com o painel tendo
+  terminal para subir o servidor do projeto.
+
+Diagnóstico completo, com arquivo e linha, em
+`docs/analysis/2026-10-21-missao-lenta.md`. O que ainda não mudou está listado
+lá: a cerimônia da missão continua escalando por um eixo só, então uma landing
+page e uma refatoração de pagamentos ainda pagam o mesmo preço.
