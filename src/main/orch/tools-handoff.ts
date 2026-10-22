@@ -47,6 +47,7 @@ import {
   scheduleAutoCloseAfterHandoff,
   assertAutoCloseReportPreserved,
   closeAfterNonSuccessHandoffAck,
+  isWorkerSessionBusy,
   missionWriterAwaitsHandoffAck,
 } from "./pane-close-scopes";
 import { findPane, listPaneSnapshots, readSessionOutput, requestPaneClose } from "./pane-registry";
@@ -864,6 +865,20 @@ const handoffSubmitTool: McpToolDef = {
         // Fechar no submit apagava o contexto antes dele, e o `rework` caía
         // numa encarnação nova que refazia o trabalho do zero.
         awaitAckOnSuccess: missionWriterAwaitsHandoffAck(ctx),
+        // F-1634: a doutrina manda o Maestro RODAR ele mesmo o teste que prova
+        // a correção antes de aceitar, e uma suíte real passa dos três minutos
+        // da janela. Enquanto ele está ocupado com isso, a rede de segurança
+        // não corre — senão o pane do worker fechava no meio da verificação e
+        // o `rework` perdia a conversa morna.
+        isDeliveryConsumerBusy: () => {
+          const orchestrator = ctx.missionId
+            ? suite.missions.get(ctx.missionId)?.orchestratorSessionId
+            : undefined;
+          return (
+            orchestrator !== undefined &&
+            isWorkerSessionBusy(getSessionState(orchestrator) ?? null)
+          );
+        },
       },
     );
     return {

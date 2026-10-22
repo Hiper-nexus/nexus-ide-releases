@@ -257,6 +257,17 @@ export interface NonSuccessCloseOptions {
   readonly activityMark?: (sessionId: string) => number | null;
   /** A entrega já chegou ao Maestro (deliveryState ≠ queued)? Ausente = desde o submit. */
   readonly isDelivered?: (handoffId: string) => boolean;
+  /**
+   * F-1634: quem vai CONSUMIR a entrega está ocupado agora?
+   *
+   * A doutrina manda o Maestro rodar ele mesmo o teste que prova a correção
+   * antes de aceitar (regra do operador de 02/10), e uma suíte real passa dos
+   * três minutos da janela de aceite. Sem isto, a rede fechava o pane do
+   * worker enquanto o Maestro estava legitimamente verificando, e um `rework`
+   * depois perdia a conversa morna — o laço que a espera existe para evitar.
+   * A janela só corre quando worker E consumidor estão parados.
+   */
+  readonly isDeliveryConsumerBusy?: () => boolean;
   readonly idleCloseMs?: number;
   /**
    * F-1634: a entrega `success` deste worker ainda passa pelo veredito do
@@ -349,7 +360,15 @@ export function scheduleAutoCloseAfterHandoff(
         if (pendingNonSuccessBySession.get(sessionId) !== pending) return;
         const mark = markOf();
         const producedOutput = mark !== null && windowMark !== null && mark !== windowMark;
-        if (producedOutput || nonSuccess.isBusy?.(sessionId)) {
+        let consumerBusy = false;
+        try {
+          consumerBusy = nonSuccess.isDeliveryConsumerBusy?.() === true;
+        } catch {
+          // Sonda indisponível não autoriza fechar o pane no meio de uma
+          // verificação: trata como ocupado e tenta de novo na próxima volta.
+          consumerBusy = true;
+        }
+        if (producedOutput || consumerBusy || nonSuccess.isBusy?.(sessionId)) {
           startIdleWindow();
           return;
         }

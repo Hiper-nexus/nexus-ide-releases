@@ -557,6 +557,33 @@ describe("F-1409: entrega não-success fecha no ACK ou na rede de segurança", (
     expect(armedAutoClosePaneId("sess-w")).toBe("pane-w");
   });
 
+  // F-1634 (3ª rodada do Codex no PR 159): contradição entre duas mudanças
+  // minhas. A doutrina restaurada manda o Maestro RODAR o teste que prova a
+  // correção antes de aceitar — e a suíte deste repo leva 3,5 min, acima da
+  // janela de 3 min. A rede fechava o pane do worker enquanto o Maestro estava
+  // legitimamente verificando, e um rework depois perdia a conversa morna: o
+  // laço que esta mudança existe para evitar. A janela não corre enquanto quem
+  // vai consumir a entrega está ocupado.
+  it("a janela de aceite não corre enquanto o Maestro verifica", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    let maestroBusy = true;
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "h-verify",
+      awaitAckOnSuccess: true,
+      isDeliveryConsumerBusy: () => maestroBusy,
+    });
+
+    // Maestro rodando o teste por bem mais que a janela de 3 min.
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_IDLE_CLOSE_MS * 3);
+    expect(close).not.toHaveBeenCalled();
+
+    // Terminou de verificar e não acusou: a rede volta a correr.
+    maestroBusy = false;
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_IDLE_CLOSE_MS + 1_000);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
   it("sem awaitAckOnSuccess (helper do operador, sem missão) success fecha já", async () => {
     const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
     armAutoCloseOnHandoff("sess-w", "pane-w");
