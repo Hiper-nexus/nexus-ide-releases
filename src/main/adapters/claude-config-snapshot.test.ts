@@ -20,6 +20,16 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+/**
+ * Linux grava mtime/ctime com o relógio grosso do kernel (passos de alguns
+ * ms): duas escritas no mesmo passo são indistinguíveis por QUALQUER stamp. O
+ * caso real (cp -p, rsync) acontece segundos depois; espera o relógio andar.
+ */
+function waitForCoarseClockTick(): void {
+  const until = Date.now() + 25;
+  while (Date.now() < until) { /* espera curta e síncrona */ }
+}
+
 /** Mesmo tamanho em bytes para os dois e-mails: só o mtime denuncia a troca. */
 function writeConfig(file: string, email: string, mtime?: Date): void {
   fs.writeFileSync(file, JSON.stringify({
@@ -46,9 +56,11 @@ describe('claude config snapshot (#18)', () => {
     const pinned = new Date('2026-10-14T12:00:00Z');
     writeConfig(file, 'aaa@x.com', pinned);
     expect(readClaudeConfigSnapshot(file)?.email).toBe('aaa@x.com');
+    waitForCoarseClockTick();
     writeConfig(file, 'bbb@x.com', pinned);
     // mtime and size are identical: the stamp must still notice (ctime/inode).
     expect(readClaudeConfigSnapshot(file)?.email).toBe('bbb@x.com');
+    waitForCoarseClockTick();
     writeConfig(file, 'ccc@x.com', pinned);
     expect((await readClaudeConfigSnapshotAsync(file))?.email).toBe('ccc@x.com');
   });

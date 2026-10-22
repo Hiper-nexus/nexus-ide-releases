@@ -7,5 +7,5 @@ export function soakSamples(): SoakSample[] {
     activity: { writeConfirmed: true, executedMarker: true, renderedMarker: true, frames: 2, scroll: true, resize: true, workspaceRead: true, search: true, physicalClose: true } }));
 }
 export const soakCycle = () => ({ nonce: soakFixtureNonce, sequence: 0, sessionId: 'pty-fixture', paneId: 'pane-fixture',
-  rendererPid: 1234, electronVersion: '43.7.4', heapUsedKiB: 32000,
+  rendererPid: 1234, electronVersion: '43.8.3', heapUsedKiB: 32000,
   rendererHosts: 1, activity: { writeConfirmed: true, executedMarker: true, renderedMarker: true, frames: 2, scroll: true, resize: true, workspaceRead: true, search: true } });

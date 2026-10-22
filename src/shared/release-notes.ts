@@ -12724,7 +12724,7 @@ const RELEASE_076410_FULL: AppRelease = {
 
 export const RELEASE_076410: AppRelease = RELEASE_076410_FULL;
 
-export const RELEASE_076411: AppRelease = {
+const RELEASE_076411_FULL: AppRelease = {
   version: '0.76.411',
   date: '2026-10-22',
   codename: 'O navegador age e o kit acerta o pacote',
@@ -12750,8 +12750,8 @@ export const RELEASE_076411: AppRelease = {
   fixes: RELEASE_076409_FULL.fixes,
 };
 
-export const CURRENT_RELEASE: AppRelease = {
-  ...RELEASE_076411,
+const RELEASE_076412_FULL: AppRelease = {
+  ...RELEASE_076411_FULL,
   version: '0.76.412',
   codename: 'Projetos locais e escolha de conta',
   summary: 'Candidata Windows local assinada, anterior à integração do PR 161; não publicada. Missões em projetos locais e origem automática da conta preservada.',
@@ -12766,4 +12766,38 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076412: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076412: AppRelease = RELEASE_076412_FULL;
+
+export const RELEASE_076411: AppRelease = RELEASE_076411_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.413',
+  date: '2026-10-22',
+  codename: 'Kits de UI inteiros em todo PC',
+  summary:
+    'No macOS, a chave do BoardUI que vem com o Nexus libera o Pro em todo ' +
+    'PC, sem clique e sem gastar vaga no fornecedor, e o Jev passa a escolher ' +
+    'entre componentes e templates Pro. O kit instala no pacote certo e o ' +
+    'recibo diz o que foi escrito; o navegador do agente age de verdade e ' +
+    'devolve a imagem da captura; a entrega visual chega ao juiz com essa ' +
+    'imagem; e a missão sem teste aplicável conclui. DOMPurify 3.4.17, ' +
+    'Electron 43.8.3 e ip-address 10.7.4, com a qualificação Darwin das ' +
+    'licenças refeita para a 43.8.3. É a mesma entrega da 0.76.411 (pacote ' +
+    'Linux); a 0.76.407 é o macOS anterior.',
+  highlights: [
+    { title: 'O Pro do BoardUI liberado em todo PC', detail: 'A licença que vem com o Nexus é gravada ao abrir o app, sem clique e sem gastar vaga no fornecedor. Os 40 itens Pro (30 componentes e 10 templates) entram na escolha automática; antes ela só via os 69 grátis.' },
+    { title: 'Licenças do Electron qualificadas para a 43.8.3', detail: 'Os textos legais darwin arm64 e x64 da 43.8.3 têm os mesmos bytes e SHA-256 da 43.7.4; o pacote macOS volta a empacotar e o soak espera a versão nova.' },
+    ...RELEASE_076411_FULL.highlights,
+  ],
+  fixes: [
+    { title: 'Colar texto grande num pane com papel era recusado', detail: 'Num pane do "+ Pane" adotado pela missão da aba, ou aberto pelo agente, colar mais de 4 KB dava "o main recusou a digitação neste pane". A entrada do operador aceita o mesmo tamanho que a escrita direta (F-1633).' },
+    { title: 'Detecção do agente lenta em linha longa', detail: 'Uma regra do manifesto do opencode era quadrática numa linha com muitas ocorrências do nome: 64 KB custavam 186 ms e agora menos de 1 ms.' },
+    { title: 'Instalação vazia aparecia como instalada', detail: 'Saída 0 com tudo pulado ("0 files written") virava "Instalado"; agora o recibo diz que os arquivos já existiam.' },
+    { title: 'Retry do agente abria segunda instalação no mesmo projeto', detail: 'Uma escrita do kit por projeto; a segunda é recusada na hora, antes de mexer no components.json.' },
+    { title: 'Captura de página muito larga passava como completa', detail: 'Página acima de 16.384 px em qualquer lado é marcada como cortada, com o tamanho real; página inteira junto com recorte de elemento é recusada.' },
+    { title: 'Coleta de worktrees nunca rodava no Linux', detail: 'O systemd --user e o (sd-pam) de toda sessão Linux têm o cwd ilegível para o próprio usuário, e a prova de "fora de uso" falhava sempre. O gerenciador é reconhecido pelo PID 1 e o (sd-pam) por ser filho dele e ter nascido junto; qualquer outro cwd ilegível continua sem prova.' },
+    ...RELEASE_076411_FULL.fixes,
+  ],
+};
+
+export const RELEASE_076413: AppRelease = CURRENT_RELEASE;

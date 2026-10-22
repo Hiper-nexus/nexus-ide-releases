@@ -14,8 +14,8 @@ interface SmokeIpc {
   removeListener(channel: string, handler: (event: unknown, raw: unknown) => void): unknown;
   send(channel: string, value: unknown): void;
 }
-/** Electron 43.7.4 documents getHeapStatistics in sandboxed preload, in KiB.
- * https://github.com/electron/electron/blob/v43.7.4/docs/api/process.md */
+/** Electron 43.8.3 documents getHeapStatistics in sandboxed preload, in KiB.
+ * https://github.com/electron/electron/blob/v43.8.3/docs/api/process.md */
 export function installSoakPreload(ipc: SmokeIpc, api: NexusApi, processInfo: {
   pid: number; isMainFrame?: boolean; versions: { electron?: string }; getHeapStatistics(): { usedHeapSize: number };
 }): void {

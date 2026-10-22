@@ -214,6 +214,54 @@ describe('prefixo `.*` redundante (F-764 C.3)', () => {
     expect(cpuTimeMs(() => matches(OPENCODE_DOC, line))).toBeLessThan(20);
   });
 
+  it('o `.*` do meio também é linear: muitas ocorrências do termo, sem o resto', () => {
+    // Medido: 16 KB custavam 13 ms e 64 KB 186 ms (cada "opencode" levava o
+    // `.*` ao fim e de volta); o runner do CI passava do teto de 50 ms.
+    const line = (size: number) => 'opencode '.repeat(Math.floor(size / 9));
+    expect(matches(OPENCODE_DOC, line(16_384))).toBe(false);
+    expect(cpuTimeMs(() => matches(OPENCODE_DOC, line(16_384)))).toBeLessThan(5);
+    expect(cpuTimeMs(() => matches(OPENCODE_DOC, line(65_536)))).toBeLessThan(20);
+  });
+
+  it('trechos separados por CR ou separador Unicode casam como no original', () => {
+    const original = /.*opencode.*esc (again to )?interrupt/iu;
+    const pieces = ['opencode', 'esc ', 'interrupt', 'again to ', '\r', '\u2028', '\u2029', 'x'];
+    let seed = 91;
+    const random = () => {
+      seed = (seed * 1_103_515_245 + 12_345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+    for (let round = 0; round < 10_000; round += 1) {
+      let line = '';
+      const length = Math.floor(random() * 9);
+      for (let i = 0; i < length; i += 1) line += pieces[Math.floor(random() * pieces.length)];
+      expect(matches(OPENCODE_DOC, line), JSON.stringify(line)).toBe(original.test(line));
+    }
+  });
+
+  it('`regex` roda na região inteira: casa depois de um LF como o original', () => {
+    const doc = (pattern: string) => ['id = "x"', '[[rules]]', 'id = "r"', `regex = ['${pattern}']`].join('\n');
+    expect(matches(doc('foo.*bar'), 'prefix\nfoo---bar')).toBe(true);
+    expect(matches(doc('foo.*bar'), 'foo\nbar')).toBe(false);
+    // Com `(?s)` o `.` cruza a linha: nada de reescrita, o original decide.
+    expect(matches(doc('(?s)foo.*bar'), 'foo\nbar')).toBe(true);
+    const pieces = ['foo', 'bar', '\n', '\r', '-', ' '];
+    for (const flags of ['', '(?s)', '(?m)']) {
+      const original = new RegExp(`foo.*bar`, `u${flags.replace(/[()?]/g, '')}`);
+      let seed = 7;
+      const random = () => {
+        seed = (seed * 1_103_515_245 + 12_345) & 0x7fffffff;
+        return seed / 0x7fffffff;
+      };
+      for (let round = 0; round < 5_000; round += 1) {
+        let text = '';
+        const length = Math.floor(random() * 9);
+        for (let i = 0; i < length; i += 1) text += pieces[Math.floor(random() * pieces.length)];
+        expect(matches(doc(`${flags}foo.*bar`), text), `${flags} ${JSON.stringify(text)}`).toBe(original.test(text));
+      }
+    }
+  });
+
   it('padrão que é só `.*` continua casando qualquer texto', () => {
     const doc = ['id = "x"', '[[rules]]', 'id = "r"', "regex = ['.*']"].join('\n');
     expect(matches(doc, '')).toBe(true);

@@ -8,6 +8,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ORCH_CHANNELS } from '../../shared/orch-channels';
+import { PTY_INPUT_MAX_CHARS } from '../../shared/ipc';
 import {
   resetOrchestratorAdoptionsForTest,
   takeOrchestratorAdoption,
@@ -4468,6 +4469,27 @@ describe('teclado do operador em pane de missão', () => {
     ]);
   });
 
+  it('entrega colagem grande (vários KB de código) como a lane crua entregaria', async () => {
+    // O xterm manda a colagem inteira num único onData. Com o teto de 4.096
+    // caracteres desta lane, colar um arquivo num pane que ganhou papel (adotado
+    // pela missão da aba, ou aberto pelo agente via nexus_pane_spawn) era
+    // recusado aqui e na lane crua, que recusa pane governado por design:
+    // "[nexus] o main recusou a digitação neste pane".
+    const { handler, sender } = setup();
+    const sessionId = livePane(sender);
+    const pasted = `\x1b[200~${'const value = 1;\n'.repeat(4_000)}\x1b[201~`;
+    expect(pasted.length).toBeGreaterThan(64_000);
+    expect(handler({ sender }, { sessionId, data: pasted })).toBe(true);
+    expect(harness.operatorInput.writes).toEqual([{ sessionId, data: pasted }]);
+  });
+
+  it('o teto da lane do operador é o mesmo da lane crua', async () => {
+    const { handler, sender } = setup();
+    const sessionId = livePane(sender);
+    expect(handler({ sender }, { sessionId, data: 'x'.repeat(PTY_INPUT_MAX_CHARS) })).toBe(true);
+    expect(handler({ sender }, { sessionId, data: 'x'.repeat(PTY_INPUT_MAX_CHARS + 1) })).toBe(false);
+  });
+
   it('recusa sessão que este renderer não apresenta', async () => {
     const { handler, sender } = setup();
     livePane(sender);
@@ -4501,11 +4523,11 @@ describe('teclado do operador em pane de missão', () => {
     ]);
   });
 
-  it('recusa payload acima do teto de digitação', async () => {
+  it('recusa payload acima do teto de entrada', async () => {
     const { handler, sender } = setup();
     const sessionId = livePane(sender);
     expect(
-      handler({ sender }, { sessionId, data: 'a'.repeat(4_097) }),
+      handler({ sender }, { sessionId, data: 'a'.repeat(PTY_INPUT_MAX_CHARS + 1) }),
     ).toBe(false);
     expect(harness.operatorInput.writes).toEqual([]);
   });

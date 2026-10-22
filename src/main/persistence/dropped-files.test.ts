@@ -596,7 +596,10 @@ describe('sealed mission attachment lifecycle', () => {
       first.sourcePath,
       first.options,
     );
-    fs.unlinkSync(replaced.path);
+    // Moved aside, not unlinked: ext4 hands the freed inode number straight to
+    // the next file, so unlink + create could rebuild the SAME dev+ino with the
+    // same bytes and there would be no replacement to detect.
+    fs.renameSync(replaced.path, `${replaced.path}.moved`);
     fs.writeFileSync(replaced.path, first.bytes, { mode: 0o400 });
     expect(() =>
       revalidateSealedAttachmentSnapshots([replaced], {

@@ -93,6 +93,22 @@ function translatePattern(
     source = source.slice(source.startsWith('.*?') ? 3 : 2);
   }
 
+  // O mesmo custo sobra no `.*` do MEIO: em `opencode.*esc …` cada "opencode"
+  // da linha leva o `.*` ao fim e de volta (16 KB de "opencode " = 13 ms aqui,
+  // 57 ms no runner; 64 KB = 186 ms). Para `test()`, `LIT.*RESTO` casa se e só
+  // se casa a partir da PRIMEIRA ocorrência de LIT de cada trecho (o `.*` dela
+  // alcança qualquer ocorrência seguinte, e sem a flag `s` o `.` não cruza LF,
+  // CR nem os separadores Unicode de linha e parágrafo, que separam os
+  // trechos). Começar só no início de cada trecho e pular até a primeira
+  // ocorrência faz uma varredura linear. Vale para `regex`, que roda na região
+  // inteira com LF, e para `line_regex`. Com `s` o `.` cruza tudo e a reescrita
+  // não se aplica. Só para LIT literal simples (letra, dígito, espaço).
+  const literalHead = flags.includes('s') ? null : /^([A-Za-z0-9 ]+)\.\*(?!\?)/.exec(source);
+  if (literalHead) {
+    const head = literalHead[1];
+    source = `(?:^|[\\n\\r\\u2028\\u2029])(?:(?!${head}).)*${head}.*${source.slice(literalHead[0].length)}`;
+  }
+
   // Two whitespace stars around an optional NON-whitespace prompt glyph
   // repartition the same run quadratically when the following word is absent.
   // If the glyph is absent those stars are one run; if present its following

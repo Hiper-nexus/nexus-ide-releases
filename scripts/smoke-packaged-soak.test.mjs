@@ -12,7 +12,7 @@ const cleanup = [];
 afterEach(async () => { await Promise.all(cleanup.splice(0).map(p => fs.rm(p, { recursive: true, force: true }))); });
 function fixture() {
   return { schema: 'nexus.soak-smoke/v1', nonce: soakFixtureNonce, pid: 4321, rendererPid: 1234,
-    appVersion: '0.76.192', packaged: true, electronVersion: '43.7.4', heapSource: SOAK_HEAP_SOURCE, units: 'bytes',
+    appVersion: '0.76.192', packaged: true, electronVersion: '43.8.3', heapSource: SOAK_HEAP_SOURCE, units: 'bytes',
     durationMs: 301000, postFunctionalMs: 1000, startedAt: 1000, finishedAt: 303000, policy: SOAK_POLICY, samples: soakSamples(),
     finalFunctional: { ok: true, probes: [...FUNCTIONAL_SMOKE_REQUIRED_PROBES], adapterCount: FUNCTIONAL_SMOKE_MIN_ADAPTERS, toolCount: FUNCTIONAL_SMOKE_MIN_TOOLS } };
 }

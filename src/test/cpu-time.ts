@@ -19,3 +19,15 @@ export function cpuTimeMs(run: () => unknown, rounds = 2): number {
   }
   return best;
 }
+
+/**
+ * CPU time of ONE call, for work that changes state and cannot be repeated
+ * (a paste into the editor). Same reason as above: the wall clock of a shared
+ * CI runner counts the time this process waited for a core.
+ */
+export function cpuTimeOnceMs(run: () => unknown): number {
+  const before = process.cpuUsage();
+  run();
+  const spent = process.cpuUsage(before);
+  return (spent.user + spent.system) / 1000;
+}

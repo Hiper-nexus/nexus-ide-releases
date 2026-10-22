@@ -9,10 +9,11 @@ import path from 'node:path';
  * lá. `null` = sem prova (erro, timeout, plataforma sem suporte, cwd
  * desconhecido) e quem chama mantém a worktree.
  *
- * cwd desconhecido de processo do MESMO uid sempre invalida a prova. Os de
- * outro uid (que o lsof nem lista e o procfs não deixa ler) só podem ser
- * ignorados quando um ancestral da worktree é diretório 0700 do próprio
- * usuário: sem root, outro usuário não entra nele.
+ * cwd desconhecido de processo do MESMO uid sempre invalida a prova, com uma
+ * exceção no Linux (abaixo, `isUserServiceManagerPair`). Os de outro uid (que
+ * o lsof nem lista e o procfs não deixa ler) só podem ser ignorados quando um
+ * ancestral da worktree é diretório 0700 do próprio usuário: sem root, outro
+ * usuário não entra nele.
  */
 export type ProcessCwdExec = (
   command: string,
@@ -84,6 +85,83 @@ export function decodeLsofName(name: string): string {
   return Buffer.from(bytes).toString('utf8');
 }
 
+const SYSTEMCTL_BINS = ['/usr/bin/systemctl', '/bin/systemctl'] as const;
+const SYSTEMCTL_TIMEOUT_MS = 5_000;
+/**
+ * O `(sd-pam)` nasce do processo do serviço antes do `exec` do gerenciador:
+ * os dois começam juntos (30 ms no runner). /proc conta em USER_HZ, que é
+ * 100 por segundo em todo Linux atual; 10 s de folga e nada mais.
+ */
+const SD_PAM_FORK_WINDOW_TICKS = 10 * 100;
+
+interface ProcStat {
+  readonly comm: string;
+  readonly ppid: number;
+  /** Início do processo, em ticks desde o boot: o próprio processo não o muda. */
+  readonly startTicks: number;
+}
+
+/** comm, ppid e início de um pid; `null` quando algo não pôde ser lido. */
+async function readProcStat(procRoot: string, pid: string): Promise<ProcStat | null> {
+  try {
+    const dir = path.join(procRoot, pid);
+    const [comm, stat] = await Promise.all([
+      fs.promises.readFile(path.join(dir, 'comm'), 'utf8'),
+      fs.promises.readFile(path.join(dir, 'stat'), 'utf8'),
+    ]);
+    // `pid (comm) estado ppid …`: o comm pode ter espaço e parêntese, então o
+    // resto começa depois do ÚLTIMO `)`, no campo 3 (estado). ppid é o 4 e o
+    // início (starttime) o 22.
+    const fields = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/);
+    const ppid = Number(fields[1]);
+    const startTicks = Number(fields[19]);
+    if (!Number.isSafeInteger(ppid) || !Number.isSafeInteger(startTicks)) return null;
+    return { comm: comm.trim(), ppid, startTicks };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * MainPID do `user@<uid>.service` como o PID 1 (root) o registra: é a
+ * identidade do gerenciador que um processo do usuário não consegue imitar
+ * (nome, argv, pai e cgroup delegado, ele consegue). `null` sem systemd ou
+ * sem resposta: aí ninguém é dispensado.
+ */
+async function userManagerPid(uid: number, exec: ProcessCwdExec): Promise<number | null> {
+  for (const bin of SYSTEMCTL_BINS) {
+    const result = await exec(bin, ['show', `user@${uid}.service`, '--property=MainPID', '--value'], SYSTEMCTL_TIMEOUT_MS);
+    if (result.status !== 0) continue;
+    const pid = Number(result.stdout.trim());
+    return Number.isSafeInteger(pid) && pid > 1 ? pid : null;
+  }
+  return null;
+}
+
+/**
+ * Linux: o gerenciador de serviços do próprio usuário (`systemd --user`) e o
+ * `(sd-pam)` que nasce com ele são os dois processos do mesmo uid cujo cwd o
+ * kernel nunca deixa o usuário ler. O gerenciador guarda uma capability e o
+ * `(sd-pam)` trocou de credencial sem `exec`: os dois ficam não-dumpable.
+ * Nascem com a sessão de login, nunca entram numa pasta de projeto, e tudo o
+ * que lançam é outro processo, legível. Medido no runner Linux do GitHub em
+ * 22/10 (os únicos dois do uid) e presente em toda sessão systemd: sem esta
+ * exceção a prova falhava fechada para sempre no Linux e nenhuma worktree era
+ * coletada.
+ *
+ * Só pelo que o processo não forja: o gerenciador é o MainPID que o PID 1
+ * devolve; o `(sd-pam)` é filho dele E começou junto com ele. Um processo
+ * que se reparenta ao gerenciador (subreaper) nasce depois e fica de fora.
+ * Qualquer outro cwd ilegível do mesmo uid continua sem prova.
+ */
+function isUserServiceManagerPair(pid: string, stats: ReadonlyMap<string, ProcStat>, managerPid: number): boolean {
+  if (Number(pid) === managerPid) return true;
+  const stat = stats.get(pid);
+  const manager = stats.get(String(managerPid));
+  return !!stat && !!manager && stat.comm === '(sd-pam)' && stat.ppid === managerPid &&
+    stat.startTicks >= manager.startTicks && stat.startTicks - manager.startTicks <= SD_PAM_FORK_WINDOW_TICKS;
+}
+
 async function privateDirectory(dir: string, uid: number): Promise<boolean> {
   const stat = await fs.promises.lstat(dir).catch(() => null);
   return !!stat && stat.isDirectory() && stat.uid === uid && (stat.mode & 0o077) === 0;
@@ -130,6 +208,7 @@ export async function listProcessCwds(deps: ProcessCwdDeps = {}): Promise<readon
     const procRoot = deps.procRoot ?? '/proc';
     const pids = (await fs.promises.readdir(procRoot)).filter((name) => /^\d+$/.test(name));
     const cwds: string[] = [];
+    const unreadableOwn: string[] = [];
     for (const pid of pids) {
       const dir = path.join(procRoot, pid);
       try {
@@ -139,8 +218,20 @@ export async function listProcessCwds(deps: ProcessCwdDeps = {}): Promise<readon
         if (code === 'ENOENT' || code === 'ESRCH') continue;
         const owner = await fs.promises.stat(dir).then((stat) => stat.uid, () => undefined);
         if (owner === undefined) continue;
-        if (owner === uid || !foreignIgnorable) return null;
+        if (owner !== uid && !foreignIgnorable) return null;
+        if (owner === uid) unreadableOwn.push(pid);
       }
+    }
+    if (unreadableOwn.length > 0) {
+      const managerPid = await userManagerPid(uid, deps.exec ?? defaultExec);
+      if (managerPid === null) return null;
+      // Todos lidos antes de decidir: o `(sd-pam)` é julgado pelo pai.
+      const stats = new Map<string, ProcStat>();
+      for (const pid of [...unreadableOwn, String(managerPid)]) {
+        const stat = await readProcStat(procRoot, pid);
+        if (stat) stats.set(pid, stat);
+      }
+      if (!unreadableOwn.every((pid) => isUserServiceManagerPair(pid, stats, managerPid))) return null;
     }
     return cwds.length > 0 ? cwds : null;
   } catch {

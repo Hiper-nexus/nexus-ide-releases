@@ -8,6 +8,10 @@ import { heavyExecutorIsLive, NativeHeavyCommands } from './native-heavy-command
 import { HeavyCommandPermitPool } from './heavy-command-permit';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import type { AgentGateContext } from './gate';
+
+// The Ubuntu CI runner has no /bin/zsh: these two spawned it, got ENOENT and
+// waited out the 30 s timeout instead of testing anything.
+const HAS_ZSH = fs.existsSync('/bin/zsh');
 import { appendHeavyCommandPreload } from './native-heavy-preload';
 
 /** Exit 0, and the lane did not refuse. Seatbelt or npm noise is not a refusal.
@@ -230,7 +234,7 @@ it('absolute Bash execution with stripped NODE_OPTIONS is admitted before actual
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
 
-it('absolute zsh execution with stripped NODE_OPTIONS is admitted before actual TypeScript starts', async () => {
+it.skipIf(!HAS_ZSH)('absolute zsh execution with stripped NODE_OPTIONS is admitted before actual TypeScript starts', async () => {
  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-native-tsc-'));
  fs.writeFileSync(path.join(root, 'fixture.ts'), Array.from({ length: 4000 }, (_, i) => `interface Value${i} { name: string; value: number }`).join('\n'));
  const scope = { version: 1 as const, installationId: 'finite', projectId: 'native-tsc', checkoutId: 'main', rootRealPath: root, identitySource: 'manifest' as const };
@@ -264,7 +268,7 @@ it('absolute zsh execution with stripped NODE_OPTIONS is admitted before actual 
   expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
-it('actual absolute make commands serialize through non-Node shell preexec', async () => {
+it.skipIf(!HAS_ZSH)('actual absolute make commands serialize through non-Node shell preexec', async () => {
  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-native-tsc-'));
  fs.writeFileSync(path.join(root, 'fixture.ts'), Array.from({ length: 4000 }, (_, i) => `interface Value${i} { name: string; value: number }`).join('\n'));
  const scope = { version: 1 as const, installationId: 'finite', projectId: 'native-tsc', checkoutId: 'main', rootRealPath: root, identitySource: 'manifest' as const };

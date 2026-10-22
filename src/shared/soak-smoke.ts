@@ -35,8 +35,8 @@ export const SOAK_POLICY = Object.freeze({
     paneRss: { peakBytes: 512 * MiB, growthBytes: 128 * MiB, slopeBytesPerMin: 32 * MiB },
   },
 });
-export const SOAK_ELECTRON = '43.7.4';
-export const SOAK_HEAP_SOURCE = 'electron.process.getHeapStatistics/v43.7.4/KiB';
+export const SOAK_ELECTRON = '43.8.3';
+export const SOAK_HEAP_SOURCE = 'electron.process.getHeapStatistics/v43.8.3/KiB';
 export const soakNonce = z.string().uuid().regex(/^[a-f0-9-]+$/u);
 const integer = z.number().int().safe().nonnegative();
 const positive = integer.positive();
