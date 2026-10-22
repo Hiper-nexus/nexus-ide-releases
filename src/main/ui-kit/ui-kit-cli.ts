@@ -261,6 +261,12 @@ export function buildUiKitChildEnv(
   }
   // A project cannot turn certificate checking off for our download.
   if (!env.npm_config_strict_ssl) env.npm_config_strict_ssl = 'true';
+  // The vendors' own analytics stay home. BoardUI ships a PostHog client that
+  // reports every command — licence actions included — from every machine;
+  // its dist honours both of these (read 22/10/2026). Set last, so nothing
+  // above can switch it back on.
+  env.DO_NOT_TRACK = '1';
+  env.BOARDUI_TELEMETRY_DISABLED = '1';
   return env;
 }
 

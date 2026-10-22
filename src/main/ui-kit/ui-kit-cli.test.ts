@@ -28,6 +28,16 @@ function statsFor(kind: 'dir' | 'file' | 'symlink'): fs.Stats {
 }
 
 describe('buildUiKitChildEnv', () => {
+  it('switches the vendors analytics off, and nothing can switch it back on', () => {
+    const env = buildUiKitChildEnv(
+      { DO_NOT_TRACK: '0', BOARDUI_TELEMETRY_DISABLED: '0' },
+      {},
+    );
+
+    expect(env.DO_NOT_TRACK).toBe('1');
+    expect(env.BOARDUI_TELEMETRY_DISABLED).toBe('1');
+  });
+
   it('forwards only allowlisted keys and never a provider secret', () => {
     const env = buildUiKitChildEnv({
       PATH: '/usr/bin',
