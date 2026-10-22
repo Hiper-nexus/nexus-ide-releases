@@ -340,6 +340,21 @@ describe('preview tool workspace confinement', () => {
     expect(stubs.startPreview).not.toHaveBeenCalled();
   });
 
+  it('screenshot returns the image as MCP content and forwards fullPage/ref/theme', async () => {
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_screenshot')!;
+    stubs.captureBrowserScreenshot.mockResolvedValueOnce({
+      path: '/runtime/shot.png', url: 'http://127.0.0.1:1234/',
+      image: { data: 'aW1n', mimeType: 'image/png', width: 10, height: 5 },
+    } as never);
+    const result = await tool.handler({ paneId: 'browser-1', fullPage: true, theme: 'dark', ref: 'e3' }, context);
+    expect(stubs.captureBrowserScreenshot).toHaveBeenLastCalledWith('browser-1', scope, undefined,
+      expect.objectContaining({ fullPage: true, theme: 'dark', ref: 'e3', includeImage: true }));
+    expect(result).toMatchObject({ path: '/runtime/shot.png', inlineImage: { width: 10, height: 5 } });
+    expect(JSON.stringify(result)).not.toContain('aW1n');
+    const symbols = Object.getOwnPropertySymbols(result as object);
+    expect(symbols).toHaveLength(1);
+  });
+
   it('select needs write authority and confirmation and passes the label target and the option', async () => {
     const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_select')!;
     expect(tool.requiresConfirm).toBe(true);
@@ -695,6 +710,7 @@ describe('preview tool workspace confinement', () => {
       {
         signal: undefined,
         assertCurrentAuthority: undefined,
+        includeImage: true,
       },
     );
   });

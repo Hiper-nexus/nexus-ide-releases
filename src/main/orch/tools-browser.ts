@@ -1,5 +1,6 @@
 import {
   assertMcpInvocationCurrent,
+  withMcpImageContent,
   type McpToolDef,
 } from './mcp-protocol';
 import {
@@ -311,13 +312,22 @@ const browserNavigateTool: McpToolDef = {
 const browserScreenshotTool: McpToolDef = {
   name: 'nexus_browser_screenshot',
   description:
-    'Capture an owned browser pane as a local PNG artifact with redacted URL metadata. ' +
-    'The response contains a path and metadata, not image content. Inspect the image ' +
-    'with an available authorized image tool before claiming visual verification; ' +
-    'if that is unavailable, report visual verification as pending.',
+    'Capture an owned browser pane as a local PNG artifact with redacted URL metadata, ' +
+    'and return the image itself (bounded to 1568 px on the longest side) so you can ' +
+    'look at it. `fullPage: true` captures the whole scrollable page; `ref` crops to ' +
+    'one element (scrolled into view); `theme: "light" | "dark"` renders that ' +
+    'prefers-color-scheme for this capture only. For a device breakpoint navigate ' +
+    'with `device` first (or use nexus_browser_responsive). A pane on the personal ' +
+    'profile never returns its pixels (path only). `image: false` returns metadata only.',
   inputSchema: {
     type: 'object',
-    properties: { paneId: { type: 'string' } },
+    properties: {
+      paneId: { type: 'string' },
+      fullPage: { type: 'boolean', description: 'Whole scrollable page, not just the viewport' },
+      ref: { type: 'string', description: 'Crop to this element ref from browser_read/find' },
+      theme: { type: 'string', enum: ['light', 'dark'], description: 'prefers-color-scheme for this capture' },
+      image: { type: 'boolean', description: 'Return the image content too (default true)' },
+    },
     required: ['paneId'],
   },
   handler: async (args, ctx, invocation) => {
@@ -325,6 +335,15 @@ const browserScreenshotTool: McpToolDef = {
     const reviewAuthority = authorizeBrowserPane(ctx, paneId, 'read');
     assertReviewSurfaceCurrent(ctx, reviewAuthority);
     const visualAssignment = ctx.visualTask;
+    const theme = str(args, 'theme');
+    const ref = str(args, 'ref');
+    // The automated review pane keeps its single, exact viewport capture.
+    const extras = reviewAuthority ? {} : {
+      ...(args.fullPage === true ? { fullPage: true } : {}),
+      ...(ref ? { ref } : {}),
+      ...(theme === 'light' || theme === 'dark' ? { theme } : {}),
+      includeImage: args.image !== false,
+    };
     const result = await captureBrowserScreenshot(
       paneId,
       ctx.scope,
@@ -332,6 +351,7 @@ const browserScreenshotTool: McpToolDef = {
       {
         signal: invocation?.signal,
         assertCurrentAuthority: invocation?.assertCurrentAuthority,
+        ...extras,
       },
     );
     if (reviewAuthority) {
@@ -344,8 +364,16 @@ const browserScreenshotTool: McpToolDef = {
       recordAutomatedReviewBrowserInspection(reviewAuthority, 'screenshot');
     }
     assertMcpInvocationCurrent(invocation);
-    if (ctx.visualTask === visualAssignment && !result.truncated) recordVisualHandoffEvidence(ctx, result.artifactId);
-    return result;
+    // An element crop is a detail, not the page: it does not satisfy the gate.
+    if (ctx.visualTask === visualAssignment && !result.truncated && !result.element) {
+      recordVisualHandoffEvidence(ctx, result.artifactId);
+    }
+    const { image, ...metadata } = result;
+    if (!image) return metadata;
+    return withMcpImageContent(
+      { ...metadata, inlineImage: { width: image.width, height: image.height, mimeType: image.mimeType } },
+      [{ data: image.data, mimeType: image.mimeType }],
+    );
   },
 };
 

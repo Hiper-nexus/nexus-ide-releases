@@ -438,7 +438,18 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
         }
       }),
   ],
-  ['browser_screenshot', z.object({ paneId }).strict()],
+  [
+    'browser_screenshot',
+    z
+      .object({
+        paneId,
+        fullPage: z.boolean().optional(),
+        ref: browserRef.optional(),
+        theme: z.enum(['light', 'dark']).optional(),
+        image: z.boolean().optional(),
+      })
+      .strict(),
+  ],
   [
     'browser_responsive',
     z

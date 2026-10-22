@@ -439,6 +439,18 @@ describe('isolated browser automation', () => {
     await expect(automation.run('input_confirm', { token: again.token })).resolves.toEqual({ delivered: false });
   });
 
+  it('element_rect scrolls the element into view and returns its box for a cropped capture', async () => {
+    const { dom, automation } = fixture();
+    const read = (await automation.run('read', {})) as { elements: Array<{ ref: string; name: string }> };
+    const ref = read.elements.find((element) => element.name === 'Salvar')!.ref;
+    const el = dom.window.document.querySelector('#save') as HTMLElement;
+    let scrolled = false;
+    el.scrollIntoView = () => { scrolled = true; };
+    el.getBoundingClientRect = () => ({ left: 12.4, top: 30, width: 80.2, height: 20, right: 92.6, bottom: 50, x: 12.4, y: 30, toJSON: () => ({}) });
+    await expect(automation.run('element_rect', { ref })).resolves.toEqual({ x: 12.4, y: 30, width: 80.2, height: 20 });
+    expect(scrolled).toBe(true);
+  });
+
   it('does not offer a native point for a covered or zero-size element', async () => {
     const { dom, automation } = fixture();
     const read = (await automation.run('read', {})) as { elements: Array<{ ref: string; name: string }> };

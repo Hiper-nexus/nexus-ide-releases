@@ -1077,27 +1077,14 @@ export function createBrowserAutomation(
     return token;
   }
 
-  /** Point of `element` in top-level viewport CSS px, or why there is none. */
-  function nativePointFor(element: Element):
-    | { x: number; y: number }
-    | { reason: 'no-geometry' | 'offscreen' | 'occluded' } {
-    const rect = element.getBoundingClientRect();
-    if (!(rect.width >= 1 && rect.height >= 1)) return { reason: 'no-geometry' };
-    const ownWin = (element.ownerDocument.defaultView ?? win) as BrowserDomWindow;
-    let x = rect.left + rect.width / 2;
-    let y = rect.top + rect.height / 2;
-    if (x < 0 || y < 0 || x > ownWin.innerWidth || y > ownWin.innerHeight) return { reason: 'offscreen' };
-    const root = element.getRootNode() as Document | ShadowRoot;
-    const hitAt = (root as { elementFromPoint?: (x: number, y: number) => Element | null }).elementFromPoint;
-    if (typeof hitAt === 'function') {
-      const hit = hitAt.call(root, x, y);
-      if (hit && hit !== element && !element.contains(hit)) return { reason: 'occluded' };
-    }
-    // Same-origin frames: add each frame's content-box offset up to the top.
-    let frameWin: Window = ownWin;
+  /** Offset from `element`'s own frame viewport to the top-level viewport. */
+  function frameOffsetOf(element: Element): { dx: number; dy: number } | null {
+    let dx = 0;
+    let dy = 0;
+    let frameWin: Window = (element.ownerDocument.defaultView ?? win) as Window;
     while (frameWin !== win) {
       const frame = frameWin.frameElement as HTMLElement | null;
-      if (!frame) return { reason: 'offscreen' };
+      if (!frame) return null;
       const frameRect = frame.getBoundingClientRect();
       const parentWin = (frame.ownerDocument.defaultView ?? win) as BrowserDomWindow;
       let paddingLeft = 0;
@@ -1109,11 +1096,48 @@ export function createBrowserAutomation(
       } catch {
         // No computed style: border box only.
       }
-      x += frameRect.left + frame.clientLeft + paddingLeft;
-      y += frameRect.top + frame.clientTop + paddingTop;
+      dx += frameRect.left + frame.clientLeft + paddingLeft;
+      dy += frameRect.top + frame.clientTop + paddingTop;
       frameWin = parentWin;
     }
-    return { x: Math.round(x), y: Math.round(y) };
+    return { dx, dy };
+  }
+
+  /** `element_rect`: the box a cropped screenshot needs, after scrolling to it. */
+  function elementRect(args: Record<string, unknown>): { x: number; y: number; width: number; height: number } {
+    const element = resolveRef(args.ref);
+    if (!isElementVisible(win, element)) throw new Error('browser element is not visible');
+    const scroller = element as HTMLElement & {
+      scrollIntoView?: (options?: ScrollIntoViewOptions) => void;
+    };
+    if (typeof scroller.scrollIntoView === 'function') {
+      scroller.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' as ScrollBehavior });
+    }
+    const rect = element.getBoundingClientRect();
+    const offset = frameOffsetOf(element) ?? { dx: 0, dy: 0 };
+    return { x: rect.left + offset.dx, y: rect.top + offset.dy, width: rect.width, height: rect.height };
+  }
+
+  /** Point of `element` in top-level viewport CSS px, or why there is none. */
+  function nativePointFor(element: Element):
+    | { x: number; y: number }
+    | { reason: 'no-geometry' | 'offscreen' | 'occluded' } {
+    const rect = element.getBoundingClientRect();
+    if (!(rect.width >= 1 && rect.height >= 1)) return { reason: 'no-geometry' };
+    const ownWin = (element.ownerDocument.defaultView ?? win) as BrowserDomWindow;
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    if (x < 0 || y < 0 || x > ownWin.innerWidth || y > ownWin.innerHeight) return { reason: 'offscreen' };
+    const root = element.getRootNode() as Document | ShadowRoot;
+    const hitAt = (root as { elementFromPoint?: (x: number, y: number) => Element | null }).elementFromPoint;
+    if (typeof hitAt === 'function') {
+      const hit = hitAt.call(root, x, y);
+      if (hit && hit !== element && !element.contains(hit)) return { reason: 'occluded' };
+    }
+    // Same-origin frames: add each frame's content-box offset up to the top.
+    const offset = frameOffsetOf(element);
+    if (!offset) return { reason: 'offscreen' };
+    return { x: Math.round(x + offset.dx), y: Math.round(y + offset.dy) };
   }
 
   function inputPrepare(args: Record<string, unknown>): Record<string, unknown> {
@@ -1737,6 +1761,7 @@ export function createBrowserAutomation(
       if (command === 'click') return click(args);
       if (command === 'input_prepare') return inputPrepare(args);
       if (command === 'input_confirm') return inputConfirm(args);
+      if (command === 'element_rect') return elementRect(args);
       if (command === 'fill') return fill(args);
       if (command === 'select') return select(args);
       if (command === 'wait') return wait(args);

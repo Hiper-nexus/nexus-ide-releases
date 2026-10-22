@@ -16,6 +16,7 @@ export type BrowserAutomationCommand =
   | 'click'
   | 'input_prepare'
   | 'input_confirm'
+  | 'element_rect'
   | 'fill'
   | 'select'
   | 'wait'

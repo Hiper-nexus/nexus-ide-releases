@@ -14,6 +14,24 @@ const scope: ProjectExecutionScope = Object.freeze({
   identitySource: 'manifest',
 });
 
+/** Structural NativeImage double: size, encodings and a proportional resize. */
+function fakeImage(width: number, height: number, png: Buffer = Buffer.from('png')): {
+  getSize: () => { width: number; height: number };
+  toPNG: () => Buffer;
+  toJPEG: (quality: number) => Buffer;
+  resize: (size: { width?: number; height?: number }) => ReturnType<typeof fakeImage>;
+} {
+  return {
+    getSize: () => ({ width, height }),
+    toPNG: () => png,
+    toJPEG: () => Buffer.from('jpeg'),
+    resize: (size) => {
+      const ratio = size.width ? size.width / width : (size.height ?? height) / height;
+      return fakeImage(Math.round(width * ratio), Math.round(height * ratio), png);
+    },
+  };
+}
+
 const state = vi.hoisted(() => {
   const sessionHandlers = new Map<string, (...args: unknown[]) => void>();
   const browserSession = {
@@ -151,6 +169,7 @@ const state = vi.hoisted(() => {
     canVisual: vi.fn(() => false),
     visualJudge: vi.fn(async () => ({ status: 'answered' as const, signals: {}, model: 'clef', route: 'test' })),
     encodeBitmap: vi.fn((_bitmap: Buffer, _size: unknown) => ({ toPNG: () => Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2WQAAAAASUVORK5CYII=', 'base64') })),
+    imageFromBuffer: vi.fn((buffer: Buffer) => fakeImage(1280, 3000, buffer)),
     views: [] as Array<{ setVisible: ReturnType<typeof vi.fn>; setBounds: ReturnType<typeof vi.fn>; getBounds: ReturnType<typeof vi.fn> }>,
   };
 });
@@ -184,7 +203,7 @@ vi.mock('electron', () => ({
       state.onHandlers.set(channel, handler),
   },
   session: { fromPartition: state.fromPartition },
-  nativeImage: { createFromBitmap: state.encodeBitmap },
+  nativeImage: { createFromBitmap: state.encodeBitmap, createFromBuffer: state.imageFromBuffer },
 }));
 
 vi.mock('./browser-artifact-store', () => ({
@@ -258,6 +277,7 @@ vi.mock('./browser-visual-judgment', () => ({
 
 import {
   analyzeBrowserResponsive,
+  captureBrowserScreenshot,
   RESPONSIVE_LOAD_TIMEOUT_MS,
   clickBrowserElement,
   destroyBrowser,
@@ -1030,6 +1050,87 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
       expect(clicked).toEqual(['e3']);
       expect(result).toMatchObject({ selected: false, ambiguous: true });
       expect(result.candidates?.map((candidate) => candidate.ref)).toEqual(['e7', 'e8']);
+      destroyBrowser(PANE, scope);
+    });
+  });
+
+  describe('screenshot options', () => {
+    const defaultAutomation = state.runAutomation.getMockImplementation()!;
+    beforeEach(() => registerBrowserIpc({} as never));
+    afterEach(() => {
+      state.runAutomation.mockImplementation(defaultAutomation);
+      state.guest.debugger.sendCommand.mockImplementation(async (): Promise<unknown> => ({ root: {} }));
+    });
+
+    it('attaches a bounded inline image (longest side ≤ 1568) to the result', async () => {
+      await boot();
+      state.guest.capturePage.mockResolvedValueOnce(fakeImage(2560, 1600) as never);
+      const shot = await captureBrowserScreenshot(PANE, scope, undefined, { includeImage: true });
+      expect(shot.image?.mimeType).toBe('image/png');
+      expect(typeof shot.image?.data).toBe('string');
+      expect(shot.image).toMatchObject({ width: 1568, height: 980 });
+      expect(shot.width).toBe(2560);
+      destroyBrowser(PANE, scope);
+    });
+
+    it('never inlines pixels of a pane on the personal profile', async () => {
+      state.profileMode = 'personal';
+      bindResolvedRendererWorkspaceScope(state.owner, scope);
+      await boot();
+      const shot = await captureBrowserScreenshot(PANE, scope, undefined, { includeImage: true });
+      expect(shot.image).toBeUndefined();
+      expect(shot.imageOmitted).toBe('personal_profile');
+      destroyBrowser(PANE, scope);
+    });
+
+    it('captures the whole page beyond the viewport through the debugger and detaches it', async () => {
+      await boot();
+      state.guest.debugger.attach.mockClear();
+      state.guest.debugger.detach.mockClear();
+      const commands: Array<[string, unknown]> = [];
+      state.guest.debugger.sendCommand.mockImplementation(async (...call: unknown[]): Promise<unknown> => {
+        const [method, params] = call as [string, unknown];
+        commands.push([method, params]);
+        if (method === 'Page.getLayoutMetrics') return { cssContentSize: { width: 1280, height: 3000 } };
+        if (method === 'Page.captureScreenshot') return { data: Buffer.from('full').toString('base64') };
+        return {};
+      });
+      const shot = await captureBrowserScreenshot(PANE, scope, undefined, { fullPage: true });
+      expect(commands.map(([method]) => method)).toEqual(['Page.getLayoutMetrics', 'Page.captureScreenshot']);
+      expect(commands[1]![1]).toMatchObject({ captureBeyondViewport: true, clip: { x: 0, y: 0, width: 1280, height: 3000, scale: 1 } });
+      expect(state.guest.debugger.attach).toHaveBeenCalledOnce();
+      expect(state.guest.debugger.detach).toHaveBeenCalledOnce();
+      expect(shot).toMatchObject({ fullPage: true, width: 1280, height: 3000 });
+      destroyBrowser(PANE, scope);
+    });
+
+    it('renders the dark theme for the capture and puts the page back afterwards', async () => {
+      await boot();
+      const media: unknown[] = [];
+      state.guest.debugger.sendCommand.mockImplementation(async (...call: unknown[]): Promise<unknown> => {
+        const [method, params] = call as [string, unknown];
+        if (method === 'Emulation.setEmulatedMedia') media.push(params);
+        return {};
+      });
+      const shot = await captureBrowserScreenshot(PANE, scope, undefined, { theme: 'dark' });
+      expect(media).toEqual([
+        { features: [{ name: 'prefers-color-scheme', value: 'dark' }] },
+        { features: [] },
+      ]);
+      expect(shot.theme).toBe('dark');
+      destroyBrowser(PANE, scope);
+    });
+
+    it('crops to one element by ref', async () => {
+      await boot();
+      state.runAutomation.mockImplementation(async (_pane: string, _wc: unknown, command: string): Promise<unknown> => {
+        if (command === 'element_rect') return { x: 100, y: 200, width: 300, height: 50 };
+        return defaultAutomation(_pane, _wc, command);
+      });
+      state.guest.capturePage.mockClear();
+      const shot = await captureBrowserScreenshot(PANE, scope, undefined, { ref: 'e5' });
+      expect(state.guest.capturePage).toHaveBeenCalledWith({ x: 92, y: 192, width: 316, height: 66 });
+      expect(shot.element).toBe('e5');
       destroyBrowser(PANE, scope);
     });
   });

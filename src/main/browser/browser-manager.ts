@@ -86,6 +86,7 @@ import {
 import {
   browserClickResultSchema,
   browserElementDescriptorSchema,
+  browserElementRectSchema,
   browserExtractCandidatesSchema,
   browserFillResultSchema,
   browserFindResultSchema,
@@ -1563,6 +1564,91 @@ export async function captureRedactedBrowserVisual(
   return { image: decisionImage, assertCurrent };
 }
 
+/** Longest side of the image handed to the model (it downsizes past this). */
+const INLINE_IMAGE_MAX_SIDE = 1_568;
+/** Above this the inline copy is re-encoded as JPEG. */
+const INLINE_IMAGE_MAX_PNG_BYTES = 1_000_000;
+/** Chromium texture limit: a taller full page is cut and marked truncated. */
+const FULL_PAGE_MAX_CSS_PX = 16_384;
+/** One frame for prefers-color-scheme to restyle before the capture. */
+const THEME_SETTLE_MS = 150;
+
+export type BrowserScreenshotTheme = 'light' | 'dark';
+
+export interface BrowserScreenshotInlineImage {
+  data: string;
+  mimeType: 'image/png' | 'image/jpeg';
+  width: number;
+  height: number;
+}
+
+export type BrowserScreenshotCapture = BrowserScreenshotResult & {
+  fullPage?: true;
+  theme?: BrowserScreenshotTheme;
+  /** Ref of the element the capture was cropped to. */
+  element?: string;
+  /** Bounded copy for the model; only when asked and never for the personal profile. */
+  image?: BrowserScreenshotInlineImage;
+  imageOmitted?: 'personal_profile';
+};
+
+type CaptureImage = {
+  getSize(): { width: number; height: number };
+  toPNG(): Buffer;
+  toJPEG?(quality: number): Buffer;
+  resize?(options: { width?: number; height?: number; quality?: 'good' | 'better' | 'best' }): CaptureImage;
+};
+
+/**
+ * Borrows the pane's CDP session for one capture step. A debugger someone
+ * else attached (relay lease, personal profile) is used as is and left
+ * attached; one we attached is detached on every path.
+ */
+async function withBrowserDebugger<T>(
+  wc: WebContents,
+  run: (send: (method: string, params?: Record<string, unknown>) => Promise<unknown>) => Promise<T>,
+): Promise<T> {
+  const inspector = wc.debugger;
+  const owned = !inspector.isAttached();
+  if (owned) inspector.attach('1.3');
+  try {
+    return await run((method, params) => inspector.sendCommand(method, params));
+  } finally {
+    if (owned) {
+      try {
+        inspector.detach();
+      } catch {
+        // Already detached (renderer gone).
+      }
+    }
+  }
+}
+
+function inlineImageOf(image: CaptureImage): BrowserScreenshotInlineImage {
+  const size = image.getSize();
+  const longest = Math.max(size.width, size.height);
+  let bounded = image;
+  if (longest > INLINE_IMAGE_MAX_SIDE && typeof image.resize === 'function') {
+    // One side given: NativeImage keeps the aspect ratio.
+    bounded = image.resize(
+      size.width >= size.height
+        ? { width: INLINE_IMAGE_MAX_SIDE, quality: 'good' }
+        : { height: INLINE_IMAGE_MAX_SIDE, quality: 'good' },
+    );
+  }
+  const boundedSize = bounded.getSize();
+  const png = bounded.toPNG();
+  if (png.length > INLINE_IMAGE_MAX_PNG_BYTES && typeof bounded.toJPEG === 'function') {
+    return {
+      data: bounded.toJPEG(80).toString('base64'),
+      mimeType: 'image/jpeg',
+      width: boundedSize.width,
+      height: boundedSize.height,
+    };
+  }
+  return { data: png.toString('base64'), mimeType: 'image/png', ...boundedSize };
+}
+
 export async function captureBrowserScreenshot(
   paneId: string,
   scope: ProjectExecutionScope,
@@ -1571,8 +1657,16 @@ export async function captureBrowserScreenshot(
     clip?: BrowserDesignRect;
     signal?: AbortSignal;
     assertCurrentAuthority?: () => void;
+    /** Whole scrollable page, not just the viewport (CDP captureBeyondViewport). */
+    fullPage?: boolean;
+    /** Render with prefers-color-scheme for this capture only. */
+    theme?: BrowserScreenshotTheme;
+    /** Crop to this element (scrolled into view first). */
+    ref?: string;
+    /** Also return a bounded copy of the pixels for the model. */
+    includeImage?: boolean;
   } = {},
-): Promise<BrowserScreenshotResult> {
+): Promise<BrowserScreenshotCapture> {
   const assertCurrentAuthority = (): void => {
     options.assertCurrentAuthority?.();
     if (options.signal?.aborted) {
@@ -1592,28 +1686,84 @@ export async function captureBrowserScreenshot(
   }
 
   const capturedAt = Date.now();
+  let elementClip: BrowserDesignRect | undefined;
+  if (options.ref) {
+    elementClip = browserElementRectSchema.parse(
+      await runBrowserAutomationForPane(paneId, scope, 'element_rect', { ref: options.ref }),
+    );
+    assertCurrentAuthority();
+  }
+  const requestedClip = options.clip ?? elementClip;
   // An emulated device paints only its viewSize at the view's top-left; the
   // rest of the slot is blank, so a full capture would be letterboxed.
-  const viewport = options.clip ? undefined : entry.emulatedViewport;
-  const clip = options.clip
-    ? clampScreenshotClip(options.clip, entry.view.getBounds(), {
+  const viewport = requestedClip || options.fullPage ? undefined : entry.emulatedViewport;
+  const clip = requestedClip
+    ? clampScreenshotClip(requestedClip, entry.view.getBounds(), {
         padding: ELEMENT_SHOT_PADDING,
       })
     : viewport
       ? clampScreenshotClip({ x: 0, y: 0, ...viewport }, entry.view.getBounds())
       : null;
+  if (options.ref && !clip) {
+    throw new Error('browser element is not visible in the pane; scroll it into view first');
+  }
   // F-1326: the view only paints its own bounds, so a pane smaller than the
   // emulated device yields a cut capture. ponytail: flagged, not re-rendered
   // (growing a visible view would overlap the workspace); upgrade path is an
   // offscreen capture at the emulated size.
-  const cut =
+  let cut: Pick<BrowserScreenshotResult, 'truncated' | 'capturedCss' | 'viewport'> =
     viewport && clip && (clip.width < viewport.width || clip.height < viewport.height)
       ? { truncated: true as const, capturedCss: { width: clip.width, height: clip.height }, viewport: { ...viewport } }
       : {};
-  const image = await captureWithWakeRetry(
-    () => (clip ? wc.capturePage(clip) : wc.capturePage()),
-    assertCurrentAuthority,
-  );
+  const captureViewport = (): Promise<CaptureImage> =>
+    captureWithWakeRetry(
+      () => (clip ? wc.capturePage(clip) : wc.capturePage()),
+      assertCurrentAuthority,
+    ) as Promise<CaptureImage>;
+  const captureFullPage = async (
+    send: (method: string, params?: Record<string, unknown>) => Promise<unknown>,
+  ): Promise<CaptureImage> => {
+    const metrics = (await send('Page.getLayoutMetrics')) as {
+      cssContentSize?: { width?: number; height?: number };
+      contentSize?: { width?: number; height?: number };
+    };
+    const content = metrics.cssContentSize ?? metrics.contentSize ?? {};
+    const width = Math.max(1, Math.min(FULL_PAGE_MAX_CSS_PX, Math.ceil(content.width ?? 0)));
+    const fullHeight = Math.max(1, Math.ceil(content.height ?? 0));
+    const height = Math.min(FULL_PAGE_MAX_CSS_PX, fullHeight);
+    if (fullHeight > height) {
+      cut = { truncated: true as const, capturedCss: { width, height }, viewport: { width, height: fullHeight } };
+    }
+    assertCurrentAuthority();
+    const shot = (await send('Page.captureScreenshot', {
+      format: 'png',
+      captureBeyondViewport: true,
+      fromSurface: true,
+      clip: { x: 0, y: 0, width, height, scale: 1 },
+    })) as { data?: unknown };
+    if (typeof shot.data !== 'string' || !shot.data) throw new Error('full-page capture returned no image');
+    return nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64')) as unknown as CaptureImage;
+  };
+
+  let image: CaptureImage;
+  if (options.fullPage || options.theme) {
+    image = await withBrowserDebugger(wc, async (send) => {
+      if (options.theme) {
+        await send('Emulation.setEmulatedMedia', {
+          features: [{ name: 'prefers-color-scheme', value: options.theme }],
+        });
+      }
+      try {
+        if (options.theme) await new Promise((resolve) => setTimeout(resolve, THEME_SETTLE_MS));
+        assertCurrentAuthority();
+        return options.fullPage ? await captureFullPage(send) : await captureViewport();
+      } finally {
+        if (options.theme) await send('Emulation.setEmulatedMedia', { features: [] }).catch(() => {});
+      }
+    });
+  } else {
+    image = await captureViewport();
+  }
   assertCurrentAuthority();
   const size = image.getSize();
   if (size.width <= 0 || size.height <= 0) {
@@ -1632,6 +1782,14 @@ export async function captureBrowserScreenshot(
     capturedAt,
   });
 
+  // The personal profile carries the operator's real logins: its pixels stay
+  // on disk for the human, never inline to a model provider.
+  const inline = options.includeImage
+    ? entry.profileMode === 'personal'
+      ? { imageOmitted: 'personal_profile' as const }
+      : { image: inlineImageOf(image) }
+    : {};
+
   return {
     artifactId: artifact.id,
     projectId: artifact.projectId,
@@ -1646,6 +1804,10 @@ export async function captureBrowserScreenshot(
     title: redactBrowserLabel(wc.getTitle() || entry.title),
     capturedAt,
     ...cut,
+    ...(options.fullPage ? { fullPage: true as const } : {}),
+    ...(options.theme ? { theme: options.theme } : {}),
+    ...(options.ref ? { element: options.ref } : {}),
+    ...inline,
   };
 }
 

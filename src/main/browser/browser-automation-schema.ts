@@ -208,3 +208,13 @@ export const browserSelectResultSchema = z
       .strict(),
   })
   .strict();
+
+/** `element_rect`: element box in top-level viewport CSS px after scrolling it into view. */
+export const browserElementRectSchema = z
+  .object({
+    x: z.number().finite().min(-100_000).max(100_000),
+    y: z.number().finite().min(-100_000).max(100_000),
+    width: z.number().finite().min(0).max(100_000),
+    height: z.number().finite().min(0).max(100_000),
+  })
+  .strict();
