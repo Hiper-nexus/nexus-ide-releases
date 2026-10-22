@@ -170,7 +170,12 @@ const state = vi.hoisted(() => {
     visualJudge: vi.fn(async () => ({ status: 'answered' as const, signals: {}, model: 'clef', route: 'test' })),
     encodeBitmap: vi.fn((_bitmap: Buffer, _size: unknown) => ({ toPNG: () => Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2WQAAAAASUVORK5CYII=', 'base64') })),
     imageFromBuffer: vi.fn((buffer: Buffer) => fakeImage(1280, 3000, buffer)),
-    views: [] as Array<{ setVisible: ReturnType<typeof vi.fn>; setBounds: ReturnType<typeof vi.fn>; getBounds: ReturnType<typeof vi.fn> }>,
+    views: [] as Array<{
+      setVisible: ReturnType<typeof vi.fn>;
+      setBounds: ReturnType<typeof vi.fn>;
+      getBounds: ReturnType<typeof vi.fn>;
+      webPreferences: Record<string, unknown>;
+    }>,
   };
 });
 
@@ -191,7 +196,10 @@ vi.mock('electron', () => ({
     getBounds = vi.fn(() => ({ x: 0, y: 0, width: 1280, height: 800 }));
     setBackgroundColor = vi.fn();
 
-    constructor(_options: { webPreferences: Record<string, unknown> }) {
+    readonly webPreferences: Record<string, unknown>;
+
+    constructor(options: { webPreferences: Record<string, unknown> }) {
+      this.webPreferences = options.webPreferences;
       state.views.push(this);
     }
   },
@@ -1133,6 +1141,17 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
       expect(shot.element).toBe('e5');
       destroyBrowser(PANE, scope);
     });
+  });
+
+  it('an agent pane never blocks on alert/confirm/prompt; the operator pane keeps native dialogs', async () => {
+    vi.mocked(isAgentRequestedBrowser).mockReturnValue(true);
+    await boot();
+    expect(state.views.at(-1)?.webPreferences).toMatchObject({ disableDialogs: true });
+    destroyBrowser(PANE, scope);
+    vi.mocked(isAgentRequestedBrowser).mockReturnValue(false);
+    await boot();
+    expect(state.views.at(-1)?.webPreferences).toMatchObject({ safeDialogs: true, disableDialogs: false });
+    destroyBrowser(PANE, scope);
   });
 
   it('goes back, forward and reloads through the action contract (after/changed/errors)', async () => {

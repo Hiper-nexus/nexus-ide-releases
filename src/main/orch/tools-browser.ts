@@ -153,7 +153,8 @@ const browserOpenTool: McpToolDef = {
     'the only private targets trusted automatically: a local dev server ' +
     '(localhost/127.0.0.1) or a file:// page is refused. To check your own UI, ' +
     'build it, serve the build with nexus_preview_start({dir}), open the ' +
-    'returned URL here and run nexus_browser_responsive.',
+    'returned URL here and run nexus_browser_responsive. Page dialogs never ' +
+    'block this pane: alert closes, confirm answers Cancel, prompt answers empty.',
   inputSchema: {
     type: 'object',
     properties: {

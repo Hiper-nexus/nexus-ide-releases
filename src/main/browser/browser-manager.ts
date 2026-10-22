@@ -930,6 +930,12 @@ async function createEntry(
         allowRunningInsecureContent: false,
         webviewTag: false,
         safeDialogs: true,
+        // A page alert/confirm/prompt blocks the renderer until someone
+        // answers; in an agent pane nobody is there, so automation hung until
+        // its timeout. Disabled dialogs answer at once: alert closes, confirm
+        // says Cancel (never an automatic "yes" to "delete?"), prompt is empty.
+        // The operator's own pane keeps native dialogs — a person answers.
+        disableDialogs: agentOwned,
         navigateOnDragDrop: false,
         spellcheck: false,
       },
