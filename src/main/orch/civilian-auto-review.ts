@@ -323,6 +323,34 @@ function regressionSummary(result: RegressionGateResult | null): string {
   }
 }
 
+/** TS/JS: the import graph maps their impacted tests; an unmapped one already makes the index incomplete. */
+const IMPACT_MAPPED_SOURCE_RE = /\.[cm]?[jt]sx?$/iu;
+/** Go/Rust: mapped only when the gate ran the full native suites (it names the native runner). */
+const NATIVE_SUITE_FILE_RE = /(?:\.(?:go|rs)|(?:^|\/)(?:go\.(?:mod|sum|work)|Cargo\.(?:toml|lock)))$/iu;
+/** Styles, prose and static assets: nothing a test imports executes them. */
+const NON_EXECUTABLE_FILE_RE = /\.(?:css|scss|sass|less|styl|md|mdx|rst|txt|adoc|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf|eot)$/iu;
+
+/**
+ * AGENTS.md: proven absence of an applicable test is not an obligation to
+ * invent one. `no-tests`/`clean` proves it only when the impact index is
+ * complete, nothing was skipped, and every changed file belongs to a family
+ * the index can actually map. "The project declares tests" is a property of
+ * the project, not of this diff: it only keeps the result unverified for the
+ * files the index cannot see (Python, JSON, other languages).
+ */
+function regressionProvesNoApplicableTests(
+  regression: RegressionGateResult,
+  declaredFiles: readonly string[],
+  projectDeclaresTests: boolean,
+): boolean {
+  if (regression.status !== 'no-tests' && regression.status !== 'clean') return false;
+  if (regression.coverage?.indexComplete !== true || regression.coverage.skippedTests.length > 0) return false;
+  if (!projectDeclaresTests) return true;
+  const nativeSuitesRan = regression.runner === 'go' || regression.runner === 'cargo';
+  return [...regression.changedFiles, ...declaredFiles].every(file => IMPACT_MAPPED_SOURCE_RE.test(file) ||
+    NON_EXECUTABLE_FILE_RE.test(file) || nativeSuitesRan && NATIVE_SUITE_FILE_RE.test(file));
+}
+
 function sensorSummaries(
   results: readonly MechanicalCheckResult[],
 ): string {
@@ -460,9 +488,10 @@ export async function enforceCivilianAutoReview(
     }
   }
   // Missing execution or incomplete discovery is never evidence of N/A.
+  const noApplicableTests = regression !== null && regressionProvesNoApplicableTests(regression, changedFiles, requirements.tests);
   if (strictCompletion && regression && (
     regression.coverage?.indexComplete === false || (regression.coverage?.skippedTests.length ?? 0) > 0 ||
-    ['no-tests', 'clean'].includes(regression.status) && (requirements.tests || regression.coverage?.indexComplete !== true)
+    ['no-tests', 'clean'].includes(regression.status) && !noApplicableTests
   )) {
     regression = { ...regression, status: 'unavailable',
       testsNotRun: [...new Set([...regression.testsNotRun, ...(regression.coverage?.skippedTests ?? [])])],
@@ -510,8 +539,7 @@ export async function enforceCivilianAutoReview(
         checks: mechanical.map(check => ({ kind: check.kind, summary: check.summary,
           status: check.status === 'unavailable' && !applicable(check.kind) ? 'not-applicable' : check.status })),
         regression,
-        regressionApplicable: regression ? !['no-tests', 'clean'].includes(regression.status) || requirements.tests ||
-          regression.coverage?.indexComplete !== true || (regression.coverage?.skippedTests.length ?? 0) > 0
+        regressionApplicable: regression ? !noApplicableTests
           : packagePresent || ['tsconfig.json', 'pyproject.toml', 'pytest.ini', 'Cargo.toml', 'go.mod', 'Makefile'].some(has) ||
             changedFiles.some(file => /(?:^|[/.])(?:tests?|spec)[/.]|\.(?:test|spec)\./i.test(file)),
       },

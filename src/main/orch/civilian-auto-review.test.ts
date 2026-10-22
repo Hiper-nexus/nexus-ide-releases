@@ -670,6 +670,71 @@ describe('strict completion applicability from project declarations', () => {
     expect(result.verification?.regression?.status).toBe('unavailable');
   });
 
+  describe('a project that declares tests (vitest) and a diff with no impacted test', () => {
+    const withTestedProject = async (run: (root: string) => Promise<void>) => {
+      const root = realpathSync(mkdtempSync(join(tmpdir(), 'nexus-no-impacted-tests-')));
+      try {
+        writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { test: 'vitest run' }, devDependencies: { vitest: '^5.0.0' } }));
+        await run(root);
+      } finally { rmSync(root, { recursive: true, force: true }); }
+    };
+    const strict = (root: string, productFiles: readonly string[]) => ({ mission: missionFixture({ id: `mission-no-tests-${productFiles.join('-')}` }),
+      scope: { ...scope, rootRealPath: root }, productFiles, completionBaseSha: BASE_SHA, liveOrchestratorSessionId: 'maestro' });
+
+    it.each([
+      ['TS source without a test', ['src/theme.ts'], 'no-tests'],
+      ['styles only', ['src/theme.css', 'src/layout.scss'], 'no-tests'],
+      ['an empty diff', [], 'clean'],
+    ] as const)('%s with a complete index proves no applicable test and closes without repair', async (_label, files, status) => {
+      await withTestedProject(async root => {
+        __resetCivilianAutoReviewForTests();
+        const { dependencies, calls } = deps();
+        const result = await enforceCivilianAutoReview(strict(root, files.length ? files : ['src/theme.ts']), { ...dependencies,
+          regressionGate: async () => regressionResult({ status, testsRun: [], changedFiles: [...files], untestedFiles: files.filter(file => file.endsWith('.ts')),
+            runner: null, coverage: { indexComplete: true, skippedTests: [] }, headSha: HEAD_SHA, baseSha: BASE_SHA }),
+        });
+        expect(calls.repairs).toEqual([]);
+        if (result.kind !== 'approved') throw new Error(`expected approval, got ${result.kind}`);
+        expect(result.verification?.regression?.status).toBe(status);
+        expect(result.verification?.regressionApplicable).toBe(false);
+      });
+    });
+
+    it.each([
+      ['an incomplete index', ['src/theme.ts'], { indexComplete: false, skippedTests: [] }],
+      ['a skipped E2E test', ['src/theme.ts'], { indexComplete: true, skippedTests: ['e2e/theme.spec.ts'] }],
+      // The import graph only maps TS/JS: a Python change without a mapped
+      // test is not proof that no pytest applies to it.
+      ['a source the index cannot map', ['src/model.py'], { indexComplete: true, skippedTests: [] }],
+      ['a JSON file a test may import', ['src/data.json'], { indexComplete: true, skippedTests: [] }],
+    ] as const)('%s keeps the tests unverified', async (_label, files, coverage) => {
+      await withTestedProject(async root => {
+        __resetCivilianAutoReviewForTests();
+        const { dependencies } = deps();
+        const result = await enforceCivilianAutoReview({ ...strict(root, files), liveOrchestratorSessionId: null }, { ...dependencies,
+          regressionGate: async () => regressionResult({ status: 'no-tests', testsRun: [], changedFiles: [...files], runner: null,
+            coverage: { indexComplete: coverage.indexComplete, skippedTests: [...coverage.skippedTests] }, headSha: HEAD_SHA, baseSha: BASE_SHA }),
+        });
+        if (result.kind !== 'approved') throw new Error(`expected legacy approval, got ${result.kind}`);
+        expect(result.verification?.regression?.status).toBe('unavailable');
+        expect(result.verification?.regressionApplicable).toBe(true);
+      });
+    });
+
+    it('native suites that ran in full and found nothing prove Go sources have no test', async () => {
+      await withTestedProject(async root => {
+        __resetCivilianAutoReviewForTests();
+        const { dependencies } = deps();
+        const result = await enforceCivilianAutoReview(strict(root, ['cmd/main.go']), { ...dependencies,
+          regressionGate: async () => regressionResult({ status: 'no-tests', testsRun: [], changedFiles: ['cmd/main.go'], runner: 'go',
+            coverage: { indexComplete: true, skippedTests: [] }, headSha: HEAD_SHA, baseSha: BASE_SHA }),
+        });
+        if (result.kind !== 'approved') throw new Error(`expected approval, got ${result.kind}`);
+        expect(result.verification?.regressionApplicable).toBe(false);
+      });
+    });
+  });
+
   it('preserves preexisting exemptions but does not claim their failed executions passed', async () => {
     const result = await enforceCivilianAutoReview({ mission: missionFixture(), scope, productFiles: ['app.ts'], completionBaseSha: BASE_SHA }, {
       ...deps().dependencies, regressionGate: async () => regressionResult({ preexistingFailures: [{ file: 'src/app.test.ts', message: 'already fails at base' }] }),
