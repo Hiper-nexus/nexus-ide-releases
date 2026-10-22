@@ -170,3 +170,14 @@ contagens estruturais, não cronômetro.
    apagados em toda resolução, e um respawn de rework cria sessão nova — então
    "no máximo 1" não limita missão nenhuma. O portão visual não tem contador.
 5. Medir com traço real antes de mexer no portão de Stop do Maestro.
+6. **Medir o custo real do `waitForIdle` no spawn.** `ensureNativeArgvPromptAccepted`
+   (`tool-util.ts:1429`) espera a primeira janela de silêncio do PTY do worker
+   (teto `AGENT_BOOT_TIMEOUT_MS`, 120 s) ANTES do atalho que lê o recibo nativo
+   (`:1448`). Ou seja: a chamada de delegação do Maestro fica presa ao boot
+   daquele worker. Com o Codex, que serializa chamadas MCP
+   (`supports_parallel_tool_calls` falso por padrão), "abra 4 helpers" vira
+   quatro esperas em série. No caminho típico a janela de silêncio cai no
+   intervalo até o primeiro token e custa poucos segundos; o caso ruim é o
+   worker que transmite desde o boot. **Não mexi**: é o caminho de prova do
+   spawn (F-723 depende desses recibos) e 120 s é teto, não medição. Instrumentar
+   `pane-spawn-timing` numa missão real responde se vale.
