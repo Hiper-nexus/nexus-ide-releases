@@ -214,6 +214,31 @@ describe('prefixo `.*` redundante (F-764 C.3)', () => {
     expect(cpuTimeMs(() => matches(OPENCODE_DOC, line))).toBeLessThan(20);
   });
 
+  it('o `.*` do meio também é linear: muitas ocorrências do termo, sem o resto', () => {
+    // Medido: 16 KB custavam 13 ms e 64 KB 186 ms (cada "opencode" levava o
+    // `.*` ao fim e de volta); o runner do CI passava do teto de 50 ms.
+    const line = (size: number) => 'opencode '.repeat(Math.floor(size / 9));
+    expect(matches(OPENCODE_DOC, line(16_384))).toBe(false);
+    expect(cpuTimeMs(() => matches(OPENCODE_DOC, line(16_384)))).toBeLessThan(5);
+    expect(cpuTimeMs(() => matches(OPENCODE_DOC, line(65_536)))).toBeLessThan(20);
+  });
+
+  it('trechos separados por CR ou separador Unicode casam como no original', () => {
+    const original = /.*opencode.*esc (again to )?interrupt/iu;
+    const pieces = ['opencode', 'esc ', 'interrupt', 'again to ', '\r', '\u2028', '\u2029', 'x'];
+    let seed = 91;
+    const random = () => {
+      seed = (seed * 1_103_515_245 + 12_345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+    for (let round = 0; round < 10_000; round += 1) {
+      let line = '';
+      const length = Math.floor(random() * 9);
+      for (let i = 0; i < length; i += 1) line += pieces[Math.floor(random() * pieces.length)];
+      expect(matches(OPENCODE_DOC, line), JSON.stringify(line)).toBe(original.test(line));
+    }
+  });
+
   it('padrão que é só `.*` continua casando qualquer texto', () => {
     const doc = ['id = "x"', '[[rules]]', 'id = "r"', "regex = ['.*']"].join('\n');
     expect(matches(doc, '')).toBe(true);
