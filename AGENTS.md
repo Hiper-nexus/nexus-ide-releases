@@ -551,12 +551,13 @@ saber isto antes de mexer:
      sessão. Com conselho do Jev, quem decide é ele (`writesCode ≥ 0,6`). SEM
      conselho nenhum — sem credencial, Jev desligado, fora do ar ou estourando
      os 2,5 s — decide o pré-filtro `isCodeRequest` (mesmo molde do pré-filtro
-     de navegador): verbo de escrita, em português ou inglês, SÓ com contexto
-     de código (`CODE_CONTEXT_PATTERN`: código, teste, componente, endpoint,
-     `crase`, arquivo `.ts`…); "refatorar" basta sozinho. "Escreva o PRD",
-     "crie um resumo" e "ajuste o texto" são escrita e ficam calados. Antes o
-     silêncio do Jev valia como "não é código" e o pane ficava só com a skill
-     instalada.
+     de navegador): verbo de escrita ou de edição (criar, corrigir, editar,
+     mudar, alterar, add, change, modify…), em português ou inglês, SÓ com
+     contexto de código (`CODE_CONTEXT_PATTERN`: código, teste, componente,
+     endpoint, `crase`, arquivo `.ts`, `.json`…); "refatorar" basta sozinho.
+     "Escreva o PRD", "crie um resumo" e "ajuste o texto" são escrita e ficam
+     calados. Antes o silêncio do Jev valia como "não é código" e o pane
+     ficava só com a skill instalada.
      Prompt que já traz `# Ponytail` não recebe de novo.
 - Medido pelo autor contra o MESMO agente sem a skill (Opus 5.5, 39 tarefas, 5
   runs cada): −53% de código, −41% de tempo, −26% de custo, −45% de tokens de

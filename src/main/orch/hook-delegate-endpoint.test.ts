@@ -298,6 +298,7 @@ describe('hook /hook/delegate', () => {
       'crie um resumo da reunião de ontem',
       'ajuste o texto do e-mail para o cliente',
       'remove the duplicate paragraph from the announcement',
+      'mude o título do e-mail de boas-vindas',
     ])('sem conselho do Jev, escrita que não é código não recebe o lembrete: %s', async (prompt) => {
       __resetLeanRemindersForTests();
       expect(JSON.stringify((await handleHookDelegateRequest(operator, { prompt }, { advise: vi.fn(async () => null) })).payload))
@@ -311,6 +312,12 @@ describe('hook /hook/delegate', () => {
       'corrija o bug do login',
       'adicione um endpoint de exportação na API',
       'refatore o checkout',
+      'edit this component',
+      'change the endpoint',
+      'modify the validation function',
+      'edite o componente de login',
+      'altere a função de cálculo do frete',
+      'update package.json',
     ])('sem conselho do Jev, pedido de código recebe o lembrete: %s', async (prompt) => {
       __resetLeanRemindersForTests();
       const out = await handleHookDelegateRequest(operator, { prompt }, { advise: vi.fn(async () => null) });

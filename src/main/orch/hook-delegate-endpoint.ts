@@ -134,10 +134,10 @@ function isBrowserRequest(prompt: string): boolean {
  * texto" também são escrita. Refatorar é de código por definição.
  */
 const CODE_WRITE_VERB_PATTERN =
-  /\b(implement(a|e|ar)?|corrij(a|ir)|corrigir|conserta(r)?|arrum(a|ar)?|ajust(a|e|ar)|escrev(a|er)|cri(a|e|ar)|adicion(a|e|ar)|remov(a|er)|apag(a|ue|ar)|migra(r)?|renomei(a|e|ar)|fix|implement|rewrite|rename|migrate|add|create|delete|remove|update|write|build)\b/iu;
+  /\b(implement(a|e|ar)?|corrij(a|ir)|corrigir|conserta(r)?|arrum(a|ar)?|ajust(a|e|ar)|escrev(a|er)|cri(a|e|ar)|adicion(a|e|ar)|remov(a|er)|apag(a|ue|ar)|migra(r)?|renomei(a|e|ar)|edit(a|e|ar)|mud(a|e|ar)|alter(a|e|ar)|modifi(ca|que|car)|fix|implement|rewrite|rename|migrate|add|create|delete|remove|update|write|build|edit|change|modify)\b/iu;
 const CODE_ONLY_VERB_PATTERN = /\b(refator(a|e|ar)?|refactor)\b/iu;
 const CODE_CONTEXT_PATTERN =
-  /\b(c[oó]digo|code|fun[cç][aã]o|function|m[eé]todo|method|classe|class|componentes?|components?|testes?|tests?|bug|endpoint|api|rota|route|handler|hook|m[oó]dulo|module|script|query|schema|migra[cç][aã]o|migration|valida[cç][aã]o|validation|vari[aá]vel|variable|import|lint|typecheck|branch|commit|reposit[oó]rio|repo|banco de dados|database|sql|regex|frontend|backend)\b|`[^`]+`|\b[\w-]+\.(tsx?|jsx?|py|go|rs|java|kt|swift|rb|php|css|scss|html|sql|sh|ya?ml|toml)\b|\b(src|lib|app)\//iu;
+  /\b(c[oó]digo|code|fun[cç][aã]o|function|m[eé]todo|method|classe|class|componentes?|components?|testes?|tests?|bug|endpoint|api|rota|route|handler|hook|m[oó]dulo|module|script|query|schema|migra[cç][aã]o|migration|valida[cç][aã]o|validation|vari[aá]vel|variable|import|lint|typecheck|branch|commit|reposit[oó]rio|repo|banco de dados|database|sql|regex|frontend|backend)\b|`[^`]+`|\b[\w-]+\.(tsx?|jsx?|mjs|cjs|json|vue|svelte|py|go|rs|java|kt|swift|rb|php|cs|cpp|hpp|css|scss|html|xml|sql|sh|ya?ml|toml|gradle|tf)\b|\b(src|lib|app)\//iu;
 
 function isCodeRequest(prompt: string): boolean {
   return CODE_ONLY_VERB_PATTERN.test(prompt) ||
