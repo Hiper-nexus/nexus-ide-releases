@@ -311,11 +311,36 @@ ambiente, nenhum PR entra pela proteção da main. As releases 0.76.374 a
 commits FORA da main — ou seja, quem decide o embarque é o
 `release:candidate` local, não este CI.
 
+**Precisado em 22/10, no run da main `4c7b89c91`** (`gh run view 39714368151`):
+12 testes em 6 arquivos, e a causa dominante é **UMA**. A sonda real de cwd
+devolve `null` no `ubuntu-latest` — o próprio teste dela falha em
+`listProcessCwds` com "sem prova nesta amostra", depois de 45 s de `waitFor` —
+e aí todo GC que EXIGE essa prova falha fechado e devolve `removed: []`. Daí as
+9 falhas de `worktree-runtime-registry`, `process-cwds` e
+`tools-panes-isolated-writer`: não são nove defeitos, são o fail-closed do
+F-908 funcionando num ambiente onde a prova não existe. Sobram
+`heavy-command-permit` (serialização F-983) e `native-heavy-agy-plugin` (hook
+gerado), que são de ambiente também.
+
+Por que a sonda não prova no runner, eu **não** determinei: em macOS ela passa,
+e a diferença está no ramo Linux (`/proc/<pid>/cwd`, mais o teste de ancestral
+0700 que decide se processo de outro uid pode ser ignorado). Sem um Linux para
+medir, qualquer correção aqui seria chute contra invariante testada de um
+arquivo do núcleo sensível (`src/main/runtime/`) — então fica como tarefa
+própria, com a medição primeiro.
+
 **Decidir uma das duas**, porque hoje a proteção não protege e só impede
 merge: dar aos testes de tempo do F-764 e à sonda do F-908 um caminho de pulo
 honesto no runner compartilhado (como `skipIfCwdProbeDeniedBySandbox` já faz
 sob o Seatbelt), ou tirar `check` da lista de obrigatórios enquanto ele não
 for confiável.
+
+**O merge do PR 159 ficou travado por aqui e pela permissão desta sessão.** O
+portão exigido está vermelho por ambiente, e as duas tentativas de merge —
+`--admin` e o caminho protegido — foram recusadas pelo classificador desta
+sessão ("Merge Without Review"), que manda parar e devolver a decisão ao
+operador. O ramo está revisado (20 threads do Codex, todas resolvidas),
+sincronizado com a main e com a suíte conferida; falta o clique.
 
 ## Recomendação para a próxima rodada
 
