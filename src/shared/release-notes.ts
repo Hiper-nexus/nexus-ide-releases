@@ -12750,6 +12750,24 @@ const RELEASE_076411_FULL: AppRelease = {
   fixes: RELEASE_076409_FULL.fixes,
 };
 
+const RELEASE_076412_FULL: AppRelease = {
+  ...RELEASE_076411_FULL,
+  version: '0.76.412',
+  codename: 'Projetos locais e escolha de conta',
+  summary: 'Candidata Windows local assinada, anterior à integração do PR 161; não publicada. Missões em projetos locais e origem automática da conta preservada.',
+  highlights: [
+    { title: 'Comece antes do Git', detail: 'Projetos sem repositório, sem primeiro commit ou sem Git instalado iniciam missões na própria pasta. Repositórios com commit continuam usando isolamento.' },
+  ],
+  fixes: [
+    { title: 'Conta automática continua automática', detail: 'Novos panes Claude guardam a origem da escolha. Conversas novas voltam à regra de folga; retomadas e escolhas explícitas preservam a identidade.' },
+    { title: 'Kits de UI no Windows', detail: 'CLI e MCP iniciados por Node nativo, com caminhos com espaços e argumentos literais.' },
+    { title: 'MCP robusto', detail: 'Erros de escrita e JSON inválido não derrubam o aplicativo.' },
+    { title: 'Avisos Chromium no instalador', detail: 'O NUPKG preserva as licenças da distribuição Electron.' },
+  ],
+};
+
+export const RELEASE_076412: AppRelease = RELEASE_076412_FULL;
+
 export const RELEASE_076411: AppRelease = RELEASE_076411_FULL;
 
 const RELEASE_076413_FULL: AppRelease = {
@@ -12784,7 +12802,7 @@ const RELEASE_076413_FULL: AppRelease = {
 
 export const RELEASE_076413: AppRelease = RELEASE_076413_FULL;
 
-export const CURRENT_RELEASE: AppRelease = {
+const RELEASE_076414_FULL: AppRelease = {
   version: '0.76.414',
   date: '2026-10-22',
   codename: 'A coleta no Linux e a colagem grande',
@@ -12805,4 +12823,26 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: RELEASE_076411_FULL.fixes,
 };
 
-export const RELEASE_076414: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076414: AppRelease = RELEASE_076414_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.417',
+  date: '2026-10-22',
+  codename: 'Windows: missões e agentes prontos para trabalhar',
+  summary: 'Atualiza o Windows com a base 0.76.413/414, corrige a inicialização de agentes, ' +
+    'permite missões em pastas sem Git e seleciona REA para pedidos de engenharia reversa.',
+  highlights: [
+    { title: 'Missões sem exigir Git', detail: 'Projetos locais e repositórios sem primeiro commit usam a pasta existente. O Nexus não cria repositório ou commit implicitamente.' },
+    { title: 'Engenharia reversa seleciona REA', detail: 'Pedidos de engenharia reversa recebem a skill REA automaticamente. O lançador estático JS/Electron Windows x64 requer o runtime revisado separado; motores opcionais não vêm no pacote.' },
+    { title: 'Kits e navegador atualizados', detail: 'Inclui as melhorias da base 0.76.413/414. Instalações de kits no mesmo monorepo compartilham a trava, e a exclusividade só é liberada quando o encerramento do processo é comprovado.' },
+  ],
+  fixes: [
+    { title: 'AGY reaproveita onboarding concluído', detail: 'Transporta o registro da conta selecionada sem substituir escolhas locais ou aceitar termos e telemetria. Pendência conhecida é sinalizada antes de iniciar uma automissão.' },
+    { title: 'Codex abre no contexto autorizado', detail: 'A confiança comprovada pelo Nexus é projetada só no perfil privado, preservando recusas explícitas. Em sessões ordinárias novas da CLI 0.163.0, o convite Daybreak é desativado sem alterar escolhas explícitas, modelos ou retomadas.' },
+    { title: 'Grok pode renovar a sessão pela CLI', detail: 'Uma sessão OIDC antiga, completa e coordenável deixa de ser recusada apenas pela idade. Credenciais revogadas e identidades ambíguas continuam recusadas.' },
+    { title: 'Conta automática continua automática', detail: 'Layout e failover preservam a origem da escolha da conta. Escolhas explícitas, retomadas e missões seladas mantêm seus limites.' },
+    { title: 'Recibos e capturas confiáveis', detail: 'Saída UTF-8 partida entre chunks é preservada. Capturas ausentes ou incompletas não aprovam a entrega visual.' },
+  ],
+};
+
+export const RELEASE_076417: AppRelease = CURRENT_RELEASE;

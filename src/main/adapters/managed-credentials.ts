@@ -13,6 +13,7 @@ import {
 } from '../../shared/file-auth-adapters';
 import { isStrictlyInside } from '../util/path-inside';
 import { removeTreeSync } from '../util/remove-tree';
+import { projectAgyConsentState } from './agy-onboarding';
 
 export { isFileAuthAdapter };
 export type { FileAuthAdapterId };
@@ -857,7 +858,7 @@ export function readBackFresherAuth(
 export function prepareCheckoutProviderHome(
   kind: 'agy' | 'devin',
   options: { userDataPath: string; checkoutId: string; sourceHome: string },
-): { stateHome: string; env: Record<string, string>; sharedFiles: string[]; sharedReadPaths: string[] } {
+): { stateHome: string; sourceHome: string; env: Record<string, string>; sharedFiles: string[]; sharedReadPaths: string[] } {
   if (!path.isAbsolute(options.userDataPath) || !path.isAbsolute(options.sourceHome)) {
     throw new Error('Provider checkout and auth homes must be absolute paths');
   }
@@ -887,9 +888,12 @@ export function prepareCheckoutProviderHome(
   }
   const spec = MANAGED_PROVIDER_SPECS[kind];
   const sharedFiles: string[] = [];
+  // F-1643: new preferences are local copies; proven legacy settings links stay.
+  // Reopening must not overwrite an explicit opt-out or a CLI atomic replacement.
+  const consentReadPaths = kind === 'agy' ? projectAgyConsentState(sourceHome, providerHome) : [];
   // Explicit file allowlist: never project a native conversation directory.
   const shared = [spec.authRelativePath, ...(spec.authCandidates ?? []), ...(spec.identityCandidates ?? [])];
-  if (kind === 'agy') shared.push('settings.json', 'antigravity-cli/settings.json', 'antigravity-cli/mcp_config.json', 'config/mcp_config.json');
+  if (kind === 'agy') shared.push('antigravity-cli/mcp_config.json', 'config/mcp_config.json');
   for (const relative of shared) {
     const source = path.join(sourceHome, relative);
     if (!exists(source)) continue;
@@ -921,7 +925,7 @@ export function prepareCheckoutProviderHome(
     if (!entry) linkFile(source, target);
     sharedFiles.push(fs.realpathSync(source));
   }
-  const sharedReadPaths: string[] = [];
+  const sharedReadPaths: string[] = [...consentReadPaths];
   if (kind === 'agy') {
     // Skill mirroring may populate these AFTER this helper, during MCP decoration.
     // Directory links may start dangling; conversations never use these links.
@@ -950,7 +954,7 @@ export function prepareCheckoutProviderHome(
       sharedReadPaths.push(source);
     }
   }
-  return { stateHome, env, sharedFiles, sharedReadPaths };
+  return { stateHome, sourceHome, env, sharedFiles, sharedReadPaths };
 }
 
 /** Env patch so the next CLI process uses this managed home. */

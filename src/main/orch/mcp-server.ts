@@ -264,6 +264,7 @@ import {
   isSecureStorageAvailable,
 } from "../persistence/secrets-store";
 import { isGovernedPolicy, isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
+import type { CodexStartupPolicy } from './cli-mcp-session-types';
 import {
   isThirdPartyClaudeFamily,
   requiresSpawnGate,
@@ -1772,8 +1773,22 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
 
   let disposeHeavyProfileExit: (() => void) | undefined;
   selectGrokHeavyShell(env, adapter.id);
+  const codexTrustBasis = adapter.id !== 'codex' ? undefined : hasApprovedMissionProjectTrust(authority)
+    ? 'approved-mission'
+    : authority.source === 'direct-user' && isCwdInsideOpenedWorkspace(authority)
+      ? 'opened-workspace' : undefined;
   const decoration: AgentSpawnDecoration = {
     authorityToken: ctx.token,
+    ...(adapter.id === 'codex' && isOperatorChoicePolicy(getOrchSettings().squadCliPolicy) && !petStudioMediaAuthority ? {
+      codexStartupPolicy: {
+        ...(codexTrustBasis ? { projectTrust: {
+          cwdRealPath: authority.cwd,
+          workspaceRootRealPath: authority.scope.rootRealPath,
+          basis: codexTrustBasis,
+        } } : {}),
+        daybreak: 'suppress-unrequested',
+      } satisfies CodexStartupPolicy,
+    } : {}),
     env,
     ...(envRemove.length > 0 ? { envRemove } : {}),
     extraArgs,

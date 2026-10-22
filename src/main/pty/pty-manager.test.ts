@@ -319,6 +319,9 @@ import {
 } from "../orch/gate";
 import { installMcpSessionTerminationRevocation } from "../orch/mcp-session-revocation";
 import { cleanupCliMcpSession } from "../orch/cli-mcp-session-config";
+import { buildControlArgs } from "../adapters/control-args";
+import { prepareCheckoutProviderHome } from "../adapters/managed-credentials";
+import type { CodexStartupPolicy } from "../orch/cli-mcp-session-types";
 import { getProviderPaneSession, saveProviderPaneSession } from "../persistence/provider-session-store";
 import { __resetHookEditProvenanceForTests, recordHookEditProvenance } from "../orch/hook-edit-provenance";
 import { __resetHookRegressionForTests, handleHookRegressionRequest } from "../orch/hook-regression-endpoint";
@@ -637,6 +640,7 @@ function makeCodexAdapter(
 function installGovernedCodexTestHook(
   root: string,
   attachmentReadPath?: string,
+  startupPolicy?: CodexStartupPolicy,
 ): () => void {
   const home = path.join(root, "home");
   fs.mkdirSync(home, { recursive: true });
@@ -663,6 +667,7 @@ function installGovernedCodexTestHook(
       authorityToken: ctx.token,
       env: { NEXUS_MCP_TOKEN: ctx.token },
       extraArgs: [],
+      ...(startupPolicy ? { codexStartupPolicy: startupPolicy } : {}),
       ...(attachmentReadPath
         ? { attachmentReadPaths: [attachmentReadPath] }
         : {}),
@@ -2225,6 +2230,101 @@ describe("F-243: janela de auto-compactação do Maestro Claude", () => {
   });
 });
 
+function completedAgyFixtureHome(root: string): string {
+  const source = path.join(root, 'agy-source');
+  const cache = path.join(source, 'antigravity-cli', 'cache');
+  fs.mkdirSync(cache, { recursive: true });
+  fs.writeFileSync(path.join(cache, 'onboarding.json'), JSON.stringify({
+    onboardingComplete: true, consumerOnboardingComplete: true, enterpriseOnboardingComplete: false,
+  }));
+  return source;
+}
+
+describe('F-1643 AGY onboarding at physical spawn', () => {
+  it.each([
+    { mode: 'worker pending', completed: false, direct: false, child: false, heal: false, denied: true },
+    { mode: 'worker recorded consumer completion', completed: true, direct: false, child: false, heal: false, denied: false },
+    { mode: 'operator may complete onboarding', completed: false, direct: true, child: false, heal: false, denied: false },
+    { mode: 'automated operator child pending', completed: false, direct: true, child: true, heal: false, denied: true },
+    { mode: 'existing pending checkout healed without changing opt-out', completed: true, direct: false, child: false, heal: true, denied: false },
+    { mode: 'legacy settings hardlink with recorded completion', completed: true, direct: false, child: false, heal: false, legacy: true, denied: false },
+    { mode: 'pending after decoration releases MCP resources', completed: true, direct: false, child: false, heal: false, latePending: true, denied: true },
+  ])('$mode', async scenario => {
+    setSquadCliPolicyLookupForTests(() => 'operator-choice');
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-agy-startup-')));
+    const home = path.join(root, 'home');
+    const cwd = path.join(home, 'project');
+    const source = path.join(home, '.gemini');
+    const cache = path.join(source, 'antigravity-cli', 'cache');
+    fs.mkdirSync(cwd, { recursive: true });
+    fs.mkdirSync(cache, { recursive: true });
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('USERPROFILE', home);
+    const pending = JSON.stringify({ onboardingComplete: false, consumerOnboardingComplete: false, enterpriseOnboardingComplete: false });
+    const completed = JSON.stringify({ onboardingComplete: true, consumerOnboardingComplete: true, enterpriseOnboardingComplete: false });
+    fs.writeFileSync(path.join(cache, 'onboarding.json'), scenario.completed ? completed : pending);
+    const settings = '{"enableTelemetry":false}';
+    fs.writeFileSync(path.join(source, 'antigravity-cli', 'settings.json'), settings);
+    if (scenario.heal) {
+      const initial = prepareCheckoutProviderHome('agy', { userDataPath: app.getPath('userData'), checkoutId: 'checkout-test', sourceHome: source });
+      fs.writeFileSync(path.join(initial.env.GEMINI_CLI_HOME, 'antigravity-cli', 'cache', 'onboarding.json'), pending);
+    }
+    if (scenario.legacy) {
+      const initial = prepareCheckoutProviderHome('agy', { userDataPath: app.getPath('userData'), checkoutId: 'checkout-test', sourceHome: source });
+      const projectedSettings = path.join(initial.env.GEMINI_CLI_HOME, 'antigravity-cli', 'settings.json');
+      fs.unlinkSync(projectedSettings);
+      fs.linkSync(path.join(source, 'antigravity-cli', 'settings.json'), projectedSettings);
+    }
+    const baseAuthority = scenario.direct ? trustedSpawn(cwd) : revisionBoundWorker(cwd);
+    const authority: BoundSpawnAuthority = {
+      ...baseAuthority,
+      context: scenario.child
+        ? { operatorParentSessionId: 'parent', allowedTools: null, allowedSkills: null }
+        : scenario.direct ? null : { ...baseAuthority.context!, allowedTools: null, allowedSkills: null },
+    };
+    let decorationCalls = 0;
+    const artifact = path.join(root, 'mcp-lease');
+    setAgentSpawnHook(() => {
+      decorationCalls++;
+      if (!scenario.latePending) return null;
+      const projected = prepareCheckoutProviderHome('agy', { userDataPath: app.getPath('userData'), checkoutId: 'checkout-test', sourceHome: source });
+      fs.writeFileSync(path.join(projected.env.GEMINI_CLI_HOME, 'antigravity-cli', 'cache', 'onboarding.json'), pending);
+      fs.writeFileSync(artifact, 'fixture lease');
+      return { authorityToken: 'fixture', env: {}, extraArgs: [], onSpawnFailed: () => fs.unlinkSync(artifact) };
+    });
+    const host = fakeHost();
+    setPtyHost(host.host);
+    let sessionId: string | undefined;
+    try {
+      const spawn = () => {
+        const result = spawnAgentSession(fakeWc(), { kind: 'cli-agent', cols: 80, rows: 24 },
+          builtinCliPtyAdapter('agy'), { keyEnv: { GEMINI_CLI_HOME: source } }, authority);
+        sessionId = result.sessionId;
+        return result;
+      };
+      if (scenario.denied) {
+        expect(spawn).toThrowError(expect.objectContaining({ code: 'onboarding_pending' }));
+        expect(decorationCalls).toBe(scenario.latePending ? 1 : 0);
+        expect(sessionId).toBeUndefined();
+        expect(fs.existsSync(artifact)).toBe(false);
+      } else {
+        spawn();
+        expect(decorationCalls).toBe(1);
+        const providerHome = host.specFor(sessionId!).env.GEMINI_CLI_HOME!;
+        expect(providerHome).not.toBe(source);
+        expect(fs.readFileSync(path.join(providerHome, 'antigravity-cli', 'settings.json'), 'utf8')).toBe(settings);
+        if (scenario.completed) expect(fs.readFileSync(path.join(providerHome, 'antigravity-cli', 'cache', 'onboarding.json'), 'utf8')).toBe(completed);
+      }
+      expect(fs.readFileSync(path.join(source, 'antigravity-cli', 'settings.json'), 'utf8')).toBe(settings);
+    } finally {
+      if (sessionId) await orchTerminateSession(sessionId);
+      setAgentSpawnHook(null);
+      vi.unstubAllEnvs();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("AGY advisory native profile", () => {
   const macosIt = process.platform === "darwin" ? it : it.skip;
 
@@ -3095,7 +3195,7 @@ describe("AGY advisory native profile", () => {
           rows: 30,
         },
         builtinCliPtyAdapter("agy"),
-        {},
+        { keyEnv: { GEMINI_CLI_HOME: completedAgyFixtureHome(root) } },
         authority,
       ));
 
@@ -3134,7 +3234,7 @@ describe("AGY advisory native profile", () => {
       ({ sessionId } = spawnMainOwnedAgentSession(
         { kind: "cli-agent", paneId: "agy-live-worker", cols: 100, rows: 30 },
         builtinCliPtyAdapter("agy"),
-        {},
+        { keyEnv: { GEMINI_CLI_HOME: completedAgyFixtureHome(root) } },
         authority,
       ));
       const args = host.specFor(sessionId).args;
@@ -3211,6 +3311,70 @@ describe("AGY advisory native profile", () => {
       }
     },
   );
+});
+
+describe('F-1643/F-1644 startup reaches the real Codex overlay', () => {
+  const scenarios: Array<{
+    label: string; version: string | null; model: string; resume: boolean;
+    args: string[]; optIn: boolean; wantDaybreak: boolean | undefined; wantTrust: boolean;
+    effort?: string; providerArgs?: string[];
+  }> = [
+    { label: 'ordinary new session', version: '0.163.0', model: 'gpt-6.1-sol', resume: false, args: [] as string[], optIn: false, wantDaybreak: false, wantTrust: true },
+    { label: 'unknown version', version: null, model: 'gpt-6.1-sol', resume: false, args: [] as string[], optIn: false, wantDaybreak: undefined, wantTrust: true },
+    { label: 'selected Daybreak model', version: '0.163.0', model: 'gpt-daybreak-blue-latest', resume: false, args: [] as string[], optIn: false, wantDaybreak: undefined, wantTrust: true },
+    { label: 'explicit profile', version: '0.163.0', model: 'gpt-6.1-sol', resume: false, args: ['--profile', 'operator-profile'], optIn: false, wantDaybreak: undefined, wantTrust: false },
+    { label: 'resume request', version: '0.163.0', model: 'gpt-6.1-sol', resume: true, args: [] as string[], optIn: false, wantDaybreak: undefined, wantTrust: true },
+    { label: 'explicit native opt-in', version: '0.163.0', model: 'gpt-6.1-sol', resume: false, args: [] as string[], optIn: true, wantDaybreak: true, wantTrust: true },
+    { label: 'generated high effort', version: '0.163.0', model: 'gpt-6.1-sol', resume: false, args: [], optIn: false, wantDaybreak: false, wantTrust: true, effort: 'high' },
+    { label: 'explicit provider config override after controls', version: '0.163.0', model: 'gpt-6.1-sol', resume: false, args: [], optIn: false, wantDaybreak: undefined, wantTrust: false, providerArgs: ['-c', 'daybreak=true'] },
+  ];
+  it.each(scenarios)('$label', async scenario => {
+    setSquadCliPolicyLookupForTests(() => 'operator-choice');
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-codex-startup-')));
+    // Keep the project below the fixture HOME: a real host ancestor's
+    // .codex/config.toml must not become this test's project-level input.
+    const cwd = path.join(root, 'home', 'project');
+    fs.mkdirSync(cwd, { recursive: true });
+    const cleanupHook = installGovernedCodexTestHook(root, undefined, {
+      projectTrust: { cwdRealPath: cwd, workspaceRootRealPath: cwd, basis: 'opened-workspace' },
+      daybreak: 'suppress-unrequested',
+    });
+    const nativeHome = path.join(root, 'home', '.codex');
+    fs.mkdirSync(nativeHome, { recursive: true });
+    const nativeConfig = '[features]\njs_repl = true\n' + (scenario.optIn ? 'cli_daybreak = true\n' : '');
+    fs.writeFileSync(path.join(nativeHome, 'config.toml'), nativeConfig);
+    cliVersions.set('/mock/bin/codex', scenario.version);
+    const host = fakeHost();
+    setPtyHost(host.host);
+    const adapter = makeCodexAdapter();
+    adapter.spawn.extraArgs = [...adapter.spawn.extraArgs, ...scenario.args];
+    // The actual provider preparation prepends these Main-generated controls,
+    // including -c model_reasoning_effort=medium even with no explicit choice.
+    const generatedControlArgs = buildControlArgs(adapter, { effort: scenario.effort });
+    let sessionId: string | undefined;
+    try {
+      const spawned = spawnAgentSession(fakeWc(), {
+        kind: 'cli-agent', cols: 80, rows: 24, model: scenario.model, resume: scenario.resume,
+      }, adapter, {
+        extraArgs: [...generatedControlArgs, ...(scenario.providerArgs ?? [])],
+        generatedControlArgs,
+      }, trustedSpawn(cwd));
+      sessionId = spawned.sessionId;
+      const effective = host.specFor(sessionId).env.CODEX_HOME!;
+      const config = parse(fs.readFileSync(path.join(effective, 'config.toml'), 'utf8')) as {
+        features?: Record<string, unknown>; projects?: Record<string, { trust_level?: string }>;
+      };
+      expect(config.features?.cli_daybreak).toBe(scenario.wantDaybreak);
+      expect(config.features?.js_repl).toBe(true);
+      expect(config.projects?.[cwd]?.trust_level).toBe(scenario.wantTrust ? 'trusted' : undefined);
+      expect(fs.readFileSync(path.join(nativeHome, 'config.toml'), 'utf8')).toBe(nativeConfig);
+    } finally {
+      if (sessionId) await orchTerminateSession(sessionId);
+      cleanupHook();
+      expect(fs.readFileSync(path.join(nativeHome, 'config.toml'), 'utf8')).toBe(nativeConfig);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("entrega física das skills concedidas ao Codex", () => {
@@ -4689,7 +4853,7 @@ describe("cli-agent spawn argv hardening", () => {
           fakeWc(),
           { kind: "cli-agent", cols: 80, rows: 24 },
           adapter,
-          {},
+          adapterId === 'agy' ? { keyEnv: { GEMINI_CLI_HOME: completedAgyFixtureHome(root) } } : {},
           authority,
         );
         const spec = h.specFor(spawned.sessionId);
@@ -6444,6 +6608,13 @@ describe('F-567 spawn contracts', () => {
     const envKey = kind === 'agy' ? 'GEMINI_CLI_HOME' : 'XDG_DATA_HOME';
     const sourceHome = path.join(root, 'account');
     fs.mkdirSync(sourceHome);
+    if (kind === 'agy') {
+      const cache = path.join(sourceHome, 'antigravity-cli', 'cache');
+      fs.mkdirSync(cache, { recursive: true });
+      fs.writeFileSync(path.join(cache, 'onboarding.json'), JSON.stringify({
+        onboardingComplete: true, consumerOnboardingComplete: true, enterpriseOnboardingComplete: false,
+      }));
+    }
     const h = fakeHost();
     setPtyHost(h.host);
     setSquadCliPolicyLookupForTests(() => 'operator-choice');

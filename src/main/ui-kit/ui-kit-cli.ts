@@ -188,12 +188,15 @@ export class UiKitCliError extends Error {
   readonly code: string;
   /** Operator-facing remediation, when there is one worth printing. */
   readonly hint?: string;
+  /** Main-only physical proof; a service-held claim must follow it, not rejection. */
+  readonly physicalExit?: Promise<void>;
 
-  constructor(code: string, message: string, hint?: string) {
+  constructor(code: string, message: string, hint?: string, physicalExit?: Promise<void>) {
     super(message);
     this.name = 'UiKitCliError';
     this.code = code;
     if (hint !== undefined) this.hint = hint;
+    if (physicalExit !== undefined) this.physicalExit = physicalExit;
   }
 }
 
@@ -201,8 +204,10 @@ export interface UiKitCliRunRequest {
   readonly kit: UiKitId;
   /** Argv AFTER `npx -y <package>`. Built by the kit modules, never by a model. */
   readonly args: readonly string[];
-  /** Absolute directory. The project root for a writing run. */
+  /** Absolute component destination (the selected workspace, or project root). */
   readonly cwd: string;
+  /** Main's trusted execution root when cwd is a selected monorepo workspace. */
+  readonly installationRoot?: string;
   /** True when the command writes files / installs dependencies. */
   readonly writes?: boolean;
   /**
@@ -366,8 +371,21 @@ export function assertSafeUiKitArgs(args: readonly string[]): readonly string[] 
 
 export interface AssertSafeCwdOptions {
   readonly writes?: boolean;
+  readonly installationRoot?: string;
   readonly statSync?: (target: string) => fs.Stats;
   readonly lstatSync?: (target: string) => fs.Stats;
+}
+
+/** The installation root is supplied by Main, never discovered above its scope. */
+function resolveUiKitInstallationRoot(cwd: string, installationRoot: string): string {
+  if (!path.isAbsolute(installationRoot) || !path.isAbsolute(cwd)) {
+    throw new UiKitCliError('CWD_NOT_ABSOLUTE', 'UI-kit installation root and cwd must be absolute');
+  }
+  const rootReal = fs.realpathSync(installationRoot);
+  const cwdReal = fs.realpathSync(cwd);
+  const relative = path.relative(rootReal, cwdReal);
+  if (relative !== '') assertPathStaysInProject(rootReal, relative);
+  return rootReal;
 }
 
 /**
@@ -402,6 +420,12 @@ export function assertSafeUiKitCwd(
     );
   }
   if (!options.writes) return cwd;
+
+  if (options.installationRoot !== undefined) {
+    const root = resolveUiKitInstallationRoot(cwd, options.installationRoot);
+    const { installationRoot: _root, ...rootOptions } = options;
+    assertSafeUiKitCwd(root, rootOptions);
+  }
 
   const lstatSync = options.lstatSync ?? fs.lstatSync;
   const modules = path.join(cwd, 'node_modules');
@@ -517,26 +541,35 @@ export function resolveUiKitNpxLaunch(
 }
 
 /**
- * Projects with a WRITING kit run in flight, by real path.
+ * Installation roots with a WRITING kit run in flight, by real path.
  *
  * An MCP client cuts a tool call long before an install finishes (Codex: 120 s
  * against our 300 s), the install keeps running, and the agent's retry started
  * a SECOND `shadcn add` / `npm install` in the same tree — two writers on one
- * lockfile. One writer per project; the second is refused at once with what
+ * lockfile. One writer per installation root; the second is refused at once with what
  * to do, instead of queueing behind a run nobody is watching.
  */
 const writingProjects = new Map<string, number>();
 
 function projectWriteKey(cwd: string): string {
+  let key: string;
   try {
-    return fs.realpathSync(cwd);
+    key = fs.realpathSync(cwd);
   } catch {
-    return path.resolve(cwd);
+    key = path.resolve(cwd);
   }
+  return process.platform === 'win32' ? key.toLowerCase() : key;
 }
 
-export function claimUiKitProjectWrite(cwd: string, now: number = Date.now()): () => void {
-  const key = projectWriteKey(cwd);
+export function claimUiKitProjectWrite(
+  cwd: string,
+  now: number = Date.now(),
+  installationRoot?: string,
+): () => void {
+  // All selected siblings and the root itself contend for the same physical
+  // installation. Independent projects retain their own key.
+  const key = projectWriteKey(installationRoot === undefined
+    ? cwd : resolveUiKitInstallationRoot(cwd, installationRoot));
   const since = writingProjects.get(key);
   if (since !== undefined) {
     throw new UiKitCliError(
@@ -558,7 +591,6 @@ export function claimUiKitProjectWrite(cwd: string, now: number = Date.now()): (
 export function resetUiKitProjectWritesForTests(): void {
   writingProjects.clear();
 }
-
 /**
  * ESRCH means the group is already gone, which is the outcome teardown wanted.
  * Warning about it turned a clean exit into a scary log line.
@@ -571,39 +603,68 @@ export function isAlreadyGoneKillError(error: unknown): boolean {
   );
 }
 
-/** Kill the group: the package manager's node child holds the download open. */
-async function terminateTree(pid: number | undefined): Promise<void> {
-  if (pid === undefined) return;
-  if (process.platform === 'win32') {
+/** Bounded teardown of our exact child. A signal/kill request is not exit proof. */
+export async function terminateUiKitProcessTree(
+  child: ReturnType<typeof spawn>,
+  closed: Promise<void>,
+  hasExited: () => boolean,
+  proveExit: () => void,
+  platform: NodeJS.Platform = process.platform,
+): Promise<boolean> {
+  const pid = child.pid;
+  if (pid === undefined) { proveExit(); return true; }
+  const waitForClose = () => new Promise<boolean>(resolve => {
+    const timer = setTimeout(() => resolve(false), UI_KIT_TERMINATION_GRACE_MS);
+    // Even a late close may complete an already-confirmed tree teardown. No
+    // retry signals/timers survive this bounded attempt.
+    void closed.then(() => { clearTimeout(timer); proveExit(); resolve(true); });
+  });
+  const groupGone = () => {
+    try { process.kill(-pid, 0); return false; }
+    catch (error) { return isAlreadyGoneKillError(error); }
+  };
+  if (platform === 'win32') {
+    // Never aim taskkill at a PID after our exact child exited (PID reuse).
+    if (hasExited()) return false;
     const taskkill = path.win32.join(
       process.env.SystemRoot ?? process.env.windir ?? 'C:\\Windows',
       'System32',
       'taskkill.exe',
     );
-    await new Promise<void>((resolve) => {
-      const killer = spawn(taskkill, ['/pid', String(pid), '/T', '/F'], {
-        stdio: 'ignore',
-        shell: false,
-        windowsHide: true,
-      });
-      killer.once('error', () => resolve());
-      killer.once('close', () => resolve());
+    const killed = await new Promise<boolean>(resolve => {
+      let finished = false;
+      let killer: ReturnType<typeof spawn> | undefined;
+      const timer = setTimeout(() => {
+        finish(false);
+        try { killer?.kill(); } catch { /* Exact helper handle only. */ }
+      }, UI_KIT_TERMINATION_GRACE_MS);
+      const finish = (ok: boolean) => {
+        if (finished) return;
+        finished = true; clearTimeout(timer); resolve(ok);
+      };
+      try {
+        killer = spawn(taskkill, ['/pid', String(pid), '/T', '/F'], {
+          stdio: 'ignore', shell: false, windowsHide: true,
+        });
+        killer.on('error', () => finish(false));
+        killer.once('close', code => finish(code === 0));
+      } catch { finish(false); }
     });
-    return;
+    return killed ? waitForClose() : false;
   }
+  if (hasExited()) return groupGone() ? waitForClose() : false;
   try {
     signalGroup(pid, 'SIGTERM');
-  } catch {
-    // The SIGKILL escalation below is the authoritative stop.
-  }
+  } catch { /* Only absence below proves the group gone. */ }
   await delay(UI_KIT_TERMINATION_GRACE_MS);
-  try {
-    signalGroup(pid, 'SIGKILL');
-  } catch (error) {
-    if (!isAlreadyGoneKillError(error)) {
-      console.warn(`[ui-kit] failed to kill process group ${pid}:`, error);
-    }
+  if (groupGone()) return waitForClose();
+  // The unreaped leader pins its group id. Once it exits, never signal that
+  // numeric group again: its identity may now belong to somebody else.
+  if (!hasExited()) {
+    try { signalGroup(pid, 'SIGKILL'); } catch { /* Final probe decides. */ }
+    await delay(UI_KIT_TERMINATION_GRACE_MS);
   }
+  return groupGone() ? waitForClose() : false;
 }
 
 export const runUiKitCli: UiKitCliRunner = (request) =>
@@ -613,7 +674,7 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
     let args: string[];
     let env: NodeJS.ProcessEnv;
     try {
-      cwd = assertSafeUiKitCwd(request.cwd, { writes });
+      cwd = assertSafeUiKitCwd(request.cwd, { writes, installationRoot: request.installationRoot });
       args = [...assertSafeUiKitArgs(request.args)];
       env = buildUiKitChildEnv(process.env, request.extraEnv ?? {});
     } catch (error) {
@@ -754,7 +815,7 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
     let releaseWrite: () => void = () => {};
     if (writes && request.projectWriteClaimed !== true) {
       try {
-        releaseWrite = claimUiKitProjectWrite(cwd);
+        releaseWrite = claimUiKitProjectWrite(cwd, Date.now(), request.installationRoot);
       } catch (error) {
         dropScratch();
         dropCapture();
@@ -793,6 +854,15 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
     let stderr = '';
     let bytes = 0;
     let settled = false;
+    let exited = false;
+    let resolveClosed!: () => void;
+    const closed = new Promise<void>(resolve => { resolveClosed = resolve; });
+    let resolvePhysicalExit!: () => void;
+    const physicalExit = new Promise<void>(resolve => { resolvePhysicalExit = resolve; });
+    const proveExit = () => {
+      releaseWrite(); dropScratch(); dropCapture(); resolvePhysicalExit();
+    };
+    child.once('exit', () => { exited = true; });
     const timer = setTimeout(() => {
       fail(
         new UiKitCliError(
@@ -820,20 +890,18 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
       clearTimeout(timer);
       clearInterval(sizeWatch);
       request.signal?.removeEventListener('abort', onAbort);
-      dropScratch();
-      dropCapture();
     }
     function fail(error: UiKitCliError): void {
       if (settled) return;
       settled = true;
       cleanup();
-      // `.catch` BEFORE `.finally`, so an EPERM from the SIGKILL cannot carry
-      // its own rejection out of the derivative with no handler.
-      void terminateTree(child.pid)
-        .catch(() => {})
-        .finally(() => {
-          releaseWrite();
-          reject(error);
+      void terminateUiKitProcessTree(child, closed,
+        () => exited || child.exitCode != null || child.signalCode != null, proveExit)
+        .catch(() => false)
+        .then(proven => {
+          reject(proven ? error : new UiKitCliError('TEARDOWN_FAILED',
+            'UI-kit process-tree exit is unproven; the installation remains locked.',
+            'Do not retry an install while its previous process may still be writing.', physicalExit));
         });
     }
     function onAbort(): void {
@@ -856,11 +924,7 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
     request.signal?.addEventListener('abort', onAbort, { once: true });
     child.stderr?.on('data', (chunk: Buffer) => accumulate(chunk));
     child.once('error', (error: Error) => {
-      releaseWrite();
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(
+      fail(
         new UiKitCliError(
           'SPAWN_FAILED',
           `failed to run ${request.kit}: ${error.message}`,
@@ -869,12 +933,13 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
       );
     });
     child.once('close', (code: number | null) => {
-      releaseWrite();
+      exited = true; resolveClosed();
       if (settled) return;
       settled = true;
       // Read BEFORE cleanup removes the file.
       const stdout = readCapture();
       cleanup();
+      proveExit();
       resolve({ stdout, stderr, code });
     });
   });

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import { parse } from 'smol-toml';
+import { parse, stringify } from 'smol-toml';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   codexGovernedCodeModeHost,
@@ -54,6 +54,116 @@ function fixture() {
   };
 }
 const exactId = '11111111-1111-4111-8111-111111111111';
+
+describe('F-1643/F-1644 private Codex startup policy', () => {
+  function startupFixture() {
+    const base = fixture();
+    const cwd = path.join(base.home, 'workspace', 'child');
+    fs.mkdirSync(cwd, { recursive: true });
+    return {
+      ...base, cwd, workspaceRoot: path.dirname(cwd), model: 'gpt-6-sol',
+      codexStartupPolicy: {
+        projectTrust: {
+          cwdRealPath: cwd, workspaceRootRealPath: path.dirname(cwd),
+          basis: 'opened-workspace' as const,
+        },
+        daybreak: 'suppress-unrequested' as const,
+      },
+    };
+  }
+  function prepare(options: ReturnType<typeof startupFixture>, native = '') {
+    const token = `startup-${tokens.length}`;
+    tokens.push(token);
+    const file = path.join(options.providerHome, 'config.toml');
+    fs.writeFileSync(file, native);
+    const result = prepareCodexOperatorMissionHome(token, options);
+    const config = parse(fs.readFileSync(path.join(result.env.CODEX_HOME, 'config.toml'), 'utf8'));
+    cleanupCliMcpSession(token);
+    expect(fs.readFileSync(file, 'utf8')).toBe(native);
+    return config;
+  }
+
+  it('projects only the proved cwd and suppresses unsolicited Daybreak without changing native prefs', () => {
+    const options = startupFixture();
+    const config = prepare(options, '[features]\nhooks = true\n');
+    expect(config.projects).toEqual({ [options.cwd]: { trust_level: 'trusted' } });
+    expect(config.features).toMatchObject({ hooks: true, cli_daybreak: false });
+    expect(config.daybreak).toBeUndefined();
+  });
+
+  it('suppresses unsolicited Daybreak in the real private config', () => {
+    const config = prepare(startupFixture(), '[features]\nhooks = true\n');
+    expect(config.features).toMatchObject({ hooks: true, cli_daybreak: false });
+    expect(config.daybreak).toBeUndefined();
+  });
+
+  it.each(['cwd', 'ancestor'] as const)('never overrides explicit native untrusted at %s', (where) => {
+    const options = startupFixture();
+    const denied = where === 'cwd' ? options.cwd : options.home;
+    const projects = { [denied]: { trust_level: 'untrusted', note: 'keep' } };
+    expect(prepare(options, stringify({ projects })).projects).toEqual(projects);
+  });
+
+  it.each(['untrusted', 'corrupt'] as const)('preserves project-layer %s instead of promoting trust', (kind) => {
+    const options = startupFixture();
+    const dir = path.join(options.workspaceRoot, '.codex');
+    fs.mkdirSync(dir);
+    const source = kind === 'corrupt' ? '[broken' : stringify({ projects: { [options.cwd]: { trust_level: 'untrusted' } } });
+    fs.writeFileSync(path.join(dir, 'config.toml'), source);
+    const config = prepare(options);
+    expect(config.projects).toBeUndefined();
+    expect((config.features as Record<string, unknown> | undefined)?.cli_daybreak).toBeUndefined();
+    expect(fs.readFileSync(path.join(dir, 'config.toml'), 'utf8')).toBe(source);
+  });
+
+  it('does not add startup decisions when native config cannot be parsed', () => {
+    const config = prepare(startupFixture(), '[broken');
+    expect(config.projects).toBeUndefined();
+    expect((config.features as Record<string, unknown> | undefined)?.cli_daybreak).toBeUndefined();
+  });
+
+  it.each(['missing', 'drift', 'outside', 'symlink'] as const)('does not promote trust with %s authority', (kind) => {
+    const options = startupFixture();
+    if (kind === 'missing') Object.assign(options, { codexStartupPolicy: undefined });
+    if (kind === 'drift') options.codexStartupPolicy.projectTrust.cwdRealPath = options.workspaceRoot;
+    if (kind === 'outside') options.workspaceRoot = options.providerHome;
+    if (kind === 'symlink') {
+      const link = path.join(options.workspaceRoot, 'link');
+      fs.symlinkSync(options.providerHome, link, process.platform === 'win32' ? 'junction' : 'dir');
+      options.cwd = link;
+      options.codexStartupPolicy.projectTrust.cwdRealPath = link;
+    }
+    expect(prepare(options).projects).toBeUndefined();
+  });
+
+  it.each([
+    { daybreak: true }, { daybreak: false },
+    { features: { cli_daybreak: true } }, { features: { cli_daybreak: false } },
+    { model: 'gpt-daybreak-blue-latest' }, { profile: 'security' },
+    { profiles: { security: { daybreak: true } } },
+  ])('preserves explicit native preference %j', (native) => {
+    const config = prepare(startupFixture(), stringify(native));
+    expect((config.features as Record<string, unknown> | undefined)?.cli_daybreak)
+      .toBe(native.features?.cli_daybreak);
+    if ('daybreak' in native) expect(config.daybreak).toBe(native.daybreak);
+  });
+
+  it('preserves an explicitly selected Daybreak model', () => {
+    const options = startupFixture();
+    options.model = 'gpt-daybreak-blue-latest';
+    const config = prepare(options);
+    expect((config.features as Record<string, unknown> | undefined)?.cli_daybreak).toBeUndefined();
+  });
+
+  it('does not apply startup policy to a governed profile', () => {
+    const options = startupFixture();
+    const token = 'startup-governed'; tokens.push(token);
+    const result = prepareCodexGovernedSession(token, options);
+    const config = parse(fs.readFileSync(path.join(result.env.CODEX_HOME, 'config.toml'), 'utf8'));
+    expect(config.projects).toEqual({ [options.cwd]: { trust_level: 'untrusted' } });
+    expect((config.features as Record<string, unknown>).cli_daybreak).toBeUndefined();
+  });
+});
 
 it.each(['operator', 'governed'] as const)('F-950: %s trusts only generated hooks in its private home', (mode) => {
   const options = fixture();
@@ -197,7 +307,10 @@ describe('F-567 Codex checkout conversations', () => {
       const resumed = start(`codex-resumed-${governed}`, {
         codexResumeSessionId: exactId,
         artifactRoot: path.join(options.home, 'restart'),
+        codexStartupPolicy: { daybreak: 'suppress-unrequested' },
       });
+      const resumeConfig = parse(fs.readFileSync(path.join(resumed.env.CODEX_HOME, 'config.toml'), 'utf8'));
+      expect((resumeConfig.features as Record<string, unknown> | undefined)?.cli_daybreak).toBeUndefined();
       expect(
         getAgentResumeArgv('codex', { key: 'session_id', id: exactId }),
       ).toEqual(['codex', 'resume', exactId]);

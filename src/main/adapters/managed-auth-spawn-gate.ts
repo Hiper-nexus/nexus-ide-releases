@@ -143,7 +143,7 @@ export function authBlobIsFreshForSpawn(
  * login de novo.
  */
 export const GROK_LOGIN_REQUIRED_MESSAGE =
-  'A sessão do Grok expirou: a última renovação tem mais de 7 dias e o Grok não renova mais. ' +
+  'A sessão do Grok expirou e não há dados completos para renovação OAuth. ' +
   'Faça login uma vez — use "Entrar" no cartão do Grok na lista Atenção (ou em Configurações › ' +
   'Contas de IA), ou rode `grok login` num terminal — e os panes Grok voltam a abrir.';
 

@@ -462,6 +462,27 @@ describe('spawn adiado sem ninguém esperando a sessão', () => {
     expect(panes.find((p) => p.id === other.id)?.accountId).toBe('account-b');
   });
 
+  it.each([
+    { accountId: undefined, accountSelection: undefined, expected: 'automatic' },
+    { accountId: 'account-a', accountSelection: 'automatic' as const, expected: 'automatic' },
+    { accountId: 'account-a', accountSelection: undefined, expected: undefined },
+    { accountId: 'account-a', accountSelection: 'pinned' as const, expected: undefined },
+  ])('preserva a origem da escolha Claude após spawn: %j', async ({ accountId, accountSelection, expected }) => {
+    const agent: PaneModel = { id: 'claude-choice-origin', kind: 'cli-agent', adapterId: 'claude',
+      title: 'Claude', accountId, accountSelection };
+    useLayoutStore.setState({ root: buildGridTree([agent]), focusedPaneId: agent.id });
+    spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-choice-origin', accountId: 'account-a' });
+    const host = getOrCreateHost(agent);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(agent, slot);
+    expect(await waitForSession(agent.id, 1000)).toBe('pty-choice-origin');
+    const saved = listPanes(useLayoutStore.getState().root)[0];
+    expect(saved.accountId).toBe('account-a');
+    expect(saved.accountSelection).toBe(expected);
+  });
+
   it('nasce sozinho quando o canvas oculto fica mensurável, mesmo sem ResizeObserver', async () => {
     // Campo 09/09: pane aberto pelo picker com o destino em Início (canvas
     // de terminais `hidden`, 0×0). Ninguém chama waitForSession, o
@@ -3598,8 +3619,9 @@ describe('F-1137: respawn continuity waits for native prompt acceptance', () => 
 });
 
 describe('F-1473: troca de conta com histórico compartilhado continua a mesma conversa', () => {
-  async function liveClaudePane(id: string) {
-    const agent: PaneModel = { id, kind: 'cli-agent', adapterId: 'claude', title: 'Claude', accountId: 'acct-b' };
+  async function liveClaudePane(id: string, automatic = false) {
+    const agent: PaneModel = { id, kind: 'cli-agent', adapterId: 'claude', title: 'Claude', accountId: 'acct-b',
+      ...(automatic ? { accountSelection: 'automatic' as const } : {}) };
     useLayoutStore.setState({ root: buildGridTree([agent]), focusedPaneId: agent.id });
     const host = getOrCreateHost(agent);
     setHostSize(host.element, 1200, 800);
@@ -3619,6 +3641,19 @@ describe('F-1473: troca de conta com histórico compartilhado continua a mesma c
   const paste = (text: string) => `\x1b[200~${text}\x1b[201~`;
   const options = { mode: 'cross-account-resume' as const, resumeNote: 'NOTA: mesma conversa', continuityPack: 'PACOTE completo' };
 
+  it.each(['same-account-resume', 'cross-account-continuity', 'cross-account-resume'] as const)(
+    'F-1630: destino do failover %s fica obrigatório e a política continua automática', async (mode) => {
+      const { agent } = await liveClaudePane('f1630-' + mode, true);
+      spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-auto-recovery', accountId: 'acct-b', resumeMode: 'exact' });
+      respawnWithResume(agent, undefined, { ...options, mode });
+      await vi.advanceTimersByTimeAsync(2_800);
+      expect(spawn).toHaveBeenLastCalledWith(expect.objectContaining({ accountId: 'acct-b' }));
+      expect(listPanes(useLayoutStore.getState().root)[0]).toMatchObject({
+        accountId: 'acct-b', accountSelection: 'automatic',
+      });
+    },
+  );
+
   it('retomada exata na conta nova: spawn com resume e só a nota como primeira mensagem', async () => {
     const { agent, writes } = await liveClaudePane('f1473-exact');
     spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-resumed', resumeMode: 'exact' });
@@ -3637,7 +3672,7 @@ describe('F-1473: troca de conta com histórico compartilhado continua a mesma c
   });
 
   it('retomada que cai no boot: o pane sobe sozinho em sessão nova com o pacote', async () => {
-    const { agent, writes } = await liveClaudePane('f1473-boot-fail');
+    const { agent, writes } = await liveClaudePane('f1473-boot-fail', true);
     spawn
       .mockResolvedValueOnce({ ok: true, sessionId: 'pty-resume-dies', resumeMode: 'exact' })
       .mockResolvedValueOnce({ ok: true, sessionId: 'pty-pack' });

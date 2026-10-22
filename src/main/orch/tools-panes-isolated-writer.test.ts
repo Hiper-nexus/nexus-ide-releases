@@ -45,7 +45,15 @@ const h = vi.hoisted(() => ({
   unrecorded: new Set<string>(),
   // F-1319: CLIs do roster do squad selado da missão (gate b).
   rosterClis: new Set<string>(['codex']),
+  processCwds: undefined as readonly string[] | null | undefined,
 }));
+// Only GC scenarios opt in: their process inventory is independent of the
+// operator's same-UID services. Git, registry, dirty checks and PTY guards stay real.
+vi.mock('../runtime/process-cwds', async (original) => {
+  const actual = await original<typeof import('../runtime/process-cwds')>();
+  return { ...actual, listProcessCwds: (...args: Parameters<typeof actual.listProcessCwds>) =>
+    h.processCwds === undefined ? actual.listProcessCwds(...args) : Promise.resolve(h.processCwds) };
+});
 vi.mock('./tool-util', async (original) => ({
   ...(await original<typeof import('./tool-util')>()),
   spawnPaneAndMaybePrompt: h.spawn,
@@ -187,6 +195,7 @@ afterEach(async () => {
   for (const pane of h.panes) exitPane(pane);
   await operatorHandGcIdle();
   await worktreeSalvageIdle();
+  h.processCwds = undefined;
   disposeWorktreeRuntimeRegistry();
   manager.closeAll();
   fs.rmSync(temp, { recursive: true, force: true });
@@ -756,6 +765,7 @@ describe('revisão cruzada 0.76.110: corrida, retomada, WIP e GC', () => {
   });
 
   it('F-908: fim do pane de missão coleta o writer já mesclado; sem commit ou não mesclado fica', async () => {
+    h.processCwds = [ctx.scope.rootRealPath];
     await Promise.all([1, 2, 3].map(() => paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: true }, ctx)));
     const [merged, unmerged, idle] = h.panes.map((pane) => registry.listMission(ctx.scope, ctx.missionId!)
       .find((r) => r.worktreePath === pane.executionScope!.rootRealPath)!);
@@ -902,6 +912,7 @@ describe('revisão cruzada 0.76.110: corrida, retomada, WIP e GC', () => {
   });
 
   it('GC ao alocar: apaga só worktree operator-hand já mesclada e limpa; preserva trabalho não integrado', async () => {
+    h.processCwds = [op.scope.rootRealPath];
     await Promise.all([1, 2, 3].map(() => paneSpawnTool.handler({ adapterId: 'codex', isolatedWriter: true }, op)));
     const byPane = h.panes.map((pane) => opRecords().find((r) => r.worktreePath === pane.executionScope!.rootRealPath)!);
     const [merged, unmerged, dirty] = byPane;

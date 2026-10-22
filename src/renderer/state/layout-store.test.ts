@@ -59,6 +59,24 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('account selection provenance', () => {
+  it('guarda escolha automática e limpa a origem ao fixar outra conta ou trocar de CLI', () => {
+    seedLayout({ root: buildGridTree([{ ...basePane, kind: 'cli-agent', adapterId: 'claude' }]),
+      focusedPaneId: 'pane-a', hydrated: true });
+    const store = useLayoutStore.getState();
+    const pane = () => listPanes(useLayoutStore.getState().root)[0];
+    store.setAccountId('pane-a', 'acc-1', 'automatic');
+    expect(pane()).toMatchObject({ accountId: 'acc-1', accountSelection: 'automatic' });
+    store.setAccountId('pane-a', 'acc-2');
+    expect(pane().accountId).toBe('acc-2');
+    expect(pane().accountSelection).toBeUndefined();
+    store.setAccountId('pane-a', 'acc-2', 'automatic');
+    store.setPaneAdapter('pane-a', 'codex', 'gpt');
+    expect(pane().accountId).toBeUndefined();
+    expect(pane().accountSelection).toBeUndefined();
+  });
+});
+
 describe('layout-store pane maximize', () => {
   beforeEach(() => {
     const panes: PaneModel[] = [

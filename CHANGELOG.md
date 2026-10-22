@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.76.417 — Windows: missões e agentes prontos para trabalhar
+
+Candidata Windows x64 com a base funcional 0.76.413/414 e as correções do PR #160. Assinatura e publicação são etapas de validação separadas, não presumidas por estas notas.
+
+- Missões em pastas sem Git ou sem primeiro commit usam a pasta existente, sem criar Git/commits implicitamente (F-1629).
+- A origem automática ou explícita da escolha da conta é preservada no layout e no failover (F-1630).
+- Grok deixa a própria CLI renovar sessões OIDC antigas completas e coordenáveis, mantendo a recusa de revogação/identidade ambígua (F-1636).
+- Kits: licença BoardUI no perfil Windows correto; trava por raiz de instalação do monorepo; UTF-8 entre chunks; exclusividade retida quando não há prova de fim físico do processo (F-1635/F-1637/F-1638/F-1641).
+- Captura ausente/incompleta não aprova a entrega visual (F-1639).
+- REA selecionada automaticamente para pedidos de engenharia reversa. Análise estática JS/Electron no Windows x64 requer runtime revisado separado; motores nativos opcionais não estão incluídos. O ambiente privado retido é informado, nunca descrito como removido.
+- AGY transporta o registro real de onboarding da mesma conta, preserva opt-out/configuração local e sinaliza pendência antes de automissões; nenhum aceite de termos ou telemetria é fabricado (F-1643).
+- Codex projeta a confiança já autorizada somente no perfil privado. CLI 0.163.0 em sessão nova ordinária desativa o convite Daybreak; recusas explícitas, preferências, modelos, perfis e retomadas permanecem preservados (F-1643/F-1644). O modal autenticado não foi reproduzido.
+
+Limites: computer use universal continua em branch separada, fora deste pacote. O operador dispensou somente a prova instalada N→N+1 desta entrega, por ausência de VM/Sandbox e para preservar o Nexus em uso; `installedUpgradeVerified` permanece falso. Smoke do pacote, testes e assinatura YubiKey continuam obrigatórios.
+
 ## 0.76.414 — A coleta no Linux e a colagem grande
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
@@ -33,6 +48,15 @@ No desktop macOS, em relação à 0.76.407:
 - **Três dependências saem do aviso.** DOMPurify 3.4.17, Electron 43.8.3 e ip-address 10.7.4.
 
 O resto do desktop é o da 0.76.407.
+
+## 0.76.412 — Projetos locais e escolha de conta
+
+Candidata Windows local assinada e validada, anterior à integração do PR 161; não publicada.
+
+- F-1630: a origem automática da conta Claude sobrevive ao layout salvo. Ao iniciar uma conversa nova em um pane automático solto, o Main volta a aplicar a regra de folga, inclusive para uma conta com 99% semanal e outra disponível. Retomadas de conversa, contas explicitamente escolhidas e autoridade de missão são preservadas. Vínculos antigos sem origem continuam vinculados.
+- F-1629: missões podem começar na pasta local sem Git, sem primeiro commit ou sem Git instalado. O Nexus não inicializa repositório por conta própria; projetos com HEAD continuam isolados por worktree.
+- Inclui F-431/F-432/F-433: início dos kits por Node nativo no Windows, falhas de escrita MCP contidas e JSON inválido tratado.
+- Inclui F-434: preservação dos avisos Chromium no instalador Squirrel.
 
 ## 0.76.411 — O navegador age e o kit acerta o pacote
 

@@ -1,8 +1,8 @@
 import type { McpToolDef } from './mcp-protocol';
 import { executionScopeFor } from './gate';
-import { listUiKitWorkspaces, resolveUiKitWorkspace } from '../ui-kit/ui-kit-workspaces';
+import { listUiKitWorkspaces, resolveUiKitWorkspaceTarget } from '../ui-kit/ui-kit-workspaces';
 import { num, requireStr, str, strArray } from './tool-util';
-import { UI_KIT_IDS, type UiKitId } from '../ui-kit/ui-kit-cli';
+import { assertSafeUiKitCwd, UI_KIT_IDS, type UiKitId } from '../ui-kit/ui-kit-cli';
 import {
   classifyShadcnItem,
   SHADCN_BASES,
@@ -78,10 +78,10 @@ import {
  *   configures that in the project; an agent does not get to aim a write.
  */
 
-function cwdFor(ctx: Parameters<McpToolDef['handler']>[1], args: Record<string, unknown> = {}): string {
+function targetFor(ctx: Parameters<McpToolDef['handler']>[1], args: Record<string, unknown> = {}) {
   // A monorepo package the PROJECT declares, by name from Main's own list —
   // never a free path (see the header on destinations).
-  return resolveUiKitWorkspace(executionScopeFor(ctx).rootRealPath, str(args, 'workspace'));
+  return resolveUiKitWorkspaceTarget(executionScopeFor(ctx).rootRealPath, str(args, 'workspace'));
 }
 
 const WORKSPACE_PROPERTY = {
@@ -397,7 +397,7 @@ export function buildUiKitTools(): McpToolDef[] {
       handler: async (args, ctx, invocation) => {
         const named = assertNamedItems(strArray(args, 'items'));
         const task = str(args, 'task');
-        const cwd = cwdFor(ctx, args);
+        const { cwd, installationRoot } = targetFor(ctx, args);
         // A caller who names a kit keeps it; `parseKit` defaults to shadcn, so
         // the pick only gets to choose when nothing was named.
         const namedKit = str(args, 'kit') ? parseKit(args) : undefined;
@@ -440,6 +440,7 @@ export function buildUiKitTools(): McpToolDef[] {
           // gate sees the real licence), and the call is already gated. The
           // read-only catalog answers with the offline rule instead.
           assertStillCurrent(invocation);
+          assertSafeUiKitCwd(cwd, { writes: true, installationRoot });
           const resolved = await resolveInstallTargetForTask(
             {
               task,
@@ -476,6 +477,7 @@ export function buildUiKitTools(): McpToolDef[] {
             kit,
             items,
             cwd,
+            installationRoot,
             ...(args.overwrite === true ? { overwrite: true } : {}),
             ...(invocation?.signal ? { signal: invocation.signal } : {}),
           },
@@ -523,7 +525,7 @@ export function buildUiKitTools(): McpToolDef[] {
           );
         }
         const kit = parseKit(args);
-        const cwd = cwdFor(ctx, args);
+        const { cwd, installationRoot } = targetFor(ctx, args);
         if (kit === 'shadcn' && args.dryRun !== true) {
           const refused = shadcnProjectNotReady(cwd);
           if (refused) {
@@ -531,6 +533,9 @@ export function buildUiKitTools(): McpToolDef[] {
           }
         }
         assertStillCurrent(invocation);
+        if (args.dryRun !== true) {
+          assertSafeUiKitCwd(cwd, { writes: true, installationRoot });
+        }
         const proLicensed =
           kit === 'boardui' ? await boardUiProSelectable({ cwd }, serviceDeps()) : false;
         const listed = await liveCandidates(kit, cwd, undefined, serviceDeps());
@@ -572,6 +577,7 @@ export function buildUiKitTools(): McpToolDef[] {
             kit,
             items: resolved.install,
             cwd,
+            installationRoot,
             ...(invocation?.signal ? { signal: invocation.signal } : {}),
           },
           serviceDeps(),
@@ -642,7 +648,7 @@ export function buildUiKitTools(): McpToolDef[] {
       },
       handler: async (args, ctx, invocation) => {
         const command = buildRunCommand(args);
-        const cwd = cwdFor(ctx, args);
+        const { cwd, installationRoot } = targetFor(ctx, args);
         if (command.kind === 'init') {
           const unfit = projectNotFitForKit(cwd, 'shadcn');
           if (unfit) return { ok: false, command: 'init', ...agentInstallReceipt(unfit, { kit: 'shadcn', items: [] }) };
@@ -671,7 +677,7 @@ export function buildUiKitTools(): McpToolDef[] {
           };
         }
         const result = await runShadcnCommand(
-          { command, cwd, ...(invocation?.signal ? { signal: invocation.signal } : {}) },
+          { command, cwd, installationRoot, ...(invocation?.signal ? { signal: invocation.signal } : {}) },
           serviceDeps(),
         );
         // What a DEFAULT search could not reach. The CLI takes a bounded
@@ -742,7 +748,7 @@ export function buildUiKitTools(): McpToolDef[] {
         }
         // After the refusal: resolving the scope is work, and a refusal should
         // not depend on it.
-        const cwd = cwdFor(ctx, args);
+        const { cwd, installationRoot } = targetFor(ctx, args);
         assertStillCurrent(invocation);
         // Never take a key from a model, and never hand one back.
         if (tool === 'license_status') {
@@ -790,7 +796,7 @@ export function buildUiKitTools(): McpToolDef[] {
         // licence from the vault), so `projectDir` and friends cannot redirect
         // an install out of this pane's execution scope.
         const result = await callBoardUiTool(
-          { tool, args: args.args, cwd, ...(invocation?.signal ? { signal: invocation.signal } : {}) },
+          { tool, args: args.args, cwd, installationRoot, ...(invocation?.signal ? { signal: invocation.signal } : {}) },
           serviceDeps(),
         );
         return {

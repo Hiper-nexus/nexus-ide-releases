@@ -121,3 +121,11 @@ export function resolveUiKitWorkspace(root: string, workspace: string | undefine
   }
   return path.join(root, wanted);
 }
+
+/** Preserve Main's trusted root alongside the selected component destination. */
+export function resolveUiKitWorkspaceTarget(root: string, workspace: string | undefined): {
+  readonly cwd: string;
+  readonly installationRoot: string;
+} {
+  return { cwd: resolveUiKitWorkspace(root, workspace), installationRoot: root };
+}

@@ -72,7 +72,7 @@ describe('authBlobIsFreshForSpawn', () => {
     const grok = JSON.stringify({ issuer: { key: jwtExp(Math.floor(now / 1000) + 3600), user_id: 'grok-a' } });
     expect(authBlobIsFreshForSpawn(grok, now)).toBe(true);
     expect(ROTATING_REFRESH_SPAWN_ADAPTERS.has('grok')).toBe(true);
-    expect(resolveRotatingAuthFile('grok', { GROK_HOME: '/managed/grok' })).toBe('/managed/grok/auth.json');
+    expect(resolveRotatingAuthFile('grok', { GROK_HOME: '/managed/grok' })).toBe(path.join('/managed/grok', 'auth.json'));
   });
 
   it('treats a JWT more than skew away as fresh', () => {
@@ -126,6 +126,44 @@ describe('F-1485: sessão do Grok vencida além da renovação', () => {
     const now = Date.parse('2026-10-13T23:20:00Z');
     fs.writeFileSync(authFile, grokSession(now - 2 * DAY));
     expect(await waitForRotatingAuthSpawnGate({ authFile, now: () => now, refuseExpiredGrokSession: true })).toBe('leader');
+  });
+
+  it('lets the CLI lead renewal of an old complete OIDC session without declaring it fresh', async () => {
+    const authFile = path.join(tempDir(), 'auth.json');
+    const now = Date.parse('2026-10-22T12:00:00Z');
+    const parsed = JSON.parse(grokSession(now - 21 * DAY));
+    const entry = Object.values(parsed)[0] as Record<string, unknown>;
+    Object.assign(entry, { auth_mode: 'oidc', oidc_issuer: 'https://issuer.example.test', oidc_client_id: 'fixture-client' });
+    const stale = JSON.stringify(parsed);
+    fs.writeFileSync(authFile, stale);
+    expect(authBlobIsFreshForSpawn(stale, now)).toBe(false);
+    expect(await waitForRotatingAuthSpawnGate({ authFile, now: () => now, refuseExpiredGrokSession: true })).toBe('leader');
+    expect(fs.readFileSync(authFile, 'utf8')).toBe(stale);
+    expect(fs.existsSync(rotatingAuthLockPath(authFile))).toBe(true);
+  });
+
+  it('refuses both copies of an old multi-entry blob before either can lead renewal', async () => {
+    const root = tempDir();
+    const nativeFile = path.join(root, 'native', 'auth.json');
+    const managedFile = path.join(root, 'managed', 'auth.json');
+    const now = Date.parse('2026-10-22T12:00:00Z');
+    const parsed = JSON.parse(grokSession(now - 21 * DAY));
+    const entry = Object.values(parsed)[0] as Record<string, unknown>;
+    Object.assign(entry, { auth_mode: 'oidc', oidc_issuer: 'https://issuer.example.test', oidc_client_id: 'fixture-client' });
+    parsed['another-synthetic-scope'] = { ...entry };
+    const stale = JSON.stringify(parsed);
+    for (const file of [nativeFile, managedFile]) {
+      fs.mkdirSync(path.dirname(file));
+      fs.writeFileSync(file, stale);
+    }
+    const results = await Promise.allSettled([nativeFile, managedFile].map(authFile =>
+      waitForRotatingAuthSpawnGate({ authFile, now: () => now, refuseExpiredGrokSession: true })));
+    expect(results.map(result => result.status === 'fulfilled' ? result.value : result.status))
+      .toEqual(['rejected', 'rejected']);
+    for (const file of [nativeFile, managedFile]) {
+      expect(fs.existsSync(rotatingAuthLockPath(file))).toBe(false);
+      expect(fs.readFileSync(file, 'utf8')).toBe(stale);
+    }
   });
 
   it('pane do operador passa mesmo vencido: é onde ele aprova o login no navegador', async () => {

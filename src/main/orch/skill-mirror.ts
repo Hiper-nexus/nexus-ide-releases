@@ -11,6 +11,7 @@ import { SUPERPOWERS_MANIFEST } from './superpowers-manifest';
 import { DEMBRANDT_MANIFEST } from './dembrandt-manifest';
 import { TYPESAFE_AI_MANIFEST } from './typesafe-ai-manifest';
 import { UI_KIT_MANIFEST } from './ui-kit-manifest';
+import { REA_MANIFEST } from './rea-manifest';
 import { OC_PILOT_MANIFEST } from './oc-pilot-manifest';
 import { OC_BUILDER_MANIFEST } from './oc-builder-manifest';
 import { OC_SCOUT_MANIFEST } from './oc-scout-manifest';
@@ -308,6 +309,7 @@ export const BUNDLED_MANIFESTS: Record<string, Record<string, SkillAsset>> = {
   dembrandt: DEMBRANDT_MANIFEST,
   'typesafe-ai': TYPESAFE_AI_MANIFEST,
   'ui-kit': UI_KIT_MANIFEST,
+  rea: REA_MANIFEST,
   'oc-pilot': OC_PILOT_MANIFEST,
   'oc-builder': OC_BUILDER_MANIFEST,
   'oc-scout': OC_SCOUT_MANIFEST,

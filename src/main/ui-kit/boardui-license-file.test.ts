@@ -50,6 +50,16 @@ describe('boarduiConfigRoot — mirrors the vendored CLI', () => {
     expect(boarduiConfigRoot({}, 'linux', () => '/fallback/home')).toBe(path.normalize('/fallback/home/.config'));
   });
 
+  it('Windows without APPDATA follows the child USERPROFILE, not its POSIX HOME', () => {
+    expect(boarduiConfigRoot({ HOME: '/posix-home', USERPROFILE: 'C:/fixture/profile' }, 'win32'))
+      .toBe(path.join('C:/fixture/profile', '.config'));
+  });
+
+  it('Windows without APPDATA or USERPROFILE uses os.homedir even when HOME is set', () => {
+    expect(boarduiConfigRoot({ HOME: '/posix-home' }, 'win32', () => 'C:/fixture/fallback'))
+      .toBe(path.join('C:/fixture/fallback', '.config'));
+  });
+
   it('the licence file sits in boardui/license.json under the root', () => {
     expect(boarduiLicenseFilePath('/xdg')).toBe(
       path.join('/xdg', 'boardui', 'license.json'),

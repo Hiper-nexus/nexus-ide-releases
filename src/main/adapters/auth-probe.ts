@@ -163,18 +163,14 @@ const OAUTH_PROBES: Record<
     if (!hasNativeFileAuth('grok')) {
       return { state: 'missing', detail: 'sem sessão — rode `grok login`' };
     }
-    // F-1485: exceção à regra do cabeçalho ("checar expiração geraria alarme
-    // falso"). O Grok para de renovar 7 dias depois da emissão — a própria CLI
-    // 1.0.52 documenta "Grok will prompt you to re-authenticate" — então aqui o
-    // arquivo presente NÃO é sessão viva: o pane sobe, para no código do
-    // navegador e ninguém aprova. `grokSessionNeedsLogin` exige acesso vencido E
-    // emissão além da janela; um relogin recente reescreve create_time/iat e
-    // desarma o aviso sozinho. Só metadado de data: nenhum token é lido ou exposto.
+    // An old access token without renewal material is not a ready session.
+    // Complete OIDC credentials remain eligible for CLI-owned refresh: age
+    // alone is not evidence of revocation. No refresh is performed by this probe.
     if (grokHasNoRenewableSession()) {
       return {
         state: 'missing',
         detail:
-          'a sessão do Grok expirou e a CLI não renova mais — use "Entrar" no ' +
+          'a sessão do Grok expirou e faltam dados para renovação — use "Entrar" no ' +
           'cartão do Grok em Atenção, ou Configurações › Contas de IA',
       };
     }

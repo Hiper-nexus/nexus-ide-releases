@@ -2,9 +2,10 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { decodeLsofName, listProcessCwds, type ProcessCwdExec } from './process-cwds';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { decodeLsofName, listProcessCwds, type ProcessCwdDeps, type ProcessCwdExec } from './process-cwds';
 import { skipIfCwdProbeDeniedBySandbox } from '../../test/cwd-probe-sandbox';
+import { controlledProcessCwds } from '../../test/controlled-process-cwds';
 
 const temps: string[] = [];
 /** mkdtemp cria 0700 do próprio usuário: serve de ancestral privado. */
@@ -15,6 +16,7 @@ function tmp(): string {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const dir of temps.splice(0)) {
     fs.chmodSync(dir, 0o700);
     for (const entry of fs.readdirSync(dir)) fs.chmodSync(path.join(dir, entry), 0o700);
@@ -27,11 +29,11 @@ const posix = process.platform === 'darwin' || process.platform === 'linux';
 describe('F-908: cwd atual dos processos', () => {
   /**
    * Primeira PROVA da porta real. `null` é "sem prova" pelo contrato: sob
-   * carga, um processo do mesmo uid nasce entre o `ps` e o `lsof` e a amostra
-   * não vale. Re-amostra só nesse caso; a asserção é sobre a prova obtida.
+   * carga, o filho pode mudar entre o `ps` e o `lsof`. O inventário contém
+   * só runner/filho; a leitura real de cwd e a recusa de `null` permanecem.
    */
-  const firstProof = (dir: string) => vi.waitFor(async () => {
-    const cwds = await listProcessCwds({ privateAncestors: [dir] });
+  const firstProof = (dir: string, deps: ProcessCwdDeps) => vi.waitFor(async () => {
+    const cwds = await listProcessCwds({ ...deps, privateAncestors: [dir] });
     if (cwds === null) throw new Error('sem prova nesta amostra (processo nascendo/saindo entre ps e lsof)');
     return cwds;
   }, { timeout: 45_000, interval: 50 });
@@ -42,14 +44,18 @@ describe('F-908: cwd atual dos processos', () => {
     // Vive mais que a espera pela prova; a saída é observada desde o spawn.
     const child = spawn('sleep', ['600'], { cwd: dir, stdio: 'ignore' });
     const exited = new Promise((resolve) => child.once('exit', resolve));
+    let inventory: ReturnType<typeof controlledProcessCwds>;
     try {
       await new Promise((resolve) => child.once('spawn', resolve));
-      expect(await firstProof(dir)).toContain(dir);
+      inventory = controlledProcessCwds([child.pid!]);
+      onTestFinished(inventory.dispose);
+      expect(await firstProof(dir, inventory.deps)).toContain(dir);
     } finally {
       child.kill('SIGKILL');
       await exited;
     }
-    expect(await firstProof(dir)).not.toContain(dir);
+    // Keep the same PID inventory: the real cwd read must observe its exit.
+    expect(await firstProof(dir, inventory.deps)).not.toContain(dir);
   }, 120_000);
 
   describe('darwin com ps/lsof falsos', () => {
@@ -107,6 +113,20 @@ describe('F-908: cwd atual dos processos', () => {
       expect(await listProcessCwds({ ...opts, exec: fake('', 'p1\nn/a\n', { ps: 1 }) })).toBeNull();
       expect(await listProcessCwds({ ...opts, exec: async () => { throw new Error('spawn'); } })).toBeNull();
     });
+  });
+
+  it.each(['EACCES', 'EPERM'])('procfs: %s de processo do mesmo uid invalida até uma leitura parcial', async (code) => {
+    const proc = tmp();
+    fs.mkdirSync(path.join(proc, '42'));
+    fs.mkdirSync(path.join(proc, '43'));
+    const readlink = fs.promises.readlink.bind(fs.promises);
+    vi.spyOn(fs.promises, 'readlink').mockImplementation(async (...args) => {
+      if (args[0] === path.join(proc, '42', 'cwd')) return '/known-idle';
+      if (args[0] === path.join(proc, '43', 'cwd')) throw Object.assign(new Error('denied'), { code });
+      return readlink(...args);
+    });
+    expect(await listProcessCwds({ platform: 'linux', procRoot: proc,
+      uid: fs.statSync(path.join(proc, '43')).uid, privateAncestors: [proc] })).toBeNull();
   });
 
   it.skipIf(!posix || process.getuid?.() === 0)('procfs: cwd ilegível do mesmo uid invalida a prova', async () => {

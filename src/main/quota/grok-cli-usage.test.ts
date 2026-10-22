@@ -53,7 +53,14 @@ it('rejects identity replacement while waiting for renewal', async () => {
   expect((await probeGrokCliUsage({ authFile: file, expectedAuthBlob: auth(), fetchImpl })).windows).toBeNull();
   expect(methods).toEqual([]);
 });
-it.each([['invalid_grant', 'auth-expired'], ['network unavailable', 'unavailable']])('distinguishes renewal failure %s', async (message, hint) => {
+it.each([
+  ['invalid_grant', 'auth-expired'],
+  ['token_revoked', 'auth-expired'],
+  ['refresh_token_reused', 'auth-expired'],
+  ['refresh_token_expired', 'auth-expired'],
+  ['refresh_token_invalidated', 'auth-expired'],
+  ['network unavailable', 'unavailable'],
+])('distinguishes renewal failure %s', async (message, hint) => {
   server({ message });
   expect((await probeGrokCliUsage({ authFile: file, expectedAuthBlob: auth(), fetchImpl })).hint).toBe(hint);
 });

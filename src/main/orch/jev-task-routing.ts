@@ -30,6 +30,7 @@ import {
   allowedProjectSkillCatalog,
   allowedSkillCatalog,
   buildSkillSuggestionQuestions,
+  deterministicSkillForTask,
   parseSkillSuggestions,
   skillCatalogForTaskRole,
   type SkillSuggestionPick,
@@ -349,6 +350,8 @@ export interface JevBatchUsageMeta {
  * pergunta `skill` nem entra. Fail-open idêntico ao standalone: skill `none`,
  * baixa confiança ou escolha fora do catálogo não invalidam a classificação —
  * só viram skillSuggestion null. Resposta malformada nos dois → invalid-answer.
+ * REA elegível é uma escolha local prioritária, preservada também quando a
+ * classificação retorna unavailable (motor desligado, sem chave ou falha).
  */
 export type JevRouteTaskBatch =
   | {
@@ -384,23 +387,27 @@ export async function classifyTaskWithSkillForRouting(
 ): Promise<JevRouteTaskBatch> {
   const noBatch = { requestCount: 0, questionCount: 0 };
   if (!task.trim()) return { kind: 'skipped' };
+  const deterministic = deterministicSkillForTask(
+    task, skillCatalogForTaskRole(task, allowedSkillCatalog(opts.allowedSkills)),
+  );
   const enabled = opts.deps?.enabled ?? (() => isJevSurfaceEnabled('taskRouting'));
   const hasKey = opts.deps?.hasKey ?? (() => hasDecisionCredential('taskRouting'));
   if (!enabled()) {
-    return { kind: 'unavailable', reason: 'disabled', skillSuggestion: null, batch: noBatch };
+    return { kind: 'unavailable', reason: 'disabled', skillSuggestion: deterministic, batch: noBatch };
   }
   if (!hasKey()) {
-    return { kind: 'unavailable', reason: 'no-key', skillSuggestion: null, batch: noBatch };
+    return { kind: 'unavailable', reason: 'no-key', skillSuggestion: deterministic, batch: noBatch };
   }
   return memoizedTaskRouting(
     taskRoutingCacheKey('batch', task, opts.allowedSkills, opts.projectRoot),
-    () => judgeTaskWithSkillForRouting(task, opts),
+    () => judgeTaskWithSkillForRouting(task, opts, deterministic),
   );
 }
 
 async function judgeTaskWithSkillForRouting(
   task: string,
   opts: Parameters<typeof classifyTaskWithSkillForRouting>[1],
+  deterministic: SkillSuggestionPick | null,
 ): Promise<JevRouteTaskBatch> {
   // F-772 (G7a): o papel da tarefa restringe o catálogo ANTES do Jev julgar —
   // worker nunca vê oc-scout (o bug: scout em 20/108 sugestões da missão) e
@@ -437,16 +444,16 @@ async function judgeTaskWithSkillForRouting(
     onNoAnswer: (reason) => {
       noAnswer = reason;
     },
-  });
+  }).catch(() => null);
   // Logical judge invocations, not successful answers (or HTTP retry count).
   const batch = { requestCount: 1, questionCount: Object.keys(questions).length };
   if (!result) {
-    return { kind: 'unavailable', reason: noAnswer ?? 'network', skillSuggestion: null, batch };
+    return { kind: 'unavailable', reason: noAnswer ?? 'network', skillSuggestion: deterministic, batch };
   }
   const classification = parseTaskClassification(result);
-  const skillSuggestion = asksSkill
+  const skillSuggestion = deterministic ?? (asksSkill
     ? parseSkillSuggestions(result.answers, catalog, projectCatalog)
-    : null;
+    : null);
   if (!classification && !skillSuggestion) {
     return { kind: 'unavailable', reason: 'invalid-answer', skillSuggestion: null, batch };
   }

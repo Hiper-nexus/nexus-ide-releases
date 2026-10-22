@@ -63,6 +63,29 @@ function policySquad(): Squad {
 }
 
 describe('guided squad deterministic skill policy', () => {
+  it.each(['standard', 'plan', 'consult'] as const)('routes reverse engineering roles to REA without adding tool authority (%s)', (lane) => {
+    const squad = applyGuidedSquadSkillPolicy(policySquad(), {
+      objective: 'Faça engenharia reversa deste binário autorizado.',
+      lane,
+      availableSkillNames: ['rea'],
+    });
+    for (const agent of squad.agents) {
+      expect(agent.allowedSkills).toContain('rea');
+      expect(agent.allowedTools).toEqual(agent.category === 'orchestrator' ? null : []);
+    }
+  });
+
+  it('does not add REA outside the eligible inventory or for a conceptual/negated goal', () => {
+    for (const objective of ['O que é engenharia reversa?', 'Não faça engenharia reversa.', 'Create a React area']) {
+      const squad = applyGuidedSquadSkillPolicy(policySquad(), { objective, availableSkillNames: ['rea'] });
+      expect(squad.agents.flatMap((agent) => agent.allowedSkills ?? [])).not.toContain('rea');
+    }
+    const squad = applyGuidedSquadSkillPolicy(policySquad(), {
+      objective: 'Decompile this binary.', availableSkillNames: ['bridgeward'],
+    });
+    expect(squad.agents.flatMap((agent) => agent.allowedSkills ?? [])).not.toContain('rea');
+  });
+
   it('derives exact role allowlists and discards model/renderer skill bytes', () => {
     const squad = applyGuidedSquadSkillPolicy(policySquad(), {
       objective:

@@ -1,10 +1,10 @@
 import { spawn, type SpawnOptions } from 'node:child_process';
-import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import {
   assertSafeUiKitCwd,
   buildUiKitChildEnv,
   claimUiKitProjectWrite,
-  isAlreadyGoneKillError,
+  terminateUiKitProcessTree,
   resolveUiKitNpxLaunch,
   UiKitCliError,
   UI_KIT_PACKAGES,
@@ -53,6 +53,8 @@ export interface McpOneShotRequest {
   readonly kit: UiKitId;
   /** Project directory; guarded exactly as a CLI run is. */
   readonly cwd: string;
+  /** Main's trusted execution root when cwd is a selected monorepo workspace. */
+  readonly installationRoot?: string;
   /** True when the tool writes the project or changes licence state. */
   readonly writes?: boolean;
   readonly method: McpOneShotMethod;
@@ -121,46 +123,6 @@ export function mcpResultText(result: Record<string, unknown>): string {
   return parts.join('\n');
 }
 
-async function terminateTree(
-  pid: number | undefined,
-  platform: NodeJS.Platform,
-): Promise<void> {
-  if (pid === undefined) return;
-  if (platform === 'win32') {
-    const taskkill = path.win32.join(
-      process.env.SystemRoot ?? process.env.windir ?? 'C:\\Windows',
-      'System32',
-      'taskkill.exe',
-    );
-    await new Promise<void>((resolve) => {
-      const killer = spawn(taskkill, ['/pid', String(pid), '/T', '/F'], {
-        stdio: 'ignore',
-        shell: false,
-        windowsHide: true,
-      });
-      killer.once('error', () => resolve());
-      killer.once('close', () => resolve());
-    });
-    return;
-  }
-  try {
-    process.kill(-pid, 'SIGTERM');
-  } catch {
-    // SIGKILL below is the authoritative stop.
-  }
-  // NOT unref'd: the caller's settlement is sequenced behind this grace.
-  await new Promise<void>((resolve) => {
-    setTimeout(resolve, UI_KIT_MCP_TERMINATION_GRACE_MS);
-  });
-  try {
-    process.kill(-pid, 'SIGKILL');
-  } catch (error) {
-    if (!isAlreadyGoneKillError(error)) {
-      console.warn(`[ui-kit-mcp] failed to kill process group ${pid}:`, error);
-    }
-  }
-}
-
 /**
  * Call one tool on a stdio MCP server and return its result.
  *
@@ -180,7 +142,9 @@ export async function callMcpToolOnce(
   const timeoutMs = request.timeoutMs ?? UI_KIT_MCP_TIMEOUT_MS;
   // Same gate as a CLI run: a writing tool may not land in a checkout whose
   // node_modules is a shared symlink.
-  const cwd = assertSafeUiKitCwd(request.cwd, { writes: request.writes === true });
+  const cwd = assertSafeUiKitCwd(request.cwd, {
+    writes: request.writes === true, installationRoot: request.installationRoot,
+  });
   const launch = resolveUiKitNpxLaunch({ platform });
   const args = [...launch.argsPrefix, '-y', UI_KIT_PACKAGES[request.kit], 'mcp'];
   const env = buildUiKitChildEnv();
@@ -196,7 +160,7 @@ export async function callMcpToolOnce(
     let releaseWrite: () => void = () => {};
     if (request.writes === true) {
       try {
-        releaseWrite = claimUiKitProjectWrite(cwd);
+        releaseWrite = claimUiKitProjectWrite(cwd, Date.now(), request.installationRoot);
       } catch (error) {
         reject(error);
         return;
@@ -225,7 +189,15 @@ export async function callMcpToolOnce(
     }
 
     let settled = false;
+    let exited = false;
+    let resolveClosed!: () => void;
+    const closed = new Promise<void>(resolve => { resolveClosed = resolve; });
+    let resolvePhysicalExit!: () => void;
+    const physicalExit = new Promise<void>(resolve => { resolvePhysicalExit = resolve; });
+    const proveExit = () => { releaseWrite(); resolvePhysicalExit(); };
+    child.once('exit', () => { exited = true; });
     let buffer = '';
+    const stdoutDecoder = new StringDecoder('utf8');
     let bytes = 0;
     let stderr = '';
     let initialized = false;
@@ -257,23 +229,21 @@ export async function callMcpToolOnce(
       if (settled) return;
       settled = true;
       cleanup();
-      void terminateTree(child.pid, platform)
-        .catch(() => {})
-        .finally(() => {
-          releaseWrite();
-          reject(error);
-        });
+      void finishTeardown().then(proven => { if (proven) reject(error); });
     }
     function succeed(value: McpOneShotResult): void {
       if (settled) return;
       settled = true;
       cleanup();
-      void terminateTree(child.pid, platform)
-        .catch(() => {})
-        .finally(() => {
-          releaseWrite();
-          resolve(value);
-        });
+      void finishTeardown().then(proven => { if (proven) resolve(value); });
+    }
+    async function finishTeardown(): Promise<boolean> {
+      const proven = await terminateUiKitProcessTree(child, closed,
+        () => exited || child.exitCode != null || child.signalCode != null, proveExit, platform).catch(() => false);
+      if (!proven) reject(new UiKitCliError('TEARDOWN_FAILED',
+        'MCP process-tree exit is unproven; the installation remains locked.',
+        'Do not retry an install while its previous process may still be writing.', physicalExit));
+      return proven;
     }
     function onAbort(): void {
       fail(new UiKitCliError('ABORTED', 'MCP call aborted'));
@@ -304,11 +274,7 @@ export async function callMcpToolOnce(
     request.signal?.addEventListener('abort', onAbort, { once: true });
 
     child.once('error', (error: Error) => {
-      releaseWrite();
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(
+      fail(
         new UiKitCliError(
           'SPAWN_FAILED',
           `failed to run MCP server: ${error.message}`,
@@ -324,6 +290,7 @@ export async function callMcpToolOnce(
     });
 
     child.once('close', () => {
+      exited = true; resolveClosed();
       fail(
         new UiKitCliError(
           'MCP_CLOSED',
@@ -343,7 +310,7 @@ export async function callMcpToolOnce(
         );
         return;
       }
-      buffer += chunk.toString('utf8');
+      buffer += stdoutDecoder.write(chunk);
       if (buffer.length > UI_KIT_MCP_MAX_LINE_BYTES) {
         fail(
           new UiKitCliError(

@@ -117,6 +117,7 @@ const execFail = (stdout: string, code = 1) => async () => {
 
 /** exists falso: raízes "com-*" têm os arquivos esperados; "sem-nada" não. */
 function fakeExists(path: string): boolean {
+  path = path.replaceAll('\\', '/');
   if (path.includes('sem-nada')) return false;
   if (path.endsWith('tsconfig.json')) return true;
   if (path.endsWith('package.json')) return true;
@@ -127,7 +128,8 @@ function fakeExists(path: string): boolean {
   return false;
 }
 
-const depsWithFs = { exec: execOk, exists: fakeExists };
+// These fake POSIX projects have no native Windows compiler package.
+const depsWithFs = { exec: execOk, exists: fakeExists, platform: 'linux' as const };
 
 describe('runTypecheckSensor', () => {
   const root = '/projeto-com-tsconfig';
@@ -386,7 +388,7 @@ describe('declared typecheck configurations', () => {
       fs.writeFileSync(path.join(root, 'tsconfig.app.json'), '{}');
       fs.mkdirSync(path.join(root, 'node_modules/.bin'), { recursive: true }); fs.writeFileSync(path.join(root, 'node_modules/.bin', compiler), 'fixture');
       const exec = vi.fn(async () => ({ stdout: '', stderr: '' }));
-      const result = await runTypecheckSensor(root, { exec });
+      const result = await runTypecheckSensor(root, { exec, platform: 'linux' });
       expect(result.status).toBe('passed');
       expect(exec).toHaveBeenCalledWith(path.join(root, 'node_modules/.bin', compiler), ['--project', path.join(root, 'tsconfig.app.json'), '--noEmit', '--pretty', 'false'], expect.objectContaining({ cwd: root, timeout: 120000 }));
     } finally { fs.rmSync(root, { recursive: true, force: true }); }

@@ -14,6 +14,38 @@ import { listPanes } from '../lib/split-tree';
 function Harness() { useFailoverController(); return null; }
 
 describe('failover notifications', () => {
+  it.each([
+    { toAccountId: 'claude-a', crossAccount: false, respawnedByMain: undefined },
+    { toAccountId: 'claude-b', crossAccount: true, respawnedByMain: undefined },
+    { toAccountId: 'claude-b', crossAccount: true, respawnedByMain: true as const },
+  ])('F-1630: recuperação automática preserva a política do pane: %j', async (event) => {
+    let notify!: (event: FailoverEvent) => void;
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { accounts: {
+      onFailover: (callback: typeof notify) => { notify = callback; return () => {}; },
+    } } });
+    const originalRoot = useLayoutStore.getState().root;
+    useLayoutStore.setState({ root: { kind: 'leaf', id: 'auto-leaf', pane: {
+      id: 'auto-pane', kind: 'cli-agent', title: 'Claude', adapterId: 'claude',
+      accountId: 'claude-a', accountSelection: 'automatic',
+    } } });
+    vi.mocked(respawnWithResume).mockClear();
+    const container = document.createElement('div'); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<Harness />));
+      notify({ paneId: 'auto-pane', kind: 'rate-limit', switched: true,
+        fromAccountId: 'claude-a', fromAccountLabel: 'A', toAccountLabel: 'B',
+        reason: 'limite confirmado', ...event });
+      const saved = listPanes(useLayoutStore.getState().root)[0];
+      expect(saved.accountId).toBe(event.toAccountId);
+      expect(saved.accountSelection).toBe('automatic');
+    } finally {
+      await act(async () => root.unmount()); container.remove();
+      useLayoutStore.setState({ root: originalRoot });
+      for (const toast of useToastStore.getState().toasts) useToastStore.getState().dismiss(toast.id);
+    }
+  });
+
   it('religa no pedido de rotação e anuncia somente o recibo aplicado, sem novo respawn', async () => {
     let notify!: (event: FailoverEvent) => void;
     Object.defineProperty(window, 'nexus', { configurable: true, value: { accounts: {

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import * as periodicFileRead from '../redline/redline-safe-read';
 import mimoRaw from '../../adapters/builtin/mimo-code.json';
 import museRaw from '../../adapters/builtin/muse.json';
+import codexRaw from '../../adapters/builtin/codex.json';
 import type { ChildProcess } from 'node:child_process';
 import { PROVIDER_CHANNELS } from '../../shared/provider-settings-types';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -299,7 +300,7 @@ vi.mock('../security/trusted-ipc', async (original) => ({
 vi.mock('../adapters/adapter-registry', () => ({
   isBuiltinAdapter: (id: string) => spawnDeps.builtinIds.has(id),
   getAdapter: (id: string) =>
-    id === 'mimo-code'
+    id === 'codex' ? codexRaw : id === 'mimo-code'
       ? mimoRaw
       : id === 'claude'
       ? claudeAdapter
@@ -328,7 +329,7 @@ vi.mock('../adapters/adapter-registry', () => ({
   getAdapterInstallationWarning: (id: string) =>
     spawnDeps.installationWarnings.get(id),
   getAdapterResolvedBin: (id: string) =>
-    id === 'mimo-code' ? '/usr/local/bin/mimo' : id === 'claude'
+    id === 'codex' ? '/mock/bin/codex' : id === 'mimo-code' ? '/usr/local/bin/mimo' : id === 'claude'
       ? spawnDeps.resolvedClaudeBin
       : id === 'kimi'
         ? '/Users/test/.kimi-code/bin/kimi'
@@ -385,13 +386,17 @@ vi.mock('../path-resolver', () => ({
   resolveCliBinary: spawnDeps.resolveCliBinary,
 }));
 
-vi.mock('../adapters/control-args', () => ({
-  availableEfforts: () => [],
-  availablePermissionModes: () => [],
-  buildControlArgs: () => [],
-  defaultPermissionMode: () => '',
-  supportsVerbose: () => false,
-}));
+vi.mock('../adapters/control-args', async original => {
+  const real = await original<typeof import('../adapters/control-args')>();
+  return {
+    availableEfforts: () => [],
+    availablePermissionModes: () => [],
+    buildControlArgs: (...args: Parameters<typeof real.buildControlArgs>) =>
+      args[0].id === 'codex' ? real.buildControlArgs(...args) : [],
+    defaultPermissionMode: () => '',
+    supportsVerbose: () => false,
+  };
+});
 
 vi.mock('../adapters/custom-models', () => ({
   addCustomModel: vi.fn(),
@@ -1611,6 +1616,40 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     spawnDeps.activeClaudeAuthEnv.mockReturnValue({
       CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active',
     });
+  });
+
+  it.each([
+    { label: 'default effort', extraArgs: [], effort: undefined, expected: 'medium' },
+    { label: 'per-spawn effort', extraArgs: [], effort: 'high', expected: 'high' },
+    { label: 'explicit Daybreak', extraArgs: ['-c', 'features.cli_daybreak=true'], effort: undefined, expected: 'medium' },
+    { label: 'identical user effort and profile', extraArgs: ['-c', 'model_reasoning_effort=medium', '--profile', 'security'], effort: undefined, expected: 'medium' },
+  ])('F-1643/F-1644: real producer distinguishes generated controls from $label', async scenario => {
+    const previous = spawnDeps.providersFile;
+    spawnDeps.providersFile = { version: 3, providers: { codex: {
+      extraArgs: scenario.extraArgs,
+      // A persisted field cannot manufacture Main-only provenance.
+      generatedControlArgs: scenario.extraArgs,
+    } } };
+    try {
+      vi.resetModules();
+      const store = await import('./provider-config-store');
+      store.initializeProviderConfigStore();
+      const result = store.prepareProviderSpawn('codex', { effort: scenario.effort });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('fixture provider refused');
+      const generated = ['--dangerously-bypass-approvals-and-sandbox', '-c', `model_reasoning_effort=${scenario.expected}`];
+      expect(result.overrides).toMatchObject({
+        generatedControlArgs: generated,
+        extraArgs: [...generated, ...scenario.extraArgs],
+      });
+      // Downstream appends/replacements must not mutate the provenance copy.
+      result.overrides.extraArgs.push('--profile', 'downstream');
+      result.overrides.extraArgs[1] = '--config';
+      expect(result.overrides.generatedControlArgs).toEqual(generated);
+    } finally {
+      spawnDeps.providersFile = previous;
+      vi.resetModules();
+    }
   });
 
   it('injects the saved native Muse account key and suppresses inherited keys for OAuth', () => {

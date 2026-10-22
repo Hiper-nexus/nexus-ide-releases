@@ -4,6 +4,8 @@ import {
   type RouteTaskJevBatchDeps,
 } from '../orch/jev-task-routing';
 import { activeWorkspaceOrNull } from '../persistence/workspace-store';
+import { cliSupportsSkillSurface, SKILL_SUGGESTION_MIN_CONFIDENCE } from '../orch/jev-skill-suggestion';
+import { classifyTask } from '../orch/task-router';
 import {
   isPaneRouteEffort,
   type PaneRouteProposal,
@@ -80,19 +82,20 @@ export async function proposePaneRoute(
   }
 
   if (batch.kind === 'skipped') return { ok: false, reason: 'empty' };
-  if (batch.kind === 'unavailable') {
+  const pick = batch.skillSuggestion ?? null;
+  const skill = pick && pick.confidence >= SKILL_SUGGESTION_MIN_CONFIDENCE &&
+    (pick.path || !request.adapterId || cliSupportsSkillSurface(request.adapterId))
+    ? pick.name : undefined;
+  if (batch.kind === 'unavailable' && !skill) {
     return { ok: false, reason: batch.reason === 'disabled' ? 'disabled' : 'no-route' };
   }
 
-  const overrides = routingOverridesFrom(batch.classification, undefined, task);
+  const classification = batch.kind === 'classified' ? batch.classification : null;
+  const overrides = routingOverridesFrom(classification, undefined, task);
+  const tier = overrides.tierOverride ?? classification?.tier ?? classifyTask(task).tier;
   const effort = isPaneRouteEffort(overrides.effortOverride)
     ? overrides.effortOverride
     : undefined;
-
-  // Mesmo limiar da rota (0,7) que o auto-route do spawn já usa para anexar a
-  // skill ao brief do filho: abaixo disso a sugestão não entra sozinha.
-  const pick = batch.skillSuggestion ?? null;
-  const skill = pick && pick.confidence >= 0.7 ? pick.name : undefined;
 
   const source: PaneRouteSource =
     overrides.classifierSource === 'jev'
@@ -104,17 +107,17 @@ export async function proposePaneRoute(
   const proposal: PaneRouteProposal = {
     ...(effort ? { effort } : {}),
     ...(skill ? { skill } : {}),
-    tier: overrides.tierOverride ?? batch.classification.tier,
+    tier,
     ...(overrides.specialtyOverride ? { specialty: overrides.specialtyOverride } : {}),
     // Nunca ecoa o pedido do operador: só os rótulos que o motor decidiu.
-    reason: `tier ${overrides.tierOverride ?? batch.classification.tier}`,
+    reason: `tier ${tier}`,
     source,
     ...(() => {
       const confidence = confidenceOf(
         round2(overrides.confidence?.tier),
         round2(overrides.confidence?.specialty),
         round2(overrides.confidence?.effort),
-        skill ? round2(pick?.confidence) : undefined,
+        skill && classification ? round2(pick?.confidence) : undefined,
       );
       return confidence ? { confidence } : {};
     })(),

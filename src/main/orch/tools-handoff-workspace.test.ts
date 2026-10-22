@@ -23,6 +23,7 @@ import { reviewMissionHandoff } from "./jev-handoff-review";
 import { configureMissionEventEmit } from './mission-event-emit';
 import { createScopedBrowserArtifactStore } from '../browser/browser-artifact-store';
 import { recordVisualHandoffEvidence } from './visual-handoff-gate';
+import * as candidateSnapshots from '../context/candidate-working-tree-snapshot';
 import {
   armAutoCloseOnHandoff,
   armedAutoClosePaneId,
@@ -144,6 +145,12 @@ afterEach(async () => {
 
 describe("workspace handoff", () => {
   it('preserves the visual worker until a current Main capture proves the next handoff', async () => {
+    // This fixture has no checkout or preview. Both Main observations must
+    // describe a complete, unchanged candidate, rather than matching nulls.
+    vi.spyOn(candidateSnapshots, 'captureWorkingTreeCandidate').mockResolvedValue({
+      source: 'filesystem', headSha: null, fingerprint: 'f'.repeat(64), contentFingerprint: 'a'.repeat(64),
+      changedPaths: [], deletedPaths: [], untrackedPaths: [], diff: '', complete: true, incompleteReasons: [],
+    });
     caller('parent');
     const child = caller('child');
     child.visualTask = { since: 1000, id: 'workspace-assignment' };
@@ -160,7 +167,7 @@ describe("workspace handoff", () => {
     expect(armedAutoClosePaneId('child')).toBe('pane-child');
     const proof = createScopedBrowserArtifactStore(manager, scope).recordScreenshot({ paneId: 'browser-pane',
       png: Buffer.from('Main capture fixture'), width: 1, height: 1, url: 'http://localhost:3000', title: 'UI', capturedAt: 1100 });
-    // The fixture has no running preview: the URL check is the only fake here.
+    // The preview URL and complete candidate above are explicit fixture inputs.
     expect(recordVisualHandoffEvidence(child, proof.id, undefined, { servedFromCandidate: () => true })).toBe(true);
     const second = await tool('submit').handler({ ...args, fullText: "Relatório completo: implementação em result.ts, validação executada e resultados conferidos." }, child);
     expect(second).toMatchObject({ status: 'success', visualVerification: { verified: true, artifactId: proof.id } });

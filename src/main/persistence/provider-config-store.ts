@@ -427,6 +427,8 @@ export interface ProviderSpawnOverrides {
   binPath: string | null;
   defaultModel: string | null;
   extraArgs: string[];
+  /** Main-generated prefix of extraArgs, captured before user args; never persisted or accepted via IPC. */
+  generatedControlArgs?: readonly string[];
   /** { ENV_VAR: key } to inject, or empty when no key is stored. */
   keyEnv: Record<string, string>;
   /** Env vars to strip so nothing hijacks an active subscription session. */
@@ -1305,6 +1307,7 @@ function buildProviderSpawnOverrides(
           offer.defaultModel,
         )
       : null;
+  const generatedControlArgs = Object.freeze(controlArgsFor(adapterId, perSpawn.effort));
   const base = {
     // Defense in depth (SEC#4): only an ABSOLUTE path is ever used as the
     // executable. A bare/relative binPath (e.g. from a hand-edited config) is
@@ -1318,7 +1321,8 @@ function buildProviderSpawnOverrides(
       savedDefault && deepseekChoiceNow
         ? deepseekModelForProvider(savedDefault, deepseekChoiceNow)
         : savedDefault,
-    extraArgs: [...controlArgsFor(adapterId, perSpawn.effort), ...cfg.extraArgs],
+    extraArgs: [...generatedControlArgs, ...cfg.extraArgs],
+    ...(generatedControlArgs.length > 0 ? { generatedControlArgs } : {}),
     accountChoice: receipt,
     ...(account ? { selectedAccountId: account.id } : {}),
     ...(deepseekChoiceNow

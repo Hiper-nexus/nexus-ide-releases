@@ -254,21 +254,41 @@ export function compareAuthFreshness(
 }
 
 /**
- * F-1485: o Grok só renova a sessão até 7 dias depois da última emissão — a
- * própria CLI (1.0.52) documenta "tokens expire after 7 days; Grok will prompt
- * you to re-authenticate". O access token vale 6 h; a emissão é o maior
- * `create_time`/`iat` do blob, que cada renovação avança.
+ * Legacy F-1485 age guard for sessions WITHOUT a complete OAuth renewal path.
+ * This is not a refresh-token lifetime: OIDC access-token age cannot prove
+ * invalid_grant. The CLI owns the exchange and the provider's rejection.
  */
 export const GROK_SESSION_REFRESH_WINDOW_MS = 7 * 24 * 60 * 60_000;
 
 /**
- * Sessão Grok que a CLI não consegue mais renovar: acesso vencido e última
- * emissão além da janela. Sem data de emissão legível não há prova — false.
+ * Old expired session without locally available OIDC renewal material.
+ * A single complete, identifiable OIDC entry may reach the CLI after seven days; its IdP,
+ * not this timestamp heuristic, decides whether the refresh token is revoked.
+ * No readable issuance date still means unknown, not proof of expiry.
  */
 export function grokSessionNeedsLogin(contents: string, now = Date.now()): boolean {
   const freshness = authBlobFreshness(contents);
   if (!freshness || freshness.issuedAt === null) return false;
   if (freshness.expiresAt !== null && freshness.expiresAt > now) return false;
+  try {
+    const parsed: unknown = JSON.parse(contents);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      // grok-auth-family-gate can coordinate copied files only for one entry
+      // with a subject. Never admit a multi-entry blob via an arbitrary match:
+      // each copy would otherwise take its own file lock and become a leader.
+      const entries = Object.values(parsed);
+      const entry = entries.length === 1 ? entries[0] : null;
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        const record = entry as Record<string, unknown>;
+        const hasSubject = ['user_id', 'principal_id'].some((field) =>
+          typeof record[field] === 'string' && record[field].trim().length > 0);
+        const renewable = hasSubject && record.auth_mode === 'oidc' &&
+          ['key', 'refresh_token', 'oidc_issuer', 'oidc_client_id'].every((field) =>
+            typeof record[field] === 'string' && record[field].trim().length > 0);
+        if (renewable) return false;
+      }
+    }
+  } catch { /* Invalid JSON has no demonstrated renewal material. */ }
   return now - freshness.issuedAt > GROK_SESSION_REFRESH_WINDOW_MS;
 }
 

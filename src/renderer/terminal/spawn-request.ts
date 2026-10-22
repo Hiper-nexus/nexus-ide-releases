@@ -19,6 +19,9 @@ export interface PtySpawnRequestInput {
     | 'adapterId'
     | 'model'
     | 'accountId'
+    | 'accountSelection'
+    | 'missionId'
+    | 'role'
     | 'effort'
     | 'orchRequestId'
     | 'id'
@@ -36,6 +39,8 @@ export interface PtySpawnRequestInput {
   readonly restorePersistedAuthority: boolean;
   readonly missionId?: string;
   readonly accountId?: string;
+  /** Recovery chose this target; its current spawn must not select another account. */
+  readonly preserveAccount?: boolean;
   /** F-213: espera do renderer até a chamada (telemetria). */
   readonly rendererWaitMs?: number;
 }
@@ -48,6 +53,14 @@ export function buildPtySpawnRequest(
   input: PtySpawnRequestInput,
 ): SpawnRequest {
   const { pane } = input;
+  // A saved automatic choice is an identity for resume, not a permanent pin.
+  // Only Main selects the replacement. Mission authority and explicit targets
+  // (including failover) must pass through unchanged.
+  const reselectAccount = pane.kind === 'cli-agent' && pane.adapterId === 'claude' &&
+    pane.accountSelection === 'automatic' &&
+    !input.resume && !input.resumeLatestOnly && !input.restorePersistedAuthority && !input.preserveAccount &&
+    !input.missionId && !pane.missionId && !pane.orchRequestId && !pane.role &&
+    (!input.accountId || input.accountId === pane.accountId);
   return {
     cwd: clean(input.cwd ?? pane.cwd),
     ...(pane.isolateSpace && pane.spaceId ? { worktreeSpaceId: pane.spaceId } : {}),
@@ -61,7 +74,7 @@ export function buildPtySpawnRequest(
     paneId: pane.id,
     adapterId: clean(pane.adapterId),
     model: clean(migrateModelId(pane.model)),
-    accountId: clean(input.accountId ?? pane.accountId),
+    accountId: reselectAccount ? undefined : clean(input.accountId ?? pane.accountId),
     effort: clean(pane.effort),
     orchRequestId: clean(pane.orchRequestId),
     missionId: clean(input.missionId),
