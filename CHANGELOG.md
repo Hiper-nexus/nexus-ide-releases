@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.76.406 — O painel nunca imprime "undefined"
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+A 0.76.405 é o pacote macOS desta mesma correção (DMG e ZIP arm64) e continua Latest na canônica e no espelho; esta release não toma essa marca e não recebe arquivos macOS. A 0.76.400 foi tagueada e não publicada. A 0.76.396 é o pacote Linux anterior.
+
+No desktop Linux, em relação à 0.76.396:
+
+- **O painel nunca imprime "undefined".** A linha do BoardUI interpolava a contagem de itens grátis sem guarda e, sem número, dizia "undefined itens funcionam sem chave nenhuma". Sem a contagem, a frase volta a ser "A metade grátis funciona sem chave nenhuma".
+
+O resto do desktop é o da 0.76.396.
+
 ## 0.76.405 — O painel conferido a olho
 
 Pacote macOS (DMG e ZIP arm64), assinado com Developer ID e notarizado. Fecha o ciclo dos kits de UI com a última correção, achada olhando a tela. A 0.76.396 é o pacote Linux da entrega anterior e a 0.76.400 foi tagueada e não publicada (o main andou durante a build).

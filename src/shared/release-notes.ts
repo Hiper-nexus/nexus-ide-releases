@@ -12610,7 +12610,7 @@ const RELEASE_076396_FULL: AppRelease = {
 
 export const RELEASE_076396: AppRelease = RELEASE_076396_FULL;
 
-export const CURRENT_RELEASE: AppRelease = {
+const RELEASE_076405_FULL: AppRelease = {
   version: '0.76.405',
   date: '2026-10-22',
   codename: 'O painel conferido a olho',
@@ -12628,4 +12628,21 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: RELEASE_076396_FULL.fixes,
 };
 
-export const RELEASE_076405: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076405: AppRelease = RELEASE_076405_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.406',
+  date: '2026-10-22',
+  codename: 'O painel nunca imprime "undefined"',
+  summary:
+    'No desktop Linux, o painel de Kits de UI deixa de imprimir "undefined" ' +
+    'quando falta a contagem de itens grátis: a frase volta a ser "A metade ' +
+    'grátis funciona sem chave nenhuma". É a mesma correção da 0.76.405, que ' +
+    'fica como pacote macOS e continua Latest; esta release não toma essa ' +
+    'marca. A 0.76.400 foi tagueada e não publicada. A 0.76.396 é o pacote ' +
+    'Linux anterior.',
+  highlights: RELEASE_076405_FULL.highlights,
+  fixes: RELEASE_076405_FULL.fixes,
+};
+
+export const RELEASE_076406: AppRelease = CURRENT_RELEASE;
