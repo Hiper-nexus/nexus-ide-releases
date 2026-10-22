@@ -1,10 +1,10 @@
 # Changelog
 
-## 0.76.408 — A missão deixa de refazer trabalho já feito
+## 0.76.409 — A missão deixa de refazer trabalho já feito
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
 
-A 0.76.407 é o pacote macOS desta mesma entrega (DMG e ZIP arm64) e continua Latest na canônica e no espelho; esta release não toma essa marca e não recebe arquivos macOS. O espelho da 0.76.407 também tem Setup, nupkg e RELEASES do Windows; esta release não mexe neles. A 0.76.406 é o pacote Linux anterior.
+A 0.76.407 é o pacote macOS desta mesma entrega (DMG e ZIP arm64) e continua Latest na canônica e no espelho; esta release não toma essa marca e não recebe arquivos macOS. A 0.76.408 foi tagueada neste repositório e não publicada como Linux: no espelho esse número já é a publicação Windows (Setup, nupkg e RELEASES), e esta release não anexa arquivos Linux a ela nem mexe nesses arquivos. A 0.76.406 é o pacote Linux anterior.
 
 No desktop Linux, em relação à 0.76.406:
 
@@ -18,6 +18,10 @@ No desktop Linux, em relação à 0.76.406:
 Medido no próprio motor, sem modelo dos dois lados: um pane só leva 7,47 s e a missão 11,82 s, então a cerimônia custa 4,35 s (1,58×). A lentidão de campo estava nas rodadas de modelo a mais, não no motor.
 
 O resto do desktop é o da 0.76.406.
+
+## 0.76.408 — A missão deixa de refazer trabalho já feito
+
+Tagueada e não publicada como pacote Linux. No espelho, a v0.76.408 já é a publicação Windows (Setup, nupkg e RELEASES). Os arquivos Linux não entram nela. A 0.76.409 é o pacote Linux desta entrega.
 
 ## 0.76.407 — A missão deixa de refazer trabalho já feito
 
