@@ -214,6 +214,32 @@ O valor do arquivo é ser catraca: quem reintroduzir o descarte da verificação
 válida, o fecho no submit ou a dupla cobrança da entrega visual faz os números
 piorarem e o teste reprovar.
 
+## Missão inteira cronometrada, com o tempo de LLM zerado (22/10)
+
+`npm run test:mission-e2e` roda uma missão de ponta a ponta com **Main real e
+PTY real**, só com a CLI falsa. Com o tempo de modelo zerado, o relógio dele é
+o **esqueleto do motor**. Medido duas vezes em cada lado, na mesma máquina:
+
+| | execução 1 | execução 2 |
+|---|---|---|
+| base 0.76.373 | 48,7 s | 45,2 s |
+| com estas correções | 45,3 s | 44,8 s |
+
+**Sem diferença mensurável** — a variação está dentro do ruído. Esse resultado
+negativo é informativo e precisa ser dito:
+
+- O esqueleto da missão custa ~45 s e **estas correções não o movem**. Quem
+  procurar ganho aí não vai achar.
+- As correções agem nos caminhos de trabalho REPETIDO: suíte refeita enquanto
+  o juiz lê, rodada perdida por devolução, entrega visual cobrada duas vezes,
+  turno de abertura vazio. Nada disso aparece com CLI falsa, porque a falsa
+  responde na hora: não há juiz lento, não há devolução, não há captura.
+- Ou seja, a lentidão que o operador relata **não está no esqueleto**, está na
+  repetição — e a repetição só existe quando o modelo é lento de verdade.
+
+O que continua **não medido**: a missão completa com LLM real, dos dois lados.
+São horas de execução por rodada e não foi feito aqui.
+
 ## Estimado, não medido
 
 As rodadas economizadas por entrega, somando as causas 2, 3 e 4: a sequência
