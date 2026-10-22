@@ -12594,22 +12594,38 @@ const RELEASE_076395_FULL: AppRelease = {
 
 export const RELEASE_076395: AppRelease = RELEASE_076395_FULL;
 
+const RELEASE_076396_FULL: AppRelease = {
+  version: '0.76.396',
+  date: '2026-10-22',
+  codename: 'A sugestão de componente entende o pedido',
+  summary:
+    'No desktop Linux, a sugestão de componente deixa de escolher "combobox" ' +
+    'por causa da palavra "com". A comparação é palavra a palavra. É a mesma ' +
+    'correção da 0.76.395, que fica como pacote macOS e continua Latest; esta ' +
+    'release não toma essa marca. A 0.76.390 é o pacote macOS anterior. A ' +
+    '0.76.385 foi tagueada e não publicada. A 0.76.382 é o pacote Linux anterior.',
+  highlights: RELEASE_076395_FULL.highlights,
+  fixes: RELEASE_076395_FULL.fixes,
+};
+
+export const RELEASE_076396: AppRelease = RELEASE_076396_FULL;
+
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.400',
+  version: '0.76.405',
   date: '2026-10-22',
   codename: 'O painel conferido a olho',
   summary:
-    'Fecha o ciclo dos kits de UI com a última correção achada olhando a ' +
+    'Fecha o ciclo dos kits de UI com a última correção, achada olhando a ' +
     'tela: o painel não imprime mais "undefined" quando falta a contagem de ' +
     'itens grátis. Na mesma passada foram conferidos a olho os selos dos dois ' +
     'kits, a licença com Remover, as receitas, o catálogo, o cache, a linha do ' +
     'contrato de autenticação e a falha de instalação mostrando a saída da ' +
-    'ferramenta.',
+    'ferramenta. A 0.76.396 é o pacote Linux da entrega anterior.',
   highlights: [
     { title: 'O painel nunca imprime "undefined"', detail: 'Texto de interface não interpola valor sem guarda: sem a contagem, a frase volta a ser "A metade grátis funciona sem chave nenhuma".' },
-    ...RELEASE_076395_FULL.highlights,
+    ...RELEASE_076396_FULL.highlights,
   ],
-  fixes: RELEASE_076395_FULL.fixes,
+  fixes: RELEASE_076396_FULL.fixes,
 };
 
-export const RELEASE_076400: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076405: AppRelease = CURRENT_RELEASE;
