@@ -2731,6 +2731,19 @@ O que mudou — e o que NÃO mudou:
   CLI, mesmo modo, ≥20 s parado pelo status semântico) só no pane do operador
   e na missão da aba; o Jev (`helperReuse`) escolhe ou `none`, aceita ≥ 0,7.
   Título do pane entra no critério só como caminho do state, nunca como texto.
+  Só pane DESARMADO é candidato, e o braço padrão fechava o helper no próprio
+  `success`: a superfície nasceu inoperante (zero disparo em 4 semanas). Agora o
+  braço padrão desses dois casos leva `reuseHold` (`shouldHoldHelperForReuse`):
+  entrega `success` (ou ACK aceito) deixa o pane vivo e desarmado por
+  `HELPER_REUSE_HOLD_MS` (3 min) e então fecha — F-572 vale, a janela tem prazo
+  fixo e a rede de segurança não ganha janela extra. Reuso, `rework` ou braço
+  novo cancelam a janela; pane que voltou a trabalhar nela é re-armado, não
+  fechado; janela com menos de 30 s fica fora dos candidatos.
+  `autoCloseOnHandoff: true` explícito, writer isolado e licença com teto de
+  agentes (Trial: a janela seguraria uma vaga e o próximo spawn de outra CLI
+  cairia em `license_agent_limit`) não ganham janela.
+  Sem candidato, o diário grava `kind: 'skip'` `no-candidate:<categoria>`
+  (`scanIdleHelperCandidates`: armed, not-idle, too-recent…), nunca id ou texto.
 
 ## Missão que morre e volta: o que o trace mostra (F-187/F-211/F-212/F-213)
 

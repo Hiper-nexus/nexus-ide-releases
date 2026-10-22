@@ -13,6 +13,7 @@ import { resolveWorkspaceHandoffParent } from "./workspace-handoff-authority";
 import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from "./workspace-handoff-delivery";
 import { findPane, listPaneSnapshots, requestPaneClose } from "./pane-registry";
 import { scheduleAutoCloseAfterHandoff } from "./pane-close-scopes";
+import { workerActivityProbes } from "./worker-idle-probe";
 import { getProjectDomainStores } from "./project-domain-store-registry";
 import { injectPrompt, requireStr } from "./tool-util";
 import { normalizeHandoffStatusInput } from "./legacy-handoff";
@@ -257,6 +258,9 @@ export async function submitWorkspaceHandoff(
       status,
       (sessionId) => findPane(sessionId)?.paneId ?? null,
       requestPaneClose,
+      undefined,
+      // F-197: helper em janela de reuso que voltou a trabalhar não é fechado.
+      { isBusy: workerActivityProbes.isBusy },
     );
   }
   return {

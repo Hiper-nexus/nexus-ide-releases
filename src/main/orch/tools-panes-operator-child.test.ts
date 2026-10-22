@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentGateContext } from './gate';
 import { testProjectScope } from './__tests__/scope-fixture';
+import { licensedAccessMock } from '../__tests__/licensed-access';
 
 const harness = vi.hoisted(() => ({
   spawnPaneAndMaybePrompt: vi.fn(async (_options: Record<string, unknown>) => ({
@@ -62,6 +63,10 @@ vi.mock('./pane-close-scopes', async (importOriginal) => ({
 }));
 vi.mock('./idle-helper-reuse', () => ({
   listIdleHelperCandidates: () => harness.reuseChoice ? [harness.reuseChoice.candidate] : [],
+  scanIdleHelperCandidates: () => ({
+    candidates: harness.reuseChoice ? [harness.reuseChoice.candidate] : [],
+    noCandidateReason: harness.reuseChoice ? null : 'no-helper',
+  }),
   judgeIdleHelperReuse: async () => harness.reuseChoice,
 }));
 vi.mock('./squad-store', async (importOriginal) => ({
@@ -150,6 +155,8 @@ beforeEach(() => {
   harness.reuseChoice = null;
   harness.reuseAuthority = null;
   harness.injectPrompt.mockReset().mockResolvedValue(undefined);
+  // scope-fixture já mocka a licença como Pro (sem teto); só o teste do Trial muda.
+  licensedAccessMock.maxAgents.mockReset().mockReturnValue(null);
 });
 
 afterEach(() => {
@@ -575,9 +582,20 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     expect(harness.allocateIsolatedWriterWorktree).not.toHaveBeenCalled();
   });
 
-  it('helper do operador arma o auto-close por padrão', async () => {
+  it('helper do operador arma o auto-close por padrão, com a janela de reuso (F-197)', async () => {
     await paneSpawnTool.handler({ adapterId: 'codex' }, userPane());
-    expect(harness.armAutoCloseOnHandoff).toHaveBeenCalledWith('pty-child', 'pane-child');
+    expect(harness.armAutoCloseOnHandoff).toHaveBeenCalledWith('pty-child', 'pane-child', { reuseHold: true });
+  });
+
+  it('com teto de agentes na licença (Trial) não há janela: ela seguraria uma vaga', async () => {
+    licensedAccessMock.maxAgents.mockReturnValue(6);
+    await paneSpawnTool.handler({ adapterId: 'codex' }, userPane());
+    expect(harness.armAutoCloseOnHandoff).toHaveBeenCalledWith('pty-child', 'pane-child', { reuseHold: false });
+  });
+
+  it('autoCloseOnHandoff: true explícito fecha na entrega, sem janela de reuso', async () => {
+    await paneSpawnTool.handler({ adapterId: 'codex', autoCloseOnHandoff: true }, userPane());
+    expect(harness.armAutoCloseOnHandoff).toHaveBeenCalledWith('pty-child', 'pane-child', { reuseHold: false });
   });
 
   it('ACK pendente (sessão ainda não existe) arma o auto-close pelo pane', async () => {
@@ -590,7 +608,7 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
       pending: true,
     });
     await paneSpawnTool.handler({ adapterId: 'codex' }, userPane());
-    expect(harness.armAutoCloseOnHandoffForPane).toHaveBeenCalledWith('pane-pending');
+    expect(harness.armAutoCloseOnHandoffForPane).toHaveBeenCalledWith('pane-pending', { reuseHold: true });
   });
 
   it('autoCloseOnHandoff: false explícito é respeitado', async () => {
@@ -884,7 +902,7 @@ describe('F-258: política de fechamento no reuso', () => {
     });
     const result = await paneSpawnTool.handler({ adapterId: 'codex', prompt: 'Ajuste a API existente' }, caller);
     expect(result).toMatchObject({ reused: true, sessionId: 'pty-reused' });
-    expect(harness.armAutoCloseOnHandoff).toHaveBeenCalledWith('pty-reused', 'pane-reused');
+    expect(harness.armAutoCloseOnHandoff).toHaveBeenCalledWith('pty-reused', 'pane-reused', { reuseHold: true });
     expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
   });
 
@@ -907,7 +925,7 @@ describe('F-258: política de fechamento no reuso', () => {
     harness.injectPrompt.mockRejectedValueOnce(new Error('stale session'));
     const result = await paneSpawnTool.handler({ adapterId: 'codex', prompt: 'Ajuste a API existente' }, caller);
     expect(result).toMatchObject({ paneId: 'pane-child' });
-    expect(harness.armAutoCloseOnHandoff).not.toHaveBeenCalledWith('pty-reused', 'pane-reused');
+    expect(harness.armAutoCloseOnHandoff).not.toHaveBeenCalledWith('pty-reused', 'pane-reused', expect.anything());
     expect(harness.disarmAutoCloseOnHandoff).not.toHaveBeenCalled();
   });
 });
