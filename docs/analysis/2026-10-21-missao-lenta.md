@@ -172,6 +172,33 @@ não visual não é captura observada, e `readOnly` não é "não escreve"
   caracteres. Os dois tetos são testados; o espaço das linhas novas saiu de
   frases redundantes das vizinhas.
 
+## CORREÇÃO: o juiz de ponta levou 15 s, não os 8 min que eu assumi (22/10)
+
+Medi o que era a maior suposição deste documento. Um modelo de ponta lendo o
+candidato deste PR — **1.085 linhas em 21 arquivos** — e formando veredito
+levou **15 s**. São **0,05×** o TTL de 5 min do cache mecânico.
+
+**Isto enfraquece a causa 1 como eu a escrevi.** Eu afirmei que o juiz
+"passa dos 5 min em campo" e construí o número de 2 execuções da suíte em
+cima disso. A leitura do modelo, sozinha, não passa.
+
+O que ainda pode estourar os 5 min é o CICLO do revisor, não a leitura:
+spawn do pane, boot da CLI, entrega do prompt, a leitura, `nexus_review_verdict`,
+`nexus_handoff_submit`, mais a granularidade de 30 s do poll
+(`RETRY_MS`) e a entrega do handoff. Isso é plausível, mas **não está medido**
+— e eu não devia ter escrito "passa dos 5 min" como fato.
+
+**A correção continua certa e barata**, por dois motivos independentes da
+duração do juiz: ela custa nada quando o ciclo é rápido, e evita o caso
+patológico quando não é. E as outras causas (worker fechando antes do aceite,
+entrega visual cobrada duas vezes, turno de abertura vazio) não dependem do
+tempo do juiz.
+
+**O que medir a seguir, com missão real:** o ciclo completo do revisor, do
+spawn ao veredito consumido. Se ficar abaixo de 5 min, a causa 1 vira seguro
+barato em vez de economia principal, e o peso da lentidão se desloca para as
+rodadas de rework.
+
 ## Simulação do orçamento (o "teste e vê o tempo" que o operador pediu)
 
 `src/main/orch/mission-ceremony-budget.test.ts` dirige as FUNÇÕES REAIS de
