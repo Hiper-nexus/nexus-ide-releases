@@ -42,7 +42,7 @@ export interface BoardUiLicenseFile {
  * Pure: the caller decides whose env (ours, the child's, a fixture's).
  */
 export function boarduiConfigRoot(
-  env: { readonly XDG_CONFIG_HOME?: string; readonly APPDATA?: string; readonly HOME?: string },
+  env: { readonly XDG_CONFIG_HOME?: string; readonly APPDATA?: string; readonly HOME?: string; readonly USERPROFILE?: string },
   platform: NodeJS.Platform,
   homedir: () => string = os.homedir,
 ): string {
@@ -53,9 +53,11 @@ export function boarduiConfigRoot(
   if (platform === 'win32' && typeof env.APPDATA === 'string' && env.APPDATA.length > 0) {
     return env.APPDATA;
   }
-  // Node's os.homedir() reads HOME on POSIX and USERPROFILE on Windows — the
-  // child runs with the same forwarded HOME, so both sides agree here too.
-  return path.join(env.HOME ?? homedir(), '.config');
+  // Match os.homedir() in the CHILD: Windows ignores HOME and uses USERPROFILE.
+  // Without APPDATA, a POSIX HOME inherited by a Windows pane must not redirect
+  // provisioning away from the directory the vendor actually reads.
+  const home = platform === 'win32' ? env.USERPROFILE ?? homedir() : env.HOME ?? homedir();
+  return path.join(home, '.config');
 }
 
 /** `<configRoot>/boardui/license.json`, the dist's own licence path. */
