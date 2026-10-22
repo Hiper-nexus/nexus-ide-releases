@@ -12477,7 +12477,7 @@ export const RELEASE_076373_FULL: AppRelease = {
 export const RELEASE_076373: AppRelease = RELEASE_076373_FULL;
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.377',
+  version: '0.76.378',
   date: '2026-10-21',
   codename: 'Kits de UI: shadcn e BoardUI dentro do Nexus',
   summary:
@@ -12485,8 +12485,8 @@ export const CURRENT_RELEASE: AppRelease = {
     'pela CLI oficial e o BoardUI pela CLI dele mais as ferramentas do MCP. O ' +
     'Jev escolhe o kit e o item na superfície que instala, a metade grátis ' +
     'funciona sem chave nenhuma, e a chave do operador provisiona a licença da ' +
-    'máquina sem gastar assento. A 0.76.376, a 0.76.375 e a 0.76.374 foram ' +
-    'tagueadas e não publicadas.',
+    'máquina sem gastar assento. A 0.76.377, a 0.76.376, a 0.76.375 e a ' +
+    '0.76.374 foram tagueadas e não publicadas.',
   highlights: [
     { title: 'Os dois kits de verdade', detail: 'shadcn/ui inteiro (init, add, apply, preset, view, search, build, docs, info, migrate) e BoardUI pela CLI mais as 13 ferramentas do MCP. Medido: a busca do shadcn responde JSON tipado e o catálogo do BoardUI publica 69 itens grátis.' },
     { title: 'O Jev escolhe o kit e o item', detail: 'Na superfície que instala: se a tarefa pede componente, qual kit serve e qual item encaixa, com heurística offline embaixo. Medido com o Jev real: painel de receita → stat cards do BoardUI; tela de login → login block do shadcn; conserto no parser do cron → nenhum kit.' },
@@ -12508,8 +12508,10 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Devolver o token pode ser recusado, e isso é dito', detail: 'Se o cofre recusa recolocar o valor anterior, a chave é apagada — nenhuma credencial é o desfecho seguro — e a mensagem diz o que fazer.' },
     { title: 'A busca padrão diz o que não cobriu', detail: 'Com muitos registries privados, os que ficam fora do primeiro lote vêm nomeados no recibo em vez de parecerem vazios.' },
     { title: 'Falha de instalação mostra a saída', detail: 'Conflito de dependência e erro de rede deixam o diagnóstico na saída da ferramenta, que o painel escondia.' },
-    { title: 'Motivo do cofre preservado', detail: 'A razão de uma chave de licença recusada não é mais apagada pelo recarregamento imediato do estado.' },
+    { title: 'Motivo do cofre preservado', detail: 'A razão de uma chave de licença recusada não é mais apagada pelo recarregamento imediato do estado, nem ao guardar nem ao ativar.' },
+    { title: 'Caminho novo em registry conhecido pede token novo', detail: 'A credencial foi autorizada para a URL digitada, não para o host inteiro — o fornecedor pode servir conteúdo de outra pessoa em outro caminho.' },
+    { title: 'A sugestão entende o pedido', detail: 'Sem a palavra "dashboard" em slug nenhum, "monte um painel" instalava o primeiro item do catálogo. Agora há afinidade por conceito e, sem afinidade, nenhum item.' },
   ],
 };
 
-export const RELEASE_076377: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076378: AppRelease = CURRENT_RELEASE;

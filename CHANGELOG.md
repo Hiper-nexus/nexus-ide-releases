@@ -1,10 +1,10 @@
 # Changelog
 
-## 0.76.377 — Kits de UI: shadcn e BoardUI dentro do Nexus
+## 0.76.378 — Kits de UI: shadcn e BoardUI dentro do Nexus
 
 Pacote macOS (DMG e ZIP arm64), assinado com Developer ID e notarizado.
 
-A 0.76.376, a 0.76.375 e a 0.76.374 foram tagueadas e não publicadas. A 0.76.373 é o pacote Linux anterior. A 0.76.372, a 0.76.370 e a 0.76.368 no espelho público são publicações Windows e não recebem arquivos macOS. A 0.76.371 é o carimbo macOS anterior. A 0.76.365 no espelho continua Latest; esta release não toma essa marca. A 0.76.362 continua Latest na canônica.
+A 0.76.377, a 0.76.376, a 0.76.375 e a 0.76.374 foram tagueadas e não publicadas. A 0.76.373 é o pacote Linux anterior. A 0.76.372, a 0.76.370 e a 0.76.368 no espelho público são publicações Windows e não recebem arquivos macOS. A 0.76.371 é o carimbo macOS anterior. A 0.76.365 no espelho continua Latest; esta release não toma essa marca. A 0.76.362 continua Latest na canônica.
 
 O Nexus entregava um contrato de design (DESIGN.md com tokens) e nenhum componente: o agente recebia a paleta e escrevia cada peça à mão. Agora os dois kits moram dentro dele.
 
@@ -30,7 +30,9 @@ Correções de credencial nesta release:
 - **Devolver o token também pode ser recusado, e agora isso é dito.** Quando o cofre recusa recolocar o valor anterior, a chave é apagada — nenhuma credencial é o único desfecho seguro — e a mensagem explica o que fazer; se nem apagar funcionar, ela manda recadastrar o registry.
 - **A busca padrão diz o que não cobriu.** Com muitos registries privados, os que ficam fora do primeiro lote agora vêm nomeados no recibo, em vez de "não achei" e "nem procurei lá" parecerem a mesma coisa.
 - **Instalação que falha mostra a saída da ferramenta.** Conflito de dependência ou erro de rede deixa o diagnóstico na saída e nenhum texto de erro: o painel dizia só "a instalação falhou" e jogava fora a única pista.
-- **O motivo de uma chave recusada pelo cofre não é mais apagado** pelo recarregamento imediato do estado.
+- **O motivo de uma chave recusada pelo cofre não é mais apagado** pelo recarregamento imediato do estado, nem na gravação nem na ativação (que recusa por motivos locais: arquivo de licença ilegível, de outra máquina ou impossível de gravar).
+- **Um registry conhecido apontado para outro caminho pede token novo.** A credencial foi autorizada para a URL que a pessoa digitou, não para o host inteiro: o fornecedor pode servir conteúdo de outra pessoa em outro caminho.
+- **A sugestão de item entende o pedido, não a ordem do catálogo.** O catálogo do BoardUI tem categorias grossas e nenhum slug com a palavra "dashboard", então "monte um painel" não casava com nada e o primeiro item da lista era instalado (uma árvore de arquivos, para um painel). Agora há afinidade por conceito, a escolha é o item de maior afinidade e, sem afinidade nenhuma, nenhum item é escolhido.
 
 ## 0.76.373 — Estúdio de vídeo com contador, estilos e ditado
 
