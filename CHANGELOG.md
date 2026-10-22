@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.76.396 — A sugestão de componente entende o pedido
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+A 0.76.395 é o pacote macOS desta mesma correção (DMG e ZIP arm64) e continua Latest na canônica e no espelho; esta release não toma essa marca e não recebe arquivos macOS. A 0.76.390 é o pacote macOS anterior e não recebe arquivos Linux. A 0.76.385 foi tagueada e não publicada. A 0.76.382 é o pacote Linux anterior.
+
+No desktop Linux, em relação à 0.76.382:
+
+- **Palavra de enchimento não escolhe componente.** Medido com 15 pedidos reais e o catálogo vivo (69 itens do BoardUI, 100 do shadcn): a sugestão devolvia `combobox` para tela de login, tabela de clientes, barra lateral, landing page e página de configurações. A causa era comparação por pedaço de palavra — "**com**" cabe dentro de "**com**bobox". Agora a comparação é palavra a palavra, com lista de palavras de enchimento e casamento por palavra inteira ou prefixo de pelo menos quatro letras (que ainda liga "calendario" a "calendar").
+- Nos mesmos 15 pedidos depois da correção: login → `login-01`, tabela → `table`, barra lateral → `sidebar-01`, landing → nenhum item (em vez de um errado), configurações → `toggle`. Painel de receita, cartões de métrica e formulário seguem certos, e "corrigir o parser do cron" e "migrar o banco" seguem sem kit nenhum.
+
+O resto do desktop é o da 0.76.382.
+
 ## 0.76.395 — A sugestão de componente entende o pedido
 
 Pacote macOS (DMG e ZIP arm64), assinado com Developer ID e notarizado. Correção de qualidade medida sobre a 0.76.390, que fica como o pacote macOS anterior.

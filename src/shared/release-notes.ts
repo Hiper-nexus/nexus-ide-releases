@@ -12574,7 +12574,7 @@ const RELEASE_076390_FULL: AppRelease = {
 
 export const RELEASE_076390: AppRelease = RELEASE_076390_FULL;
 
-export const CURRENT_RELEASE: AppRelease = {
+const RELEASE_076395_FULL: AppRelease = {
   version: '0.76.395',
   date: '2026-10-22',
   codename: 'A sugestão de componente entende o pedido',
@@ -12592,4 +12592,20 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: RELEASE_076390_FULL.fixes,
 };
 
-export const RELEASE_076395: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076395: AppRelease = RELEASE_076395_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.396',
+  date: '2026-10-22',
+  codename: 'A sugestão de componente entende o pedido',
+  summary:
+    'No desktop Linux, a sugestão de componente deixa de escolher "combobox" ' +
+    'por causa da palavra "com". A comparação é palavra a palavra. É a mesma ' +
+    'correção da 0.76.395, que fica como pacote macOS e continua Latest; esta ' +
+    'release não toma essa marca. A 0.76.390 é o pacote macOS anterior. A ' +
+    '0.76.385 foi tagueada e não publicada. A 0.76.382 é o pacote Linux anterior.',
+  highlights: RELEASE_076395_FULL.highlights,
+  fixes: RELEASE_076395_FULL.fixes,
+};
+
+export const RELEASE_076396: AppRelease = CURRENT_RELEASE;
