@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { createScopedBrowserArtifactStore } from '../browser/browser-artifact-store';
 import { testProjectScope } from './__tests__/scope-fixture';
-import { checkVisualHandoff, recordVisualHandoffEvidence, visualTaskRequirement, visualTaskAtSpawn } from './visual-handoff-gate';
+import { checkVisualHandoff, recordVisualHandoffEvidence, visualTaskRequirement, visualTaskAtSpawn, visualEvidenceVerified } from './visual-handoff-gate';
 
 let dir: string;
 let manager: ProjectRuntimeManager;
@@ -222,4 +222,27 @@ it('F-1417 (revisão Grok): título citado e rodapé real depois de linha em bra
     'Regra de design do projeto (sempre que o trabalho envolver UI):\nCrie a tela de login com o botão Entrar.' +
       F1417_DESIGN_FOOTER,
   )).toBeDefined();
+});
+
+// F-1635: a captura verificada conta como evidência de verificação na revisão
+// Jev. O risco é o inverso: `{ required: false, verified: true }` é o retorno
+// de uma tarefa NÃO visual (nada a exigir) e, lido como "captura observada",
+// daria evidência visual a todo handoff de código — desligando o sinal de
+// "sem evidência de verificação" justamente onde ele importa.
+describe('visualEvidenceVerified', () => {
+  it('só a captura que o Main verificou é evidência', () => {
+    expect(visualEvidenceVerified({ required: true, verified: true, artifactId: 'a1', sha256: 'f'.repeat(64) })).toBe(true);
+  });
+
+  it('tarefa não visual (required:false, verified:true) NÃO é evidência visual', () => {
+    expect(visualEvidenceVerified({ required: false, verified: true })).toBe(false);
+  });
+
+  it('tarefa visual sem captura não é evidência', () => {
+    expect(visualEvidenceVerified({ required: true, verified: false, reason: 'falta captura' })).toBe(false);
+  });
+
+  it('veredito ausente não é evidência', () => {
+    expect(visualEvidenceVerified(undefined)).toBe(false);
+  });
 });

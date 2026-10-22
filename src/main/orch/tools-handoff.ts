@@ -5,7 +5,7 @@ import {
 import { getMissionDecisionHints } from "./mission-decision-hints";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { checkVisualHandoff } from './visual-handoff-gate';
+import { checkVisualHandoff, visualEvidenceVerified } from './visual-handoff-gate';
 import { submitWorkspaceHandoff } from "./tools-handoff-workspace";
 import { promotedParentMayReadWorkspaceHandoff } from "./workspace-handoff-authority";
 import {
@@ -546,7 +546,7 @@ const handoffSubmitTool: McpToolDef = {
             ? rawEvidenceIds.length
             : 0,
           hasObservedCommit: Boolean(worktreeHeadSha),
-          hasVisualEvidence: visual?.verified === true,
+          hasVisualEvidence: visualEvidenceVerified(visual),
         });
       } catch (error) {
         console.warn("[handoff] revisão Jev falhou (ignorada):", error);
