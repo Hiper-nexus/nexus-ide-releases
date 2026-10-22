@@ -740,6 +740,67 @@ const handoffSubmitTool: McpToolDef = {
       // Contrato cumprido (ok) ou esgotado (blocked): a cobrança acabou.
       disarmDeliveryContract(ctx.sessionId);
     }
+    // F-1636 (3ª revisão do Codex no PR 159): a espera pelo ACK é armada
+    // ANTES de a entrega ficar visível. Armada depois, havia uma janela — o
+    // `onHandoffSubmitted` abaixo entrega ao Maestro e o `collectFilesModified`
+    // adiante espera — em que o ACK chegava primeiro: `closeAfterNonSuccessHandoffAck`
+    // não achava espera nenhuma, e num `rework` a nota era entregue e só então
+    // esta chamada armava uma espera OBSOLETA para um handoff já consumido,
+    // que podia fechar o writer no meio do trabalho. Armar antes fecha a
+    // janela: quando o Maestro pode ver a entrega, a espera já existe.
+    //
+    // O prazo não corre antes da entrega (`isDelivered` barra enquanto
+    // `queued`), então armar cedo não fecha nada cedo. Em try/catch porque
+    // agora corre ANTES da entrega: armar nunca pode derrubar o handoff.
+    try {
+      // autoCloseOnHandoff (paridade Bridge): declarado no spawn. success fecha
+      // logo; partial/failed/blocked (F-1409) fecham no ACK aceito do Maestro
+      // ou após 15 min parado depois que a entrega chegou a ele; rework mantém.
+      // Fora do caminho da resposta: o fechamento nunca atrasa nem derruba o handoff.
+      scheduleAutoCloseAfterHandoff(
+        ctx.sessionId,
+        status,
+        (sessionId) => findPane(sessionId)?.paneId ?? null,
+        requestPaneClose,
+        // F-1409: partial/failed/blocked fecha no ACK do Maestro ou na rede de segurança.
+        {
+          handoffId: handoff.id,
+          ...workerActivityProbes,
+          // M3: o prazo corre só depois que a entrega chega ao Maestro.
+          isDelivered: (id) => suite.handoffs.get(id)?.deliveryState !== "queued",
+          // F-1634: o `success` do writer de missão também espera o veredito.
+          // Fechar no submit apagava o contexto antes dele, e o `rework` caía
+          // numa encarnação nova que refazia o trabalho do zero.
+          awaitAckOnSuccess: missionWriterAwaitsHandoffAck(ctx),
+          // F-1634: a doutrina manda o Maestro RODAR ele mesmo o teste que prova
+          // a correção antes de aceitar, e uma suíte real passa dos três minutos
+          // da janela. Enquanto ele está ocupado com isso, a rede de segurança
+          // não corre — senão o pane do worker fechava no meio da verificação e
+          // o `rework` perdia a conversa morna.
+          isDeliveryConsumerBusy: () => {
+            const orchestrator = ctx.missionId
+              ? suite.missions.get(ctx.missionId)?.orchestratorSessionId
+              : undefined;
+            if (orchestrator === undefined) return false;
+            // F-1634: o estado precisa ser NEUTRO de transporte. `getSessionState`
+            // lê só sessão PTY; o Maestro em ACP tem a atividade registrada por
+            // `recordPaneSessionState`, então a sonda o daria como ocioso e a
+            // janela expirava no meio da verificação dele — o defeito que esta
+            // espera existe para evitar, só que no outro transporte. O snapshot
+            // do pane resolve pelos dois (`paneSessionStateForEntry`).
+            const snapshot = listPaneSnapshots().find(
+              (pane) => pane.sessionId === orchestrator,
+            );
+            return isWorkerSessionBusy(snapshot?.state ?? null);
+          },
+        },
+      );
+    } catch (error) {
+      console.warn(
+        "[handoff] agendar o fechamento após o handoff falhou:",
+        error instanceof Error ? error.message : error,
+      );
+    }
     // Wake is exclusively `onHandoffSubmitted` → idle-delivery (bracketed
     // paste + 500 ms settle + Enter). A raw PTY dump here (commit 2b8b4e1d)
     // left `📬 … (use nexus_handoff_list)` sitting in the Maestro composer
@@ -847,48 +908,6 @@ const handoffSubmitTool: McpToolDef = {
           error instanceof Error ? error.message : error,
         );
       });    }
-    // autoCloseOnHandoff (paridade Bridge): declarado no spawn. success fecha
-    // logo; partial/failed/blocked (F-1409) fecham no ACK aceito do Maestro
-    // ou após 15 min parado depois que a entrega chegou a ele; rework mantém.
-    // Fora do caminho da resposta: o fechamento nunca atrasa nem derruba o handoff.
-    scheduleAutoCloseAfterHandoff(
-      ctx.sessionId,
-      status,
-      (sessionId) => findPane(sessionId)?.paneId ?? null,
-      requestPaneClose,
-      // F-1409: partial/failed/blocked fecha no ACK do Maestro ou na rede de segurança.
-      {
-        handoffId: handoff.id,
-        ...workerActivityProbes,
-        // M3: o prazo corre só depois que a entrega chega ao Maestro.
-        isDelivered: (id) => suite.handoffs.get(id)?.deliveryState !== "queued",
-        // F-1634: o `success` do writer de missão também espera o veredito.
-        // Fechar no submit apagava o contexto antes dele, e o `rework` caía
-        // numa encarnação nova que refazia o trabalho do zero.
-        awaitAckOnSuccess: missionWriterAwaitsHandoffAck(ctx),
-        // F-1634: a doutrina manda o Maestro RODAR ele mesmo o teste que prova
-        // a correção antes de aceitar, e uma suíte real passa dos três minutos
-        // da janela. Enquanto ele está ocupado com isso, a rede de segurança
-        // não corre — senão o pane do worker fechava no meio da verificação e
-        // o `rework` perdia a conversa morna.
-        isDeliveryConsumerBusy: () => {
-          const orchestrator = ctx.missionId
-            ? suite.missions.get(ctx.missionId)?.orchestratorSessionId
-            : undefined;
-          if (orchestrator === undefined) return false;
-          // F-1634: o estado precisa ser NEUTRO de transporte. `getSessionState`
-          // lê só sessão PTY; o Maestro em ACP tem a atividade registrada por
-          // `recordPaneSessionState`, então a sonda o daria como ocioso e a
-          // janela expirava no meio da verificação dele — o defeito que esta
-          // espera existe para evitar, só que no outro transporte. O snapshot
-          // do pane resolve pelos dois (`paneSessionStateForEntry`).
-          const snapshot = listPaneSnapshots().find(
-            (pane) => pane.sessionId === orchestrator,
-          );
-          return isWorkerSessionBusy(snapshot?.state ?? null);
-        },
-      },
-    );
     return {
       ok: true,
       handoffId: handoff.id,

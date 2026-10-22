@@ -543,6 +543,40 @@ describe("F-1409: entrega não-success fecha no ACK ou na rede de segurança", (
     expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
   });
 
+  // F-1636 (3ª revisão do Codex no PR 159): o teto é para o CONSUMIDOR
+  // ocupado, não para o worker. Matar um writer no meio do trabalho é o dano
+  // que esta rede existe para evitar (F-1409), e ficou alcançável quando uma
+  // espera obsoleta era armada depois de um `rework` já entregue: o worker
+  // voltava a trabalhar e o teto o fechava 10 min depois.
+  it("worker trabalhando não é fechado pelo teto total", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "hoff-ack",
+      awaitAckOnSuccess: true,
+      isDeliveryConsumerBusy: () => true,
+      isBusy: () => true,
+    });
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_TOTAL_CEILING_MS * 3);
+    expect(close, "o teto fechou um worker que estava trabalhando").not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId("sess-w")).toBe("pane-w");
+  });
+
+  // O teto continua valendo quando o worker está PARADO: é o caso para que ele
+  // foi feito (Maestro ocupado sem fim segurando um pane de ~1 GB, F-572).
+  it("worker parado com Maestro ocupado sem fim: o teto fecha", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "hoff-ack",
+      awaitAckOnSuccess: true,
+      isDeliveryConsumerBusy: () => true,
+      isBusy: () => false,
+    });
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_TOTAL_CEILING_MS + CONSUMER_BUSY_POLL_MS + 2_000);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
   // F-1634 (revisão do Codex no PR 159): um worker pode ter DUAS rodadas
   // entregues e não consumidas — payload novo depois de uma entrega já
   // entregue abre rodada nova (F-239). O ramo de `rework` limpava a espera da

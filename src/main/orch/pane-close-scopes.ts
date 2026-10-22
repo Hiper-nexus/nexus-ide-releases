@@ -448,11 +448,17 @@ export function scheduleAutoCloseAfterHandoff(
         if (pendingNonSuccessBySession.get(sessionId) !== pending) return;
         const mark = markOf();
         const producedOutput = mark !== null && windowMark !== null && mark !== windowMark;
-        const consumerBusy = consumerBusyNow() === true;
-        if (
-          (producedOutput || consumerBusy || nonSuccess.isBusy?.(sessionId)) &&
-          !pastAckCeiling()
-        ) {
+        // F-1636 (3ª revisão do Codex no PR 159): o teto NÃO alcança o worker
+        // que ainda trabalha. Ele existe para limitar a espera por um
+        // CONSUMIDOR ocupado; matar um writer no meio do trabalho é justamente
+        // o dano que esta rede existe para evitar (F-1409), e ficou alcançável
+        // quando uma espera obsoleta era armada depois de um `rework` já
+        // entregue. Worker produzindo saída recomeça a janela, com teto ou sem.
+        if (producedOutput || nonSuccess.isBusy?.(sessionId) === true) {
+          startIdleWindow();
+          return;
+        }
+        if (consumerBusyNow() === true && !pastAckCeiling()) {
           startIdleWindow();
           return;
         }
