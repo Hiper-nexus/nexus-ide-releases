@@ -23,7 +23,7 @@ function fixture() {
   return { root, staging, buildPath };
 }
 
-async function prune(buildPath: string, version = '43.7.4', platform = 'darwin') {
+async function prune(buildPath: string, version = '43.8.3', platform = 'darwin') {
   const hook = forgeConfig.hooks?.packageAfterPrune;
   if (typeof hook !== 'function') throw new Error('packageAfterPrune hook unavailable');
   await hook(forgeConfig, buildPath, version, platform, 'arm64');
@@ -52,8 +52,8 @@ describe.runIf(process.platform === 'darwin')('F-882: Electron legal resources b
       }
       const receipt = JSON.parse(execFileSync('/usr/bin/unzip', ['-p', zip,
         'NexusIDE.app/Contents/Resources/electron-licenses/manifest.json'], { encoding: 'utf8' }));
-      expect(receipt).toMatchObject({ schema: 'nexus.electron-licenses/v1', electronVersion: '43.7.4', platform: 'darwin', arch: 'arm64',
-        sourceUrl: 'https://github.com/electron/electron/releases/download/v43.7.4/electron-v43.7.4-darwin-arm64.zip' });
+      expect(receipt).toMatchObject({ schema: 'nexus.electron-licenses/v1', electronVersion: '43.8.3', platform: 'darwin', arch: 'arm64',
+        sourceUrl: 'https://github.com/electron/electron/releases/download/v43.8.3/electron-v43.8.3-darwin-arm64.zip' });
     } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
   });
 
@@ -74,7 +74,7 @@ describe.runIf(process.platform === 'darwin')('F-882: Electron legal resources b
     } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
   });
 
-  it('refuses an unqualified runtime version instead of claiming 43.7.4 provenance', async () => {
+  it('refuses an unqualified runtime version instead of claiming 43.8.3 provenance', async () => {
     const f = fixture();
     try { await expect(prune(f.buildPath, '43.0.0')).rejects.toThrow(/Electron.*version/i); }
     finally { fs.rmSync(f.root, { recursive: true, force: true }); }
@@ -83,7 +83,7 @@ describe.runIf(process.platform === 'darwin')('F-882: Electron legal resources b
   it('leaves the independent non-Mac packaging path unchanged', async () => {
     const f = fixture();
     try {
-      await prune(f.buildPath, '43.7.4', 'linux');
+      await prune(f.buildPath, '43.8.3', 'linux');
       expect(fs.existsSync(path.join(path.dirname(f.buildPath), 'electron-licenses'))).toBe(false);
     } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
   });

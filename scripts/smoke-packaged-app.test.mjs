@@ -107,8 +107,8 @@ function writeElectronLegalFiles(resources) {
     return { name, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
   });
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ schema: 'nexus.electron-licenses/v1',
-    electronVersion: '43.7.4', platform: 'darwin', arch: 'arm64', source: 'packager-extracted-template',
-    sourceUrl: 'https://github.com/electron/electron/releases/download/v43.7.4/electron-v43.7.4-darwin-arm64.zip', files }));
+    electronVersion: '43.8.3', platform: 'darwin', arch: 'arm64', source: 'packager-extracted-template',
+    sourceUrl: 'https://github.com/electron/electron/releases/download/v43.8.3/electron-v43.8.3-darwin-arm64.zip', files }));
 }
 
 async function createFinishedPackage(source, destination) {

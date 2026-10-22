@@ -2,7 +2,7 @@ import { constants, promises as fs } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
-const VERSION = '43.7.4';
+const VERSION = '43.8.3';
 const FILES = [
   { name: 'LICENSE', bytes: 1096, sha256: '5154e165bd6c2cc0cfbcd8916498c7abab0497923bafcd5cb07673fe8480087d' },
   { name: 'LICENSES.chromium.html', bytes: 19956022, sha256: '7ae82e97b8a60b9d97871e0e11a05285aea2d42bef665f93f6a4f415235839ed' },

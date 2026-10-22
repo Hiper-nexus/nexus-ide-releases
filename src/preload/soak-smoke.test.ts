@@ -31,7 +31,7 @@ function fixture(shell = '/bin/sh') {
   const ui = { open: vi.fn(async () => ({ paneId: 'pane-fixture', sessionId: 'pty-fixture' })),
     view: vi.fn(async () => ({ frames: 2, renderedMarker: true, scroll: true, resize: true, rendererHosts: 1 })), close: vi.fn(async () => {}) };
   const controller = new AbortController(), sendCycle = vi.fn(async () => true), stopped = vi.fn(async (_ids: string[], _stage?: unknown) => {});
-  const options = { ui, signal: controller.signal, sendCycle, stopped, heap: () => 32000, rendererPid: 1234, electronVersion: '43.7.4',
+  const options = { ui, signal: controller.signal, sendCycle, stopped, heap: () => 32000, rendererPid: 1234, electronVersion: '43.8.3',
     finalFunctional: vi.fn(async () => ({ ok: true as const })), done: vi.fn(async () => {}) };
   return { api, ui, controller, options, unsubscribe, emit: (text: string) => data(text) };
 }

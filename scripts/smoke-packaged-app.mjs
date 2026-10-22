@@ -31,8 +31,8 @@ const PINNED_RUNTIME_LICENSES = {
   'third_party/licenses/onnxruntime-v1.19.2-ThirdPartyNotices.txt':
     'cf7342f7ba482ef715ae58f5f497a8d3564fa255164175aea324cd293c5701a0',
 };
-// Distribution bytes qualified from Electron v43.7.4 Darwin; see F-882.
-const MAC_ELECTRON_VERSION = '43.7.4';
+// Distribution bytes qualified from Electron v43.8.3 Darwin; see F-882.
+const MAC_ELECTRON_VERSION = '43.8.3';
 const MAC_ELECTRON_LEGAL_FILES = [
   { name: 'LICENSE', bytes: 1096, sha256: '5154e165bd6c2cc0cfbcd8916498c7abab0497923bafcd5cb07673fe8480087d' },
   { name: 'LICENSES.chromium.html', bytes: 19956022, sha256: '7ae82e97b8a60b9d97871e0e11a05285aea2d42bef665f93f6a4f415235839ed' },

@@ -12,7 +12,7 @@ afterEach(async () => { for (const root of roots.splice(0)) await fs.rm(root, { 
 function receipt(phase, pid) {
   const facts = runtimeFactFixture(phase);
   return { schema: 'nexus.runtime-gates/v1', phase, pid, rendererPid: pid + 100, nonce: phase === 'exercise' ? facts.marker : '22222222-2222-4222-8222-222222222222',
-    packaged: true, appVersion: '0.76.192', electronVersion: '43.7.4', facts, checks: deriveRuntimeChecks(facts), state: facts.state,
+    packaged: true, appVersion: '0.76.192', electronVersion: '43.8.3', facts, checks: deriveRuntimeChecks(facts), state: facts.state,
     cli: { adapterId: 'claude', version: 'Claude fixture (unit only)', binarySha256: 'b'.repeat(64), actualInstalled: true },
     voice: phase === 'exercise' ? { grant: 'granted', ...facts.voice.final } : undefined,
     captures: phase === 'exercise' ? [{ assignmentId: 'main-assignment-uuid', artifactId: 'capture', sha256: 'a'.repeat(64), path: '/private/artifact.png' }] : [],
