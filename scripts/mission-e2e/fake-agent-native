@@ -51,7 +51,7 @@ die "[nexus-e2e-agent] brief sem [[E2E_ROLE=...]]\r\n" unless defined $role;
 my ($dir) = $brief =~ /\[\[E2E_DIR=([^\]\s]+)\]\]/;
 $dir //= $ENV{NEXUS_E2E_DIR};
 die "[nexus-e2e-agent] brief sem [[E2E_DIR=...]]\r\n" unless defined $dir && -d $dir;
-my $id = $role eq 'orchestrator' || $role eq 'reviewer' || $role eq 'operator' ? $role : ($role =~ /^worker:([a-z0-9-]+)$/)[0];
+my $id = $role eq 'orchestrator' || $role eq 'reviewer' || $role eq 'operator' || $role eq 'solo' ? $role : ($role =~ /^worker:([a-z0-9-]+)$/)[0];
 die "[nexus-e2e-agent] papel inválido: $role\r\n" unless defined $id;
 my $agents = "$dir/agents";
 make_path($agents);
@@ -270,6 +270,40 @@ if ($role eq 'operator') {
       append_line("$agents/operator.deliveries.ndjson", $json->encode(\%delivery));
     }
   }
+  exit(0);
+}
+
+if ($role eq 'solo') {
+  # ------------------------------------------- um pane só, sem missão (22/10)
+  # A comparação que o operador pediu: o MESMO trabalho do writer — escreve o
+  # arquivo, roda o comando leve, o pesado pelo shell e faz commit — feito pelo
+  # PRÓPRIO pane que recebeu a tarefa digitada. Sem missão, sem worktree de
+  # writer, sem handoff, sem revisão, sem portão. Nenhum passo a mais que o
+  # trabalho em si, que é o ponto: é a linha de base contra a qual a cerimônia
+  # da missão se mede. Sem a barreira ready/go (não há paralelismo a sincronizar)
+  # e sem o sleep de boot (este pane já está de pé).
+  start_heartbeat('solo');
+  $ENV{NEXUS_E2E_DIR} = $dir;
+  $ENV{NEXUS_E2E_ID} = $id;
+  make_path("$cwd/e2e");
+  write_file("$cwd/e2e/solo.txt", "entrega do pane solo\n");
+  my $light = tool($cwd,
+    'node -v >/dev/null 2>&1; type node >/dev/null 2>&1; ' .
+    'echo "proximo: make build, vitest run e tsc --noEmit (typecheck) no node 22"; ' .
+    'print -r -- "LEASE=${NEXUS_HEAVY_LEASE:-none}"', 'light');
+  my $heavy = tool($cwd,
+    'PATH="$PWD/bin:$PATH" vitest run --reporter=dot; rc=$?; ' .
+    'print -r -- "LEASE=${NEXUS_HEAVY_LEASE:-none} RC=$rc"; exit $rc', 'heavy');
+  my $commit = tool($cwd,
+    'git add -A && git commit -qm "feat(e2e): pane solo pronto" && ' .
+    'git rev-parse HEAD && git symbolic-ref --short HEAD', 'commit');
+  my ($sha, $branch) = $commit->{output} =~ /^([0-9a-f]{40})\n(\S+)/m;
+  stop_heartbeat();
+  write_file("$agents/solo.result.json", $json->encode({
+    id => $id, cwd => $cwd, branch => ($branch // 'sem-branch'), sha => ($sha // 'sem-commit'),
+    light => $light, heavy => $heavy, commit => $commit, finishedAt => time() }));
+  say_pty('[solo] trabalho concluído no próprio pane: sem missão, sem handoff');
+  idle_forever("$agents/solo.input.ndjson");
   exit(0);
 }
 

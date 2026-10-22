@@ -287,6 +287,47 @@ Cada rodada evitada é um turno de worker mais um de Maestro. Não há traço de
 missão real nesta análise: os números acima são constantes de código e
 contagens estruturais, não cronômetro.
 
+## A comparação pedida, medida: um pane só contra missão
+
+O operador pediu exatamente isto: "fazendo com um pane só, sem usar missão, e
+fazendo [como missão]". Acrescentei ao arranjo do E2E um papel `solo` no agente
+falso (`scripts/mission-e2e/fake-agent-native`) que faz o **mesmo trabalho** do
+writer — escreve o arquivo, roda o comando leve, o comando pesado pela admissão
+real de CPU/RAM e faz commit — mas no PRÓPRIO pane que recebeu a tarefa
+digitada: sem missão, sem worktree de writer, sem handoff, sem revisão, sem
+portão. Os dois caminhos rodam no MESMO processo, na mesma máquina, costas com
+costas, e **não há LLM em nenhum dos dois lados**. O que sobra na diferença é o
+custo do motor, que era o que se queria isolar.
+
+| execução | pane só | missão | sobretaxa | razão |
+|---|---|---|---|---|
+| 1ª | 7,47 s | 11,93 s | 4,45 s | 1,60× |
+| 2ª | 7,27 s | 11,56 s | 4,30 s | 1,59× |
+| 3ª | 7,66 s | 11,96 s | 4,29 s | 1,56× |
+| **média** | **7,47 s** | **11,82 s** | **4,35 s** | **1,58×** |
+
+A cerimônia da missão — criar a missão da aba, promover o pane a orquestrador,
+abrir o helper numa worktree isolada, o handoff, a revisão do Jev, a entrega
+colada no PTY, o ACK — custa **4,35 s** por unidade de trabalho, com desvio de
+0,09 s entre repetições. O recibo sai em
+`comparacao-pane-vs-missao.json` (caminho estável com
+`NEXUS_MISSION_E2E_COMPARISON`).
+
+**E é esta medição que fecha o diagnóstico.** O operador vê 1 h virar 2–3 h, ou
+seja **mais uma a duas horas**. A cerimônia do motor custa 4,35 segundos. Não
+há como 4 segundos virarem duas horas. **Logo a lentidão não está no motor: está
+nas RODADAS DE MODELO a mais que o motor provoca.** Cada devolução
+desnecessária é um turno inteiro de LLM — minutos —, e até ontem cada uma
+vinha acompanhada de perder a conversa e voltar ao brief original. Uma a duas
+horas de excesso, divididas por um turno de modelo de 3 a 5 minutos, são de 12
+a 40 rodadas a mais. É exatamente o que as causas 2 e 3 produzem, e é por isso
+que a correção certa é tirar rodadas, não otimizar o motor.
+
+**Ressalva honesta:** parte dos 4,35 s é a CLI falsa do helper dormindo 2,5 s
+para simular o boot (`sleep(2.5)` no papel worker). Uma CLI real demora mais
+para subir, então em produção a missão paga um boot de CLI de verdade por
+helper. Continua sendo segundos a dezenas de segundos — nunca horas.
+
 ## Medição real do motor, 22/10 — e o que ela corrige no que escrevi acima
 
 O operador pediu "testa e vê o tempo". Fiz isso com o que existe: `npm run
