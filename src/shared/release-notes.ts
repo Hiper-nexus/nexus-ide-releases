@@ -12689,7 +12689,7 @@ const RELEASE_076408_FULL: AppRelease = {
 
 export const RELEASE_076408: AppRelease = RELEASE_076408_FULL;
 
-export const CURRENT_RELEASE: AppRelease = {
+const RELEASE_076409_FULL: AppRelease = {
   version: '0.76.409',
   date: '2026-10-22',
   codename: 'A missão deixa de refazer trabalho já feito',
@@ -12706,4 +12706,29 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: RELEASE_076407_FULL.fixes,
 };
 
-export const RELEASE_076409: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076409: AppRelease = RELEASE_076409_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.410',
+  date: '2026-10-22',
+  codename: 'O navegador age e o kit acerta o pacote',
+  summary:
+    'No desktop Linux, o kit de UI instala no pacote que o monorepo declara, ' +
+    'uma vez por projeto, e o recibo só diz instalado quando escreveu. O ' +
+    'navegador do agente deixa de simular o clique: alertas não travam o ' +
+    'pane, o input é real e a captura devolve a imagem. A entrega visual ' +
+    'chega ao juiz com essa imagem, e quem entrega bem é reusado com prazo. ' +
+    'A 0.76.407 continua Latest como pacote macOS; esta release não toma ' +
+    'essa marca. A 0.76.408 no espelho continua Windows. A 0.76.409 é o ' +
+    'pacote Linux anterior.',
+  highlights: [
+    { title: 'O kit cai no pacote certo', detail: 'Num monorepo o componente vai para o pacote que o projeto declara. Uma instalação por projeto. Sem components.json a recusa é na hora. O recibo só diz instalado quando o arquivo foi escrito.' },
+    { title: 'O navegador age de verdade', detail: 'alert, confirm e prompt não travam o pane. Clique, hover e tecla são input real. A captura devolve a imagem. Shadow DOM, iframe da mesma origem e select entram. A recusa de localhost nomeia o preview.' },
+    { title: 'A imagem verificada chega ao juiz', detail: 'A entrega visual leva a captura amarrada ao preview e ao candidato. O portão devolve uma vez antes de rebaixar. Diff sem teste impactado volta a fechar.' },
+    { title: 'Quem entrega bem é reusado', detail: 'O helper que entrega bem ganha janela de reuso com prazo. A guarda deixa o writer isolado fazer git add e git commit. O pool de worktrees segue a licença.' },
+    ...RELEASE_076409_FULL.highlights,
+  ],
+  fixes: RELEASE_076409_FULL.fixes,
+};
+
+export const RELEASE_076410: AppRelease = CURRENT_RELEASE;

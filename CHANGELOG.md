@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.76.410 — O navegador age e o kit acerta o pacote
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+A 0.76.407 continua Latest (pacote macOS: DMG e ZIP arm64) na canônica e no espelho; esta release não toma essa marca e não recebe arquivos macOS. No espelho, a 0.76.408 continua a publicação Windows (Setup, nupkg e RELEASES); esta release não anexa arquivos Linux a ela nem mexe nesses arquivos. A 0.76.409 é o pacote Linux anterior.
+
+No desktop Linux, em relação à 0.76.409:
+
+- **O kit instala no pacote que o projeto declara.** Num monorepo o componente cai no pacote do workspace, não na raiz. Uma instalação por projeto. Sem `components.json` a recusa é na hora, com o que fazer. O recibo só diz instalado quando o arquivo foi escrito; o que já existia não vira "instalado". Worktree com `node_modules` em link é recusada dizendo o motivo. Projeto que não é React para web é recusado com o motivo. Saída acima de 64 KiB chega inteira. A telemetria do fornecedor fica desligada. `@shadcnuikit` entra na escolha por tarefa e nas receitas. A escolha lê a palavra inteira, entende acento e plural, e diz quem decidiu. O painel fica em português e diz a verdade sobre licença e registry. A chave BoardUI embutida libera o Pro nesta frota. A skill, a carta e o brief mandam `add({task})`.
+- **O navegador do agente age de verdade.** `alert`, `confirm` e `prompt` não travam mais o pane. Clique, hover e tecla viram input real pelo Main. A captura devolve a imagem e aceita página inteira, referência e tema. Shadow DOM aberto, iframe da mesma origem e `nexus_browser_select` entram. Navegar anda no histórico. Download recusado aparece nos erros. A espera reage a mutação do DOM. Compra e exclusão param antes, pelo nome do alvo. A recusa de localhost e `file://` nomeia o caminho do preview. Leitura e busca veem os widgets ARIA.
+- **A entrega visual chega com a imagem verificada.** O juiz recebe essa imagem. O portão devolve uma vez antes de rebaixar a partial. A captura fica amarrada ao preview e ao candidato. Bug de UI relatado sem verbo de reparo exige captura. Diff sem teste impactado volta a fechar. Estouro de prazo da regressão na conclusão vira timeout, não reparo. A vaga exclusiva de build presa na fila passa a ser visível.
+- **Quem entrega bem é reusado, com prazo.** A guarda de despacho deixa o writer isolado fazer `git add` e `git commit`. O pool de worktrees segue a licença. O watchdog de início não fecha worker ocupado atrás da fila pesada. A fatia de CPU da tarefa periódica não conta espera de I/O. Projeto fora da tela devolve ao agente o navegador dele. Pulo local do Jev vira `kind: skip` e sai das consultas do painel.
+
+O arranque dos kits no Windows (F-431/432/433) viaja no mesmo código e não é o motivo deste pacote Linux.
+
+O resto do desktop é o da 0.76.409.
+
 ## 0.76.409 — A missão deixa de refazer trabalho já feito
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
