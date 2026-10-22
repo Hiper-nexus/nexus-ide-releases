@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getMemoryAfterAgentReservations, readPaneAdmissionLimits, refreshSystemMemorySample, registerHeavyCommandMemoryReservation, type SystemMemorySample } from './pane-admission';
+import { trace } from '../observability/main-trace';
+import { deliverExclusiveHeldNoticeInMain } from './heavy-command-held-notice';
 
 export type HeavyCommandKind = 'typescript' | 'tests' | 'build' | 'install';
 export type HeavyCommandBlock = 'exclusive' | 'writer-ahead' | 'machine' | 'ram' | 'pressure' | 'swap';
@@ -70,7 +72,9 @@ interface Waiter {
 }
 interface ActiveJob {
   readonly lane: string;
+  readonly root: string;
   readonly kind: HeavyCommandKind;
+  readonly missionId?: string;
   readonly sessionId?: string;
   readonly paneId?: string;
   readonly label?: string;
@@ -78,6 +82,31 @@ interface ActiveJob {
   readonly startedAt: number;
   /** First observation of a dead executor/session; reset the moment either revives. */
   deadSince: number | null;
+  /** Next held-while-others-wait report for an exclusive job. */
+  nextHeldReportAt: number;
+}
+/**
+ * An exclusive build/install that keeps its root while other heavy commands
+ * wait on it. Visibility only: exclusivity (F-983) never yields to it.
+ */
+export interface HeavyExclusiveHeldReport {
+  readonly root: string;
+  readonly kind: HeavyCommandKind;
+  readonly label?: string;
+  readonly missionId?: string;
+  readonly sessionId?: string;
+  readonly paneId?: string;
+  readonly heldMs: number;
+  /** Waiters on this root, attached or parked. */
+  readonly waiting: number;
+  readonly waitingSessionIds: readonly string[];
+  readonly waitingMissionIds: readonly string[];
+}
+interface ExclusiveHeldOptions {
+  readonly firstAfterMs: number;
+  readonly repeatEveryMs: number;
+  /** Must be nonblocking; a throw is swallowed. */
+  report(report: HeavyExclusiveHeldReport): void;
 }
 interface PermitPoolOptions {
   memory(): SystemMemorySample | null;
@@ -107,6 +136,11 @@ interface PermitPoolOptions {
    * probes the pool never expires a lease on its own.
    */
   readonly staleExclusiveMs?: number;
+  /**
+   * A Maestro build held one root for 39 min with 18 commands queued behind
+   * it and nothing said so. Unset: no reports (tests, legacy pools).
+   */
+  readonly exclusiveHeld?: ExclusiveHeldOptions;
 }
 const LABEL_PATTERN = /^[\w .:/_-]{1,80}$/;
 /** Drop a label that could carry a secret or a control character. */
@@ -333,6 +367,26 @@ export class HeavyCommandPermitPool {
     }
   }
 
+  /** Runs only while someone waits (the pump timer), so an idle root is never reported. */
+  #reportLongExclusiveHolds(): void {
+    const held = this.#options.exclusiveHeld;
+    if (!held || this.#active.size === 0) return;
+    const now = Date.now();
+    for (const job of this.#active.values()) {
+      if (!heavyCommandKindIsExclusive(job.kind) || now < job.nextHeldReportAt) continue;
+      const waiters = this.#waiters.filter((waiter) => waiter.lane === job.lane);
+      if (waiters.length === 0) continue;
+      job.nextHeldReportAt = now + held.repeatEveryMs;
+      const ids = (pick: (waiter: Waiter) => string | undefined) =>
+        Object.freeze([...new Set(waiters.map(pick).filter((id): id is string => Boolean(id)))]);
+      try {
+        held.report(Object.freeze({ root: job.root, kind: job.kind, label: job.label, missionId: job.missionId,
+          sessionId: job.sessionId, paneId: job.paneId, heldMs: now - job.startedAt, waiting: waiters.length,
+          waitingSessionIds: ids((waiter) => waiter.request.sessionId), waitingMissionIds: ids((waiter) => waiter.request.missionId) }));
+      } catch { /* Diagnostics never touch admission. */ }
+    }
+  }
+
   #blockedBy(waiter: Waiter, maxActive: number, effectiveMaxActive: number): HeavyCommandBlock {
     const occupants = this.#occupants(waiter.lane);
     const index = this.#waiters.indexOf(waiter);
@@ -402,6 +456,7 @@ export class HeavyCommandPermitPool {
     // Runs only while someone waits (the timer below): expiry exists to unblock
     // a queued lane, not to sweep idle state.
     this.#expireStaleExclusive();
+    this.#reportLongExclusiveHolds();
     const maxActive = this.#options.maxActive ?? machineActiveLimit();
     const effective = heavyCommandEffectiveCap(maxActive, this.#pressureLevel());
     const writerAhead = new Set<string>();
@@ -435,8 +490,11 @@ export class HeavyCommandPermitPool {
       this.#remove(waiter);
       const id = `heavy-${randomUUID()}`;
       const label = heavyCommandLabel(waiter.request.label);
-      this.#active.set(id, { lane: waiter.lane, kind: waiter.request.kind, sessionId: waiter.request.sessionId,
-        paneId: waiter.request.paneId, label, executorPid: waiter.request.executorPid, startedAt: Date.now(), deadSince: null });
+      const startedAt = Date.now();
+      this.#active.set(id, { lane: waiter.lane, root: waiter.request.scope.rootRealPath, kind: waiter.request.kind,
+        missionId: waiter.request.missionId, sessionId: waiter.request.sessionId, paneId: waiter.request.paneId, label,
+        executorPid: waiter.request.executorPid, startedAt, deadSince: null,
+        nextHeldReportAt: startedAt + (this.#options.exclusiveHeld?.firstAfterMs ?? Number.POSITIVE_INFINITY) });
       // The synchronous reservation precedes resolving the caller's promise.
       // Two lanes cannot both spend the same cached free RAM.
       waiter.resolve(Object.freeze({ id, release: () => {
@@ -473,9 +531,23 @@ let livenessProbe: HeavyCommandLivenessProbe | null = null;
  */
 export function setHeavyCommandPermitLiveness(probe: HeavyCommandLivenessProbe): void { livenessProbe = probe; }
 
+/** First report after 10 min of an exclusive hold with a queue, then every 30 min. */
+export const EXCLUSIVE_HELD_FIRST_REPORT_MS = 10 * 60_000;
+export const EXCLUSIVE_HELD_REPEAT_MS = 30 * 60_000;
+
+function reportExclusiveHeld(report: HeavyExclusiveHeldReport): void {
+  trace({ kind: 'heavy-command-exclusive-held', sessionId: report.sessionId ?? '', paneId: report.paneId ?? '',
+    missionId: report.missionId ?? '', root: report.root, heavyKind: report.kind, label: report.label ?? '',
+    elapsedMs: report.heldMs, count: report.waiting });
+  void deliverExclusiveHeldNoticeInMain(report).catch(() => {
+    console.warn('[heavy-command] exclusive-held notice not delivered');
+  });
+}
+
 const permits = new HeavyCommandPermitPool({ memory: getMemoryAfterAgentReservations, limits: readPaneAdmissionLimits,
   refreshMemory: refreshSystemMemorySample, pressure: readHeavyCommandMemoryPressure,
   waitMs: Number.POSITIVE_INFINITY, parkMs: 45_000, staleExclusiveMs: 60_000,
+  exclusiveHeld: { firstAfterMs: EXCLUSIVE_HELD_FIRST_REPORT_MS, repeatEveryMs: EXCLUSIVE_HELD_REPEAT_MS, report: reportExclusiveHeld },
   executorLive: (pid) => { try { return livenessProbe?.executorLive(pid) ?? true; } catch { return true; } },
   sessionLive: (sessionId) => { try { return livenessProbe?.sessionLive(sessionId) ?? true; } catch { return true; } } });
 registerHeavyCommandMemoryReservation(() => permits.snapshot().reservedMB);
