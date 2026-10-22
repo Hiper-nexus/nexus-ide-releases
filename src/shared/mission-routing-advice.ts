@@ -10,6 +10,7 @@ export const MISSION_ROUTING_SKILLS = [
   'bridgeward',
   'nexus-visual-media',
   'typesafe-ai',
+  'ui-kit',
 ] as const;
 
 /**

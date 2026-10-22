@@ -44,6 +44,10 @@ export interface DecisionSurfaceProfile {
 const INTERACTIVE_SURFACES: ReadonlySet<string> = new Set([
   'intake', 'delegation', 'paneState', 'toolPick', 'judgeTool', 'wakeConfirm', 'terminalTriage', 'helperReuse',
   'taskRouting',
+  // Um agente (ou o painel) espera a escolha do kit para seguir; no orçamento
+  // de fundo o planejador pode pegar rota lenta e o abort de 6 s do chamador
+  // cairia na heurística — degradação silenciosa.
+  'uiKitPick',
 ]);
 const INTERACTIVE_LATENCY_MS = 5_000;
 /** F-1166: surfaces consultivas de fase — disparadas fora do caminho crítico, prazo curto. */

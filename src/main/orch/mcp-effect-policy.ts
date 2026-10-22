@@ -13,6 +13,12 @@ export type McpEffectPolicy =
   | 'execution-effect';
 
 const READ_ONLY_TOOLS = new Set([
+  // Kits de UI: o catálogo e o fonte de um item NÃO tocam o projeto (a busca
+  // deixou de declarar namespace no components.json justamente para isto ser
+  // verdade). Precisam ser leitura para um revisor/pane readOnly conseguir
+  // OLHAR o que já está instalado antes de opinar.
+  'ui_kit_catalog',
+  'ui_kit_source',
   'load_workspace_dependencies',
   'lsp_definition',
   'lsp_diagnostics',

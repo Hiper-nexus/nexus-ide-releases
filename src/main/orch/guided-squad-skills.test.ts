@@ -76,15 +76,15 @@ describe('guided squad deterministic skill policy', () => {
 
     expect(squad.agents.map((agent) => [agent.id, agent.allowedSkills])).toEqual(
       [
-        ['orch', ['ponytail', 'check-work', 'bridgesecurity', 'dembrandt']],
+        ['orch', ['ponytail', 'check-work', 'bridgesecurity', 'dembrandt', 'ui-kit']],
         [
           'frontend',
-          ['ponytail', 'bridgesecurity', 'impeccable'],
+          ['ponytail', 'bridgesecurity', 'impeccable', 'ui-kit'],
         ],
-        ['qa', ['check-work', 'bridgesecurity', 'impeccable']],
+        ['qa', ['check-work', 'bridgesecurity', 'impeccable', 'ui-kit']],
         [
           'security-review',
-          ['check-work', 'bridgesecurity', 'impeccable'],
+          ['check-work', 'bridgesecurity', 'impeccable', 'ui-kit'],
         ],
         [
           'architecture',
@@ -136,11 +136,11 @@ describe('guided squad deterministic skill policy', () => {
     });
 
     expect(squad.agents.find((agent) => agent.id === 'orch')?.allowedSkills)
-      .toEqual(['ponytail', 'check-work', 'dembrandt']);
+      .toEqual(['ponytail', 'check-work', 'dembrandt', 'ui-kit']);
     expect(squad.agents.find((agent) => agent.id === 'frontend')?.allowedSkills)
-      .toEqual(['ponytail', 'impeccable']);
+      .toEqual(['ponytail', 'impeccable', 'ui-kit']);
     expect(squad.agents.find((agent) => agent.id === 'qa')?.allowedSkills)
-      .toEqual(['check-work', 'impeccable']);
+      .toEqual(['check-work', 'impeccable', 'ui-kit']);
   });
 
   it('does not treat bare desktop/electron/react goals as UI missions for dembrandt', () => {
@@ -190,7 +190,7 @@ describe('guided squad deterministic skill policy', () => {
     });
 
     expect(squad.agents.find((agent) => agent.id === 'visual')?.allowedSkills)
-      .toEqual(['ponytail', 'impeccable', 'nexus-visual-media']);
+      .toEqual(['ponytail', 'impeccable', 'ui-kit', 'nexus-visual-media']);
     expect(squad.agents.find((agent) => agent.id === 'visual')?.allowedTools)
       .toEqual(['nexus_media_providers', 'nexus_image_generate']);
     expect(
@@ -203,7 +203,7 @@ describe('guided squad deterministic skill policy', () => {
       .toEqual(['ponytail']);
     expect(
       squad.agents.find((agent) => agent.id === 'visual-grok')?.allowedSkills,
-    ).toEqual(['ponytail', 'impeccable']);
+    ).toEqual(['ponytail', 'impeccable', 'ui-kit']);
     expect(squad.agents.find((agent) => agent.id === 'qa')?.allowedSkills)
       .toEqual(['check-work']);
     expect(
@@ -490,9 +490,9 @@ describe('vocabulário de missão visual', () => {
     });
 
     expect(squad.agents.find((agent) => agent.id === 'orch')?.allowedSkills)
-      .toEqual(['ponytail', 'check-work', 'dembrandt']);
+      .toEqual(['ponytail', 'check-work', 'dembrandt', 'ui-kit']);
     expect(squad.agents.find((agent) => agent.id === 'qa')?.allowedSkills)
-      .toEqual(['check-work', 'impeccable']);
+      .toEqual(['check-work', 'impeccable', 'ui-kit']);
   });
 });
 

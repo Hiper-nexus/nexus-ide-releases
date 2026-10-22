@@ -1,0 +1,329 @@
+import { describe, expect, it } from 'vitest';
+import { UiKitCliError } from './ui-kit-cli';
+import {
+  assertShadcnRegistries,
+  defaultShadcnSearchPlan,
+  buildShadcnArgs,
+  chunkShadcnSearchRegistries,
+  classifyShadcnItem,
+  SHADCN_MAX_REGISTRIES,
+  referencedShadcnNamespaces,
+  shadcnCommandWrites,
+  type ShadcnCommand,
+} from './shadcn-source';
+
+const EVERY_KIND: readonly ShadcnCommand[] = [
+  { kind: 'init', template: 'next', base: 'radix', preset: 'nova' },
+  { kind: 'add', items: ['button'] },
+  { kind: 'apply', preset: 'a2r6bw', only: 'theme' },
+  { kind: 'preset-decode', code: 'a2r6bw' },
+  { kind: 'preset-resolve' },
+  { kind: 'preset-url', code: 'a2r6bw' },
+  { kind: 'view', items: ['@shadcn/button'] },
+  { kind: 'search', registries: ['@shadcn'], query: 'button' },
+  { kind: 'build' },
+  { kind: 'docs', component: 'button' },
+  { kind: 'info' },
+  { kind: 'migrate', migration: 'icons', from: 'lucide', to: 'phosphor' },
+  { kind: 'eject' },
+];
+
+describe('buildShadcnArgs — the full documented surface', () => {
+  it.each(EVERY_KIND)('builds argv for $kind without --cwd or --silent', (command) => {
+    const args = buildShadcnArgs(command);
+
+    expect(args.length).toBeGreaterThan(0);
+    expect(args).not.toContain('--cwd');
+    expect(args).not.toContain('-c');
+    expect(args).not.toContain('--silent');
+    expect(args[0]).toBe(
+      command.kind.startsWith('preset-') ? 'preset' : command.kind,
+    );
+  });
+
+  it('adds items with --yes', () => {
+    expect(buildShadcnArgs({ kind: 'add', items: ['button', 'dashboard-01'] })).toEqual([
+      'add',
+      '--yes',
+      'button',
+      'dashboard-01',
+    ]);
+  });
+
+  it('uses --all instead of item names', () => {
+    expect(buildShadcnArgs({ kind: 'add', items: [], all: true })).toEqual([
+      'add',
+      '--yes',
+      '--all',
+    ]);
+  });
+
+  it('passes overwrite, path and dry-run through', () => {
+    expect(
+      buildShadcnArgs({
+        kind: 'add',
+        items: ['button'],
+        overwrite: true,
+        path: 'src/components/ui',
+        dryRun: true,
+      }),
+    ).toEqual([
+      'add',
+      '--yes',
+      'button',
+      '--overwrite',
+      '--path',
+      'src/components/ui',
+      '--dry-run',
+    ]);
+  });
+
+  it('searches several namespaced registries at once', () => {
+    expect(
+      buildShadcnArgs({
+        kind: 'search',
+        registries: ['@shadcn', '@v0'],
+        query: 'sidebar',
+        limit: 25,
+        offset: 50,
+      }),
+    ).toEqual([
+      'search',
+      '@shadcn',
+      '@v0',
+      // The CLI does have `--json` for search; the old scrape existed on the
+      // belief that it did not.
+      '--json',
+      '--query',
+      'sidebar',
+      '--limit',
+      '25',
+      '--offset',
+      '50',
+    ]);
+  });
+
+  it('negates boolean init flags explicitly', () => {
+    const args = buildShadcnArgs({ kind: 'init', cssVariables: false, monorepo: true, rtl: false });
+
+    expect(args).toContain('--no-css-variables');
+    expect(args).toContain('--monorepo');
+    expect(args).toContain('--no-rtl');
+  });
+});
+
+describe('shadcnCommandWrites', () => {
+  it('marks the mutating commands', () => {
+    expect(shadcnCommandWrites({ kind: 'add', items: ['button'] })).toBe(true);
+    expect(shadcnCommandWrites({ kind: 'init' })).toBe(true);
+    expect(shadcnCommandWrites({ kind: 'eject' })).toBe(true);
+    expect(shadcnCommandWrites({ kind: 'migrate', migration: 'rtl' })).toBe(true);
+  });
+
+  it('treats a dry-run add and every query as read-only', () => {
+    expect(shadcnCommandWrites({ kind: 'add', items: ['button'], dryRun: true })).toBe(false);
+    expect(shadcnCommandWrites({ kind: 'search', registries: ['@shadcn'] })).toBe(false);
+    expect(shadcnCommandWrites({ kind: 'view', items: ['button'] })).toBe(false);
+    expect(shadcnCommandWrites({ kind: 'info' })).toBe(false);
+  });
+});
+
+describe('classifyShadcnItem', () => {
+  it('accepts plain, namespaced and https items', () => {
+    expect(classifyShadcnItem('button')).toBe('plain');
+    expect(classifyShadcnItem('dashboard-01')).toBe('plain');
+    expect(classifyShadcnItem('@acme/auth')).toBe('namespaced');
+    expect(classifyShadcnItem('@shadcn')).toBe('namespaced');
+    expect(classifyShadcnItem('https://registry.example.com/r/button.json')).toBe('url');
+    expect(classifyShadcnItem('registry/button.json')).toBe('relative');
+  });
+
+  it('refuses plain http for a registry item', () => {
+    expect(() => classifyShadcnItem('http://registry.example.com/button.json')).toThrow(
+      /must be https/,
+    );
+  });
+
+  it('refuses an absolute path or a parent-directory hop', () => {
+    expect(() => classifyShadcnItem('/etc/passwd.json')).toThrow(/relative to the project/);
+    expect(() => classifyShadcnItem('../../secrets.json')).toThrow(/climb out/);
+  });
+
+  it('refuses whitespace smuggled into an item', () => {
+    expect(() => classifyShadcnItem('button --cwd /tmp')).toThrow(UiKitCliError);
+  });
+});
+
+describe('path and option guards', () => {
+  it('refuses an add --path that escapes the project', () => {
+    expect(() =>
+      buildShadcnArgs({ kind: 'add', items: ['button'], path: '../../../tmp' }),
+    ).toThrow(/climb out/);
+    expect(() =>
+      buildShadcnArgs({ kind: 'add', items: ['button'], path: '/tmp/evil' }),
+    ).toThrow(/relative to the project/);
+  });
+
+  it('refuses an unknown template, base, migration or apply part', () => {
+    expect(() =>
+      buildShadcnArgs({ kind: 'init', template: 'svelte' as never }),
+    ).toThrow(/must be one of/);
+    expect(() =>
+      buildShadcnArgs({ kind: 'migrate', migration: 'drop-tables' as never }),
+    ).toThrow(/must be one of/);
+    expect(() =>
+      buildShadcnArgs({ kind: 'apply', preset: 'nova', only: 'everything' as never }),
+    ).toThrow(/must be one of/);
+  });
+
+  it('bounds the search limit', () => {
+    expect(() =>
+      buildShadcnArgs({ kind: 'search', registries: ['@shadcn'], limit: 10_000 }),
+    ).toThrow(/between 0 and/);
+  });
+
+  it('refuses a registry that is not a namespace', () => {
+    expect(() =>
+      buildShadcnArgs({ kind: 'search', registries: ['https://evil.test'] }),
+    ).toThrow(/namespace like @shadcn/);
+  });
+
+  it('caps the item count', () => {
+    const many = Array.from({ length: 33 }, (_, i) => `item-${i}`);
+    expect(() => buildShadcnArgs({ kind: 'add', items: many })).toThrow(/at most/);
+  });
+});
+
+describe('option injection', () => {
+  it('refuses an item that starts with "-" even when it looks like a path', () => {
+    // This was the hole: the `.json` branch ran BEFORE the pattern test, so
+    // `-x.json` was classified as a local registry path and handed to
+    // commander as an option.
+    expect(() => classifyShadcnItem('-x.json')).toThrow(/may not start with "-"/);
+    expect(() => classifyShadcnItem('--overwrite.json')).toThrow(/may not start with "-"/);
+    expect(() => classifyShadcnItem('-button')).toThrow(/may not start with "-"/);
+  });
+
+  it('refuses an option-shaped destination path', () => {
+    expect(() =>
+      buildShadcnArgs({ kind: 'add', items: ['button'], path: '-rf' }),
+    ).toThrow(/may not start with "-"/);
+  });
+
+  it('refuses an option-shaped search query', () => {
+    expect(() =>
+      buildShadcnArgs({ kind: 'search', registries: ['@shadcn'], query: '--all' }),
+    ).toThrow(/may not start with "-"/);
+  });
+});
+
+describe('referencedShadcnNamespaces — credential scope', () => {
+  it('names only the namespaces the command touches', () => {
+    expect(referencedShadcnNamespaces({ kind: 'add', items: ['@acme/auth', 'button'] }))
+      .toEqual(['@acme']);
+    expect(referencedShadcnNamespaces({ kind: 'view', items: ['@v0/dashboard'] }))
+      .toEqual(['@v0']);
+    expect(referencedShadcnNamespaces({ kind: 'search', registries: ['@shadcn', '@acme'] }))
+      .toEqual(['@shadcn', '@acme']);
+  });
+
+  it('names nothing for a public item, a URL or a local path', () => {
+    expect(referencedShadcnNamespaces({ kind: 'add', items: ['button'] })).toEqual([]);
+    expect(
+      referencedShadcnNamespaces({
+        kind: 'add',
+        items: ['https://registry.example.com/r/button.json'],
+      }),
+    ).toEqual([]);
+    expect(referencedShadcnNamespaces({ kind: 'add', items: ['registry/button.json'] }))
+      .toEqual([]);
+  });
+
+  it('names nothing for a command with no items at all', () => {
+    expect(referencedShadcnNamespaces({ kind: 'info' })).toEqual([]);
+    expect(referencedShadcnNamespaces({ kind: 'add', items: [], all: true })).toEqual([]);
+  });
+});
+
+describe('Windows drive-relative paths', () => {
+  it('refuses `C:evil`, which has no slash after the colon', () => {
+    // Drive-relative: it resolves against drive C's current directory, not the
+    // project, so a test that required a slash waved it through.
+    expect(() => buildShadcnArgs({ kind: 'add', items: ['button'], path: 'C:evil' })).toThrow(
+      /relative to the project/,
+    );
+    expect(() => classifyShadcnItem('C:evil.json')).toThrow(/relative to the project/);
+    expect(() => classifyShadcnItem('c:evil')).toThrow(/relative to the project/);
+  });
+
+  it('still refuses the slashed form and UNC', () => {
+    expect(() => classifyShadcnItem('C:/evil.json')).toThrow(/relative to the project/);
+    expect(() => classifyShadcnItem('\\\\server\\share')).toThrow();
+  });
+});
+
+describe('chunkShadcnSearchRegistries', () => {
+  it('keeps one batch while the CLI accepts the list', () => {
+    const batches = chunkShadcnSearchRegistries(['@shadcn', '@acme', '@other']);
+
+    expect(batches).toEqual([['@shadcn', '@acme', '@other']]);
+  });
+
+  it('splits at the limit the CLI actually enforces', () => {
+    // 16 configured registries plus `@shadcn` is 17, and
+    // `assertShadcnRegistries` refuses more than 16 BEFORE spawning — so this
+    // used to lose live shadcn discovery everywhere at once.
+    const many = ['@shadcn', ...Array.from({ length: 16 }, (_, i) => `@r${i}`)];
+
+    const batches = chunkShadcnSearchRegistries(many);
+
+    expect(batches).toHaveLength(2);
+    expect(batches[0]).toHaveLength(16);
+    // The default namespace rides in the FIRST batch, so the common catalogue
+    // is present even if a later batch fails.
+    expect(batches[0]?.[0]).toBe('@shadcn');
+    expect(batches.flat()).toHaveLength(17);
+    for (const batch of batches) {
+      expect(() => assertShadcnRegistries(batch)).not.toThrow();
+    }
+  });
+
+  it('de-duplicates and drops blanks before counting', () => {
+    expect(
+      chunkShadcnSearchRegistries(['@shadcn', ' @shadcn ', '', '  ', '@acme']),
+    ).toEqual([['@shadcn', '@acme']]);
+  });
+
+  it('has nothing to search for an empty list', () => {
+    expect(chunkShadcnSearchRegistries([])).toEqual([]);
+  });
+});
+
+describe('the default search says what it could not cover', () => {
+  const many = (count: number) =>
+    Array.from({ length: count }, (_, index) => `@ns${String(index).padStart(2, '0')}`);
+
+  it('covers everything and omits nothing while it fits', () => {
+    const plan = defaultShadcnSearchPlan(['@shadcn', '@acme']);
+
+    expect(plan.registries).toEqual(['@shadcn', '@acme']);
+    expect(plan.omitted).toEqual([]);
+  });
+
+  it('omits the namespaces beyond the first batch, and names them', () => {
+    const plan = defaultShadcnSearchPlan(many(40));
+
+    expect(plan.registries).toHaveLength(SHADCN_MAX_REGISTRIES);
+    expect(plan.omitted).toHaveLength(40 - SHADCN_MAX_REGISTRIES);
+    // Nothing is reported twice, and nothing covered is reported as omitted.
+    expect(plan.omitted.some((entry) => plan.registries.includes(entry))).toBe(false);
+    expect(new Set([...plan.registries, ...plan.omitted]).size).toBe(40);
+  });
+
+  it('answers an empty plan for no namespaces', () => {
+    const plan = defaultShadcnSearchPlan([]);
+
+    expect(plan.registries).toEqual([]);
+    expect(plan.omitted).toEqual([]);
+  });
+});

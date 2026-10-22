@@ -21,6 +21,7 @@ export type SettingsSection =
   | 'agent-connection'
   | 'marketplace'
   | 'design-systems'
+  | 'ui-kits'
   | 'remote'
   | 'companion-relay'
   | 'connectors'
@@ -313,6 +314,22 @@ export const SETTINGS_GROUPS: NavGroup[] = [
         subtitle: 'Referências visuais dos projetos',
         aliases: ['designmd.ai · DESIGN.md', 'design systems', 'designmd', 'design'],
       },
+      {
+        id: 'ui-kits',
+        icon: 'KIT',
+        pixelIcon: 'grid',
+        title: 'Kits de UI',
+        subtitle: 'Componentes e dashboards prontos',
+        aliases: [
+          'shadcn',
+          'boardui',
+          'ui kit',
+          'componentes',
+          'blocos',
+          'dashboard pronto',
+          'super admin',
+        ],
+      },
     ],
   },
   {
@@ -454,6 +471,7 @@ const SETTINGS_SECTION_PILLAR: Record<SettingsSection, SettingsNavPillarId> = {
   media: 'agents',
   marketplace: 'agents',
   'design-systems': 'agents',
+  'ui-kits': 'agents',
   agents: 'agents',
   skills: 'agents',
   'media-catalog': 'agents',

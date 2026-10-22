@@ -73,6 +73,7 @@ import {
   ToolsSection,
 } from './CatalogSections';
 import { DesignSystemsSection } from './DesignSystemsSection';
+import { UiKitSection } from './UiKitSection';
 import { JevDecisionsSection } from './JevDecisionsSection';
 import { HarnessSection } from './HarnessSection';
 import { CompanionRelaySection } from './CompanionRelaySection';
@@ -258,6 +259,8 @@ function SettingsSectionContent({
       return <MarketplaceSection />;
     case 'design-systems':
       return <DesignSystemsSection />;
+    case 'ui-kits':
+      return <UiKitSection />;
     case 'remote':
       return <RemoteSection />;
     case 'companion-relay':

@@ -30,6 +30,8 @@ export type JevSurface =
   | 'businessModel'
   | 'missionPick'
   | 'catalogPick'
+  /** Qual kit de UI e qual item servem a tarefa — e se algum serve. */
+  | 'uiKitPick'
   | 'missionMomentum'
   /** F-1166: surfaces consultivas de fase da missão (nunca bloqueiam). */
   | 'missionKickoff'
@@ -54,6 +56,7 @@ const JEV_SURFACES: readonly JevSurface[] = [
   'businessModel',
   'missionPick',
   'catalogPick',
+  'uiKitPick',
   'missionMomentum',
   'missionKickoff',
   'reviewTriage',

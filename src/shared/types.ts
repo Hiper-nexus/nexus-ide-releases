@@ -379,7 +379,30 @@ export interface PaneWorkerSpawnFailedEvent {
  * The typed surface exposed on `window.nexus` by the preload script.
  * The renderer NEVER sees raw ipcRenderer — only this contract.
  */
+export interface NexusUiKitApi {
+  status(): Promise<import('./ui-kit-contract').UiKitStatusView>;
+  catalog(
+    request: import('./ui-kit-contract').UiKitCatalogRequest,
+  ): Promise<import('./ui-kit-contract').UiKitCatalogView>;
+  install(
+    request: import('./ui-kit-contract').UiKitInstallRequest,
+  ): Promise<import('./ui-kit-contract').UiKitInstallView>;
+  license(
+    request: import('./ui-kit-contract').UiKitLicenseRequest,
+  ): Promise<import('./ui-kit-contract').UiKitLicenseView>;
+  registry(
+    request: import('./ui-kit-contract').UiKitRegistryRequest,
+  ): Promise<import('./ui-kit-contract').UiKitStatusView>;
+  cacheClear(request: {
+    kit: import('./ui-kit-contract').UiKitIdValue;
+  }): Promise<import('./ui-kit-contract').UiKitStatusView>;
+  setExternalKey(
+    request: import('./ui-kit-contract').UiKitExternalKeyRequest,
+  ): Promise<import('./ui-kit-contract').UiKitExternalKeyView>;
+}
+
 export interface NexusApi {
+  uiKit: NexusUiKitApi;
   /** Desktop pet (companion flutuante): prefs + pedido de abrir Settings. */
   pet: {
     getPrefs(): Promise<PetPrefs>;

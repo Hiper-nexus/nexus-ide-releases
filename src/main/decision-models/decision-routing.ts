@@ -53,6 +53,15 @@ export const REVERSIBLE_ENSEMBLE_SURFACES: ReadonlySet<JevDecisionSurface> = new
 ]);
 
 /**
+ * `uiKitPick` fica FORA do ensemble de propósito: entrar aqui exige ≥5 casos
+ * rotulados (o guard do F-1167 cobra), e os dele não foram medidos — os
+ * limiares 0,7/0,6 do consumidor são convenção herdada, não calibração desta
+ * superfície. Escrever casos sintéticos só para passar o guard seria
+ * calibração falsa. Até medir em pedidos reais de UI, ela roda num provedor só
+ * (Jev), com a heurística própria como piso quando não há resposta.
+ */
+
+/**
  * Surfaces whose consumers apply probability thresholds calibrated on Jev.
  * In auto mode the planner keeps Jev primary when it is eligible; the other
  * providers are fallbacks. Health is enforced by the judge, not the planner.

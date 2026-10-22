@@ -16,6 +16,7 @@ import { buildCodeMapTools } from './tools-code-map';
 import { buildSyncTools } from './tools-sync';
 import { buildDesignTools } from './tools-design';
 import { buildDesignSystemTools } from './tools-design-system';
+import { buildUiKitTools } from './tools-ui-kit';
 import { buildWorkspaceDependencyTools } from './tools-workspace-dependencies';
 import { buildSecurityTools } from './tools-security';
 import { buildMemoryTools } from './tools-memory';
@@ -63,6 +64,7 @@ export function buildToolset(): McpToolDef[] {
     ...buildVisionTools(),
     ...buildDesignTools(),
     ...buildDesignSystemTools(),
+    ...buildUiKitTools(),
     ...buildWorkspaceDependencyTools(),
     ...buildSecurityTools(),
     ...buildMemoryTools(),

@@ -18,6 +18,7 @@ import {
   audioSettingsSchema,
   integrationsSettingsSchema,
   mergeOrchSettingsPatch,
+  withoutMainOwnedOrchSettings,
   orchSettingsSchema,
   spendSettingsPatchSchema,
   spendSettingsSchema,
@@ -462,7 +463,14 @@ export function registerSettingsIpc(): void {
   handleTrusted(SETTINGS_CHANNELS.orchSet, (_event, raw) => {
     const previousProbeRequestId = orchSettings.acpHarnessProbeRequest?.requestId;
     // F-1167: `jevSurfaces` parcial é mesclado ao atual (sem corrida entre telas).
-    const parsed = orchSettingsSchema.safeParse(mergeOrchSettingsPatch(orchSettings, raw));
+    //
+    // E as chaves do Main saem do patch ANTES da mescla: esta ponte é a do
+    // renderer, e `uiKitRegistries` por aqui passaria por fora de toda a
+    // guarda do IPC de registry. `replaceOrchSettings` (a mescla lá em cima)
+    // continua escrevendo tudo — é por lá que o IPC dedicado salva.
+    const parsed = orchSettingsSchema.safeParse(
+      mergeOrchSettingsPatch(orchSettings, withoutMainOwnedOrchSettings(raw)),
+    );
     if (parsed.success) {
       const next = {
         ...parsed.data,
