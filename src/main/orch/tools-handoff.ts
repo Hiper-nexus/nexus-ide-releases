@@ -49,6 +49,7 @@ import {
   closeAfterNonSuccessHandoffAck,
   isWorkerSessionBusy,
   missionWriterAwaitsHandoffAck,
+  restoreHandoffWaitAfterFailedRework,
 } from "./pane-close-scopes";
 import { findPane, listPaneSnapshots, readSessionOutput, requestPaneClose } from "./pane-registry";
 import {
@@ -1412,6 +1413,24 @@ const handoffAcknowledgeTool: McpToolDef = {
     const rework = verdict === "rework"
       ? await deliverReworkToWriter(ctx, invocation, handoffId, str(args, "note"))
       : {};
+    // F-1634: o ACK de rework cancelou a rede de segurança contando que o
+    // worker voltaria a trabalhar. Entrega falha (sem nota, injectPrompt
+    // recusado, conversa não retomável) deixaria o worker armado e SEM prazo —
+    // e worker de missão não é varrido pelo guardião. Devolve a rede.
+    if (verdict === "rework" && (rework as { reworkDelivered?: boolean }).reworkDelivered === false) {
+      const workerSession = getProjectDomainStores(ctx.scope).handoffs.get(handoffId)?.sessionId;
+      restoreHandoffWaitAfterFailedRework(
+        workerSession,
+        handoffId,
+        (sessionId) => findPane(sessionId)?.paneId ?? null,
+        requestPaneClose,
+        {
+          handoffId,
+          ...workerActivityProbes,
+          isDelivered: () => true,
+        },
+      );
+    }
     return { ok: true, handoffId, deliveryState: "consumed", verdict, ...rework };
   },
 };

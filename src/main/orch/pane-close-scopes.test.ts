@@ -8,6 +8,7 @@ import {
   closeAfterNonSuccessHandoffAck,
   disarmAutoCloseOnHandoff,
   missionWriterAwaitsHandoffAck,
+  restoreHandoffWaitAfterFailedRework,
   NON_SUCCESS_IDLE_CLOSE_MS,
   SUCCESS_ACK_DELIVERY_CEILING_MS,
   SUCCESS_ACK_IDLE_CLOSE_MS,
@@ -543,6 +544,29 @@ describe("F-1409: entrega não-success fecha no ACK ou na rede de segurança", (
     await vi.advanceTimersByTimeAsync(10);
     expect(close).not.toHaveBeenCalled();
     expect(armedAutoClosePaneId("sess-w")).toBe("pane-w");
+  });
+
+  // F-1634 (4ª rodada do Codex no PR 159): o `rework` cancela a rede de
+  // segurança ANTES de a nota ser entregue. Se a entrega falha — sem nota,
+  // `injectPrompt` recusado, resume indisponível — o worker fica ARMADO e sem
+  // prazo nenhum, e worker de missão é excluído da limpeza do guardião: o pane
+  // de ~1 GB vazava até a missão encerrar. Antes isto só alcançava
+  // partial/failed/blocked; o `success` do writer levou ao caminho comum.
+  it("entrega de rework que falha devolve a rede de segurança", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "h-rw", awaitAckOnSuccess: true,
+    });
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "h-rw", "rework")).toBe(false);
+
+    // A nota não chegou ao writer: o chamador devolve a rede.
+    restoreHandoffWaitAfterFailedRework("sess-w", "h-rw", paneOf, close, {
+      handoffId: "h-rw", awaitAckOnSuccess: true,
+    });
+
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_IDLE_CLOSE_MS + 1_000);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
   });
 
   it("rework da rodada em espera continua cancelando a rede dela", async () => {

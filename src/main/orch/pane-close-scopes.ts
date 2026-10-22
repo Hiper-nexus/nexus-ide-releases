@@ -413,6 +413,34 @@ export function scheduleAutoCloseAfterHandoff(
 }
 
 /**
+ * F-1634: a entrega do `[NEXUS_REWORK]` falhou — devolve a rede de segurança.
+ *
+ * O ACK de `rework` cancela a rede ANTES de a nota ser entregue, porque o
+ * worker normalmente volta a trabalhar. Quando a entrega falha (sem nota,
+ * `injectPrompt` recusado, conversa não retomável), o worker fica ARMADO e sem
+ * prazo nenhum — e worker de missão é excluído da limpeza do guardião, então o
+ * pane de ~1 GB ficava aberto até a missão encerrar. Antes isto só alcançava
+ * partial/failed/blocked; o `success` do writer trouxe o caminho para o uso
+ * comum, então o conserto é obrigatório aqui.
+ *
+ * Idempotente: reagenda a mesma espera, e um pane que já fechou não reabre.
+ */
+export function restoreHandoffWaitAfterFailedRework(
+  sessionId: string | undefined,
+  handoffId: string,
+  paneIdOf: PaneIdOf,
+  close: ClosePane,
+  nonSuccess: NonSuccessCloseOptions,
+): void {
+  if (!sessionId || pendingNonSuccessBySession.has(sessionId)) return;
+  scheduleAutoCloseAfterHandoff(sessionId, 'success', paneIdOf, close, {
+    ...nonSuccess,
+    handoffId,
+    awaitAckOnSuccess: true,
+  });
+}
+
+/**
  * F-1409: o Maestro consumiu (ACK) a entrega não-success. `accepted` fecha o
  * worker armado; `rework` mantém o pane vivo para receber a nota (o braço
  * segue armado para a próxima entrega).
