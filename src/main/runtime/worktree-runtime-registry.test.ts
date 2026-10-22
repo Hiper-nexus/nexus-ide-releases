@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { ProjectExecutionScope } from "../../shared/types";
 import { ProjectRuntimeManager } from "./project-runtime-manager";
 import { AGED_PANE_WORKTREE_GC, WorktreeRuntimeRegistry } from "./worktree-runtime-registry";
@@ -15,6 +15,8 @@ import { ScopedStoreBinding } from "../orch/scoped-store";
 import { WorktreeManager } from './worktree-manager';
 import { SqliteWorktreeStateStore } from './sqlite-workflow-state-stores';
 import { skipIfCwdProbeDeniedBySandbox } from '../../test/cwd-probe-sandbox';
+import { controlledProcessCwds } from '../../test/controlled-process-cwds';
+import type { ProcessCwdDeps } from './process-cwds';
 
 const sweep = vi.hoisted(() => vi.fn());
 const liveSession = vi.hoisted(() => vi.fn((_worktreePath: string) => false));
@@ -25,9 +27,11 @@ vi.mock('./worktree-pty-sweep', () => ({
   worktreeHasLiveSession: liveSession,
 }));
 
-// Sonda real de cwd (lsof/procfs) por padrão; `fault` simula a sonda sob carga.
+// Git/registro declaram seu inventário; os casos de SO usam PIDs controlados
+// com leitura real de cwd. `fault` mantém as provas de liveness desconhecida.
 const cwdProbe = vi.hoisted(() => ({
   fault: undefined as undefined | (() => Promise<readonly string[] | null>),
+  deps: undefined as ProcessCwdDeps | undefined,
   calls: 0,
 }));
 vi.mock('./process-cwds', async (importOriginal) => {
@@ -36,7 +40,7 @@ vi.mock('./process-cwds', async (importOriginal) => {
     ...actual,
     listProcessCwds: (...args: Parameters<typeof actual.listProcessCwds>) => {
       cwdProbe.calls += 1;
-      return cwdProbe.fault ? cwdProbe.fault() : actual.listProcessCwds(...args);
+      return cwdProbe.fault ? cwdProbe.fault() : actual.listProcessCwds({ ...args[0], ...cwdProbe.deps });
     },
   };
 });
@@ -148,6 +152,7 @@ function seedWorkState(
 
 afterEach(() => {
   cwdProbe.fault = undefined;
+  cwdProbe.deps = undefined;
   cwdProbe.calls = 0;
   sweep.mockClear();
   liveSession.mockReset();
@@ -1363,6 +1368,11 @@ describe("project worktree runtime registry", () => {
 
 describe("F-908: coleta de worktrees de writers paradas", () => {
   const NOW = { minIdleMs: 0 };
+  beforeEach(() => {
+    // Um cwd conhecido fora das worktrees temporárias, não `null` convertido
+    // em vazio. Testes de processo real e falha substituem esta fixture.
+    cwdProbe.fault = async () => [process.cwd()];
+  });
 
   async function paneWriter(
     registry: WorktreeRuntimeRegistry,
@@ -1397,8 +1407,7 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
   const salvageRefs = (root: string) =>
     git(root, "for-each-ref", "--format=%(refname)", "refs/nexus-salvage/").split("\n").filter(Boolean);
 
-  it("remove o writer de missão integrado e limpo: pasta, branch e registro", async (context) => {
-    skipIfCwdProbeDeniedBySandbox(context);
+  it("remove o writer de missão integrado e limpo: pasta, branch e registro", async () => {
     const { root, scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
     setMission(manager, scope, "mission-done", "done");
@@ -1413,8 +1422,7 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
     registry.dispose();
   });
 
-  it("worktree suja ganha a salvaguarda F-794 e FICA; limpa não mesclada sai e a branch fica", async (context) => {
-    skipIfCwdProbeDeniedBySandbox(context);
+  it("worktree suja ganha a salvaguarda F-794 e FICA; limpa não mesclada sai e a branch fica", async () => {
     const { root, scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
     setMission(manager, scope, "mission-failed", "failed");
@@ -1435,8 +1443,7 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
     registry.dispose();
   });
 
-  it("higiene de disco: suja parada além do prazo se aposenta com salvaguarda real; branch e ref ficam", async (context) => {
-    skipIfCwdProbeDeniedBySandbox(context);
+  it("higiene de disco: suja parada além do prazo se aposenta com salvaguarda real; branch e ref ficam", async () => {
     const { root, scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
     try {
@@ -1499,12 +1506,18 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
         skipIfCwdProbeDeniedBySandbox(context);
         fs.mkdirSync(path.join(busy.worktreePath, "sub"));
         const shell = spawn("sleep", ["30"], { cwd: path.join(busy.worktreePath, "sub"), stdio: "ignore" });
+        const exited = new Promise((resolve) => shell.once("exit", resolve));
         try {
           await new Promise((resolve) => shell.once("spawn", resolve));
-          expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed).toEqual([]);
+          const inventory = controlledProcessCwds([shell.pid!]);
+          onTestFinished(inventory.dispose);
+          cwdProbe.fault = undefined;
+          cwdProbe.deps = inventory.deps;
+          expect(await registry.collectAgedPaneWriterWorktrees(scope, NOW))
+            .toMatchObject({ removed: [], kept: { "in-use": 1 } });
         } finally {
           shell.kill("SIGKILL");
-          await new Promise((resolve) => shell.once("exit", resolve));
+          await exited;
         }
         fs.rmdirSync(path.join(busy.worktreePath, "sub"));
         expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed.map((r) => r.taskId))
@@ -1519,8 +1532,7 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
     }
   });
 
-  it("respeita o teto de candidatos por rodada", async (context) => {
-    skipIfCwdProbeDeniedBySandbox(context);
+  it("respeita o teto de candidatos por rodada", async () => {
     const { scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
     const records = [];
@@ -1640,14 +1652,22 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
       setMission(manager, scope, "mission-live", "running");
       const record = await paneWriter(registry, scope, "mission-live", "s", "s.txt");
       git(root, "merge", "-q", "--no-edit", record.branchRef.slice("refs/heads/".length));
+      cwdProbe.fault = async () => null;
+      expect(await registry.collectIntegratedPaneWorktrees(scope, "mission-live", () => false)).toEqual([]);
+      expect(fs.existsSync(record.worktreePath)).toBe(true);
       const shell = spawn("sleep", ["30"], { cwd: record.worktreePath, stdio: "ignore" });
+      const exited = new Promise((resolve) => shell.once("exit", resolve));
       try {
         await new Promise((resolve) => shell.once("spawn", resolve));
+        const inventory = controlledProcessCwds([shell.pid!]);
+        onTestFinished(inventory.dispose);
+        cwdProbe.fault = undefined;
+        cwdProbe.deps = inventory.deps;
         expect(await registry.collectIntegratedPaneWorktrees(scope, "mission-live", () => false)).toEqual([]);
         expect(fs.existsSync(record.worktreePath)).toBe(true);
       } finally {
         shell.kill("SIGKILL");
-        await new Promise((resolve) => shell.once("exit", resolve));
+        await exited;
       }
       expect((await registry.collectIntegratedPaneWorktrees(scope, "mission-live", () => false))
         .map((r) => r.taskId)).toEqual([record.taskId]);
