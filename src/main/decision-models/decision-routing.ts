@@ -54,11 +54,15 @@ export const REVERSIBLE_ENSEMBLE_SURFACES: ReadonlySet<JevDecisionSurface> = new
 
 /**
  * `uiKitPick` fica FORA do ensemble de propósito: entrar aqui exige ≥5 casos
- * rotulados (o guard do F-1167 cobra), e os dele não foram medidos — os
- * limiares 0,7/0,6 do consumidor são convenção herdada, não calibração desta
- * superfície. Escrever casos sintéticos só para passar o guard seria
- * calibração falsa. Até medir em pedidos reais de UI, ela roda num provedor só
- * (Jev), com a heurística própria como piso quando não há resposta.
+ * rotulados (o guard do F-1167 cobra), e o conjunto embutido não os tem.
+ *
+ * O que ela NÃO é: "só no Jev". Em Somente Clef, e no Automático sem chave do
+ * Jev, a escolha do kit vai ao Clef, com os limiares 0,7/0,6 medidos só no
+ * Jev (revisão de 22/10: jev-1.13.0, 26 tarefas × 3, "pede kit?" com
+ * precisão e recall 1,00; nenhuma rodada no Clef — esta máquina não tem conta
+ * Clef). Por isso ela entra em CALIBRATED_THRESHOLD_SURFACES: no Automático o
+ * Jev fica primário quando elegível. A heurística própria segue como piso
+ * quando não há resposta.
  */
 
 /**
@@ -68,7 +72,7 @@ export const REVERSIBLE_ENSEMBLE_SURFACES: ReadonlySet<JevDecisionSurface> = new
  * Recovery advice is consultive and stays on the normal score.
  */
 export const CALIBRATED_THRESHOLD_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurface>([
-  'taskRouting', 'missionKickoff', 'completionCheck', 'reviewTriage',
+  'taskRouting', 'missionKickoff', 'completionCheck', 'reviewTriage', 'uiKitPick',
 ]);
 
 /** Juntos: rótulos ficam no Jev. A imagem do navegador é outra chamada. */

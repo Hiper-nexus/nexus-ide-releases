@@ -5,6 +5,7 @@ import { isToolAllowedForReadOnlyContext } from "./mcp-effect-policy";
 import type { AgentTransportPhysicalReceipt } from "./http-mcp-boundary";
 import { operatorDelegationInstructions } from "./operator-delegation-doctrine";
 import { maestroStandingContext } from "./maestro-standing-context";
+import { operatorUiKitContext } from "./operator-ui-kit-context";
 import { operatorBusinessModelContext } from "./operator-business-model";
 import { ensureBusinessModel } from "../context/business-model/business-model-ensure";
 import { joinPromptContextBlocks } from "./prompt-context-blocks";
@@ -221,6 +222,7 @@ export async function handleMcpMessage(
         operatorDelegationInstructions(ctx),
         maestroStandingContext(ctx, "mcp"),
         operatorBusinessModelContext(ctx, "mcp"),
+        operatorUiKitContext(ctx, "mcp"),
         operatorWorkspaceMemoryContext(ctx, "mcp"),
       ]);
       return ok(id, {
