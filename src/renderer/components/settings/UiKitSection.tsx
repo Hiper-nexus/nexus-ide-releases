@@ -39,6 +39,9 @@ function installHeadline(result: UiKitInstallView): string {
   if (result.refusal === 'components_json_missing') {
     return 'Este projeto ainda não tem components.json: rode o init do shadcn primeiro, ou instale pelo BoardUI.';
   }
+  if (result.refusal === 'framework_unsupported') {
+    return 'Este projeto não é React para web: os kits instalam componentes React. Use o port do framework ou escreva com o contrato de design.';
+  }
   if (result.refusal === 'project_busy') {
     return 'Outra instalação de kit ainda está rodando neste projeto. Espere terminar e tente de novo.';
   }
@@ -448,6 +451,7 @@ export function UiKitSection() {
           role="status"
         >
           <p>{installHeadline(result)}</p>
+          {result.warning && <p className="settings-list__detail">{result.warning}</p>}
           {result.files && result.files.created.length + result.files.updated.length > 0 && (
             <p className="settings-list__detail">
               Arquivos: {[...result.files.created, ...result.files.updated].slice(0, 12).join(', ')}

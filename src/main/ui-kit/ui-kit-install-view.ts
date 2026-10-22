@@ -178,6 +178,7 @@ export function installViewFromRun(
     ...(outcome.files.recognized ? { files: filesView(outcome.files) } : {}),
     ...(outcome.nothingWritten ? { nothingWritten: true } : {}),
     ...(run.refusal ? { refusal: run.refusal } : {}),
+    ...(run.warning ? { warning: run.warning } : {}),
     ...(recipe ? { unresolved: [...recipe.unresolved] } : {}),
     ...(needsLicense.length > 0 ? { needsLicense } : {}),
     ...(run.licenseState ? { licenseState: run.licenseState } : {}),
@@ -251,6 +252,7 @@ export function agentInstallReceipt(
         }
       : {}),
     ...(run.refusal ? { refusal: run.refusal } : {}),
+    ...(run.warning ? { warning: run.warning } : {}),
     ...(run.registryConflicts?.length ? { registryConflicts: run.registryConflicts } : {}),
     ...(run.unmappedRegistries?.length ? { unmappedRegistries: run.unmappedRegistries } : {}),
     ...(run.withheldRegistries?.length ? { withheldRegistries: run.withheldRegistries } : {}),

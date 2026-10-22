@@ -147,3 +147,37 @@ describe('nexus_ui_kit_boardui licence tools on the bundled key', () => {
     );
   });
 });
+
+describe('a project the kits cannot serve', () => {
+  it('refuses a Vue project at once, naming the framework', async () => {
+    fs.writeFileSync(
+      path.join(project.root, 'package.json'),
+      JSON.stringify({ dependencies: { vue: '^3.5.0' } }),
+    );
+
+    const out = (await tool('nexus_ui_kit_add').handler({ task: 'uma tela de login' }, ctx)) as {
+      ok: boolean;
+      refusal: string;
+      hint: string;
+    };
+
+    expect(out).toMatchObject({ ok: false, refusal: 'framework_unsupported' });
+    expect(out.hint).toContain('Vue');
+    expect(service.runShadcnCommand).not.toHaveBeenCalled();
+  });
+
+  it('refuses shadcn init in an Expo project', async () => {
+    fs.writeFileSync(
+      path.join(project.root, 'package.json'),
+      JSON.stringify({ dependencies: { react: '19.0.0', expo: '^54.0.0' } }),
+    );
+
+    const out = (await tool('nexus_ui_kit_run').handler({ command: 'init' }, ctx)) as {
+      ok: boolean;
+      refusal: string;
+    };
+
+    expect(out).toMatchObject({ ok: false, refusal: 'framework_unsupported' });
+    expect(service.runShadcnCommand).not.toHaveBeenCalled();
+  });
+});

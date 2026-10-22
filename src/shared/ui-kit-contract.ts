@@ -258,11 +258,16 @@ export interface UiKitInstallView {
   readonly nothingWritten?: boolean;
   /** A refusal Main made before running anything, by stable code. */
   readonly refusal?: UiKitRefusalCode;
+  /** Something that may break after a successful install, said in advance. */
+  readonly warning?: string;
   readonly output?: string;
   readonly error?: string;
 }
 
-export type UiKitRefusalCode = 'components_json_missing' | 'project_busy';
+export type UiKitRefusalCode =
+  | 'components_json_missing'
+  | 'project_busy'
+  | 'framework_unsupported';
 
 export interface UiKitInstallFilesView {
   readonly created: readonly string[];

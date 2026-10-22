@@ -613,6 +613,19 @@ describe('installItems', () => {
     expect(Date.now() - started).toBeLessThan(1_000);
   });
 
+  it('warns before a BoardUI install on Tailwind v3, without refusing it', async () => {
+    fs.writeFileSync(
+      path.join(cwd, 'package.json'),
+      JSON.stringify({ dependencies: { react: '^18.3.0' }, devDependencies: { tailwindcss: '^3.4.1' } }),
+    );
+    const h = harness();
+
+    const result = await installItems({ kit: 'boardui', items: ['button'], cwd }, h.deps);
+
+    expect(result.warning).toMatch(/Tailwind v3/);
+    expect(h.cliRuns[0]?.kit).toBe('boardui');
+  });
+
   it('sends BoardUI items to the BoardUI CLI', async () => {
     const h = harness();
 

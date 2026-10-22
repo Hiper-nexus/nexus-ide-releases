@@ -64,6 +64,7 @@ import {
   type UiKitCachedTier,
 } from './ui-kit-cache';
 import type { UiKitCandidate } from './ui-kit-pick';
+import { uiKitProjectFit } from './ui-kit-project';
 import { UI_KIT_SETTINGS_PATH, type UiKitRefusalCode } from '../../shared/ui-kit-contract';
 
 /**
@@ -262,6 +263,8 @@ export interface UiKitRunResult {
   readonly refusal?: UiKitRefusalCode;
   /** What to do about a refusal — the way that works, named. */
   readonly hint?: string;
+  /** Something that may break after a successful install, said in advance. */
+  readonly warning?: string;
 }
 
 export const COMPONENTS_JSON = 'components.json';
@@ -1576,6 +1579,24 @@ export async function planInstallItems(
   };
 }
 
+/**
+ * Main's refusal for a project the kits cannot serve (Vue, Svelte, Expo…),
+ * or null. Read from package.json, no process.
+ */
+export function projectNotFitForKit(cwd: string, kit: UiKitId): UiKitRunResult | null {
+  const fit = uiKitProjectFit(cwd, kit);
+  if (fit.ok) return null;
+  return {
+    ok: false,
+    stdout: '',
+    stderr: fit.detail,
+    code: null,
+    missingRegistryKeys: [],
+    refusal: fit.reason,
+    hint: fit.detail,
+  };
+}
+
 /** Install items into the project. The one call that changes the user's code. */
 export async function installItems(
   input: {
@@ -1587,6 +1608,18 @@ export async function installItems(
     readonly signal?: AbortSignal;
   },
   deps: UiKitServiceDeps = {},
+): Promise<UiKitRunResult> {
+  const unfit = projectNotFitForKit(input.cwd, input.kit);
+  if (unfit) return unfit;
+  const fit = uiKitProjectFit(input.cwd, input.kit);
+  const warn = (result: UiKitRunResult): UiKitRunResult =>
+    fit.ok && fit.warning ? { ...result, warning: fit.warning } : result;
+  return warn(await installFitItems(input, deps));
+}
+
+async function installFitItems(
+  input: Parameters<typeof installItems>[0],
+  deps: UiKitServiceDeps,
 ): Promise<UiKitRunResult> {
   if (input.kit === 'boardui') {
     // The Pro gate on the DIRECT path. It used to live only in the

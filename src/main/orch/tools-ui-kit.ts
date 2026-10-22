@@ -30,6 +30,7 @@ import {
   boardUiProUnlockedLocally,
   callBoardUiTool,
   installItems,
+  projectNotFitForKit,
   provisionBundledBoardUiLicense,
   readComponentsJson,
   runShadcnCommand,
@@ -391,6 +392,12 @@ export function buildUiKitTools(): McpToolDef[] {
         // ignores --yes; answering at once beats a 300 s silent timeout. Also
         // before a task pick that may land on shadcn: the search alone costs
         // seconds, and the agent should choose init or BoardUI knowingly.
+        // A Vue, Svelte or Expo project cannot run what either kit writes;
+        // the search and the pick would only be spent finding it out.
+        const unfit = projectNotFitForKit(cwd, namedKit ?? 'shadcn');
+        if (unfit) {
+          return agentInstallReceipt(unfit, { kit: namedKit ?? 'shadcn', items: named });
+        }
         const shadcnInPlay = kit === 'shadcn' && (named.length > 0 || namedKit !== undefined || Boolean(task));
         if (shadcnInPlay) {
           const refused = shadcnProjectNotReady(cwd);
@@ -616,6 +623,10 @@ export function buildUiKitTools(): McpToolDef[] {
       handler: async (args, ctx, invocation) => {
         const command = buildRunCommand(args);
         const cwd = cwdFor(ctx);
+        if (command.kind === 'init') {
+          const unfit = projectNotFitForKit(cwd, 'shadcn');
+          if (unfit) return { ok: false, command: 'init', ...agentInstallReceipt(unfit, { kit: 'shadcn', items: [] }) };
+        }
         assertStillCurrent(invocation);
         // `nexus_ui_kit_source` sends callers here when an item is not cached
         // yet. If this returned the output and cached nothing, the cache would
