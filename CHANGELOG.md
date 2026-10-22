@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.76.410 — Kits de UI abrem no Windows
+
+Candidata Windows local baseada no fonte 0.76.409. A publicação depende dos
+gates atuais, inclusive da prova real de instalação e upgrade; não há waiver.
+
+- F-431: as duas portas dos kits iniciam o npm por Node nativo, sem executar
+  um batch pelo shell. Caminhos com espaços e Unicode e argumentos literais
+  são preservados.
+- F-432: erro EPIPE no stdin do MCP recusa a chamada sem escapar para o Main
+  depois do callback de escrita.
+- F-433: JSON sem objeto de mensagem, inclusive null, não derruba o Main.
+- Fixtures de contenção e cache usam paths nativos e uma falha de escrita
+  determinística nas duas plataformas. A prova de modo POSIX 0600 permanece
+  específica de POSIX e não certifica ACLs Windows.
+
+Mantém as mudanças de missão do fonte 0.76.409. Esta candidata não promove
+Latest nem altera os canais macOS e Linux.
+
 ## 0.76.409 — A missão deixa de refazer trabalho já feito
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.

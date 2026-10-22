@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type fs from 'node:fs';
+import path from 'node:path';
 import {
   assertPathStaysInProject,
   assertSafeEnvName,
@@ -9,6 +10,7 @@ import {
   assertSafeUiKitCwd,
   buildUiKitChildEnv,
   resolveNpxCommand,
+  resolveUiKitNpxLaunch,
   UiKitCliError,
   UI_KIT_MAX_ARGS,
   UI_KIT_PACKAGES,
@@ -216,6 +218,42 @@ describe('resolveNpxCommand', () => {
   });
 });
 
+describe('resolveUiKitNpxLaunch', () => {
+  it('uses a real Node with the npm entrypoint when the npm prefix is separate', () => {
+    const files = new Set([
+      'C:\\npm prefix\\npx.cmd',
+      'C:\\npm prefix\\node_modules\\npm\\bin\\npx-cli.js',
+      'C:\\Node runtime\\node.exe',
+    ]);
+    expect(resolveUiKitNpxLaunch({ platform: 'win32',
+      pathString: 'C:\\npm prefix;C:\\Node runtime', exists: file => files.has(file) }))
+      .toEqual({ command: 'C:\\Node runtime\\node.exe',
+        argsPrefix: ['C:\\npm prefix\\node_modules\\npm\\bin\\npx-cli.js'] });
+  });
+
+  it('supports npm installed in a local node_modules/.bin', () => {
+    const files = new Set(['C:\\tools\\node_modules\\.bin\\npx.cmd',
+      'C:\\tools\\node_modules\\npm\\bin\\npx-cli.js', 'C:\\node\\node.exe']);
+    expect(resolveUiKitNpxLaunch({ platform: 'win32',
+      pathString: 'C:\\tools\\node_modules\\.bin;C:\\node', exists: file => files.has(file) }))
+      .toEqual({ command: 'C:\\node\\node.exe',
+        argsPrefix: ['C:\\tools\\node_modules\\npm\\bin\\npx-cli.js'] });
+  });
+
+  it('refuses an unresolved batch launcher rather than enabling a shell', () => {
+    expect(() => resolveUiKitNpxLaunch({ platform: 'win32',
+      pathString: 'C:\\missing', exists: () => false })).toThrow(UiKitCliError);
+  });
+
+  it('keeps native launchers and POSIX npx directly executable', () => {
+    expect(resolveUiKitNpxLaunch({ platform: 'linux' }))
+      .toEqual({ command: 'npx', argsPrefix: [] });
+    expect(resolveUiKitNpxLaunch({ platform: 'win32', pathString: 'C:\\node',
+      exists: file => file === 'C:\\node\\npx.exe' }))
+      .toEqual({ command: 'C:\\node\\npx.exe', argsPrefix: [] });
+  });
+});
+
 describe('UI_KIT_PACKAGES', () => {
   it('names both vendor packages', () => {
     expect(UI_KIT_PACKAGES.shadcn).toBe('shadcn@latest');
@@ -238,15 +276,19 @@ describe('isAlreadyGoneKillError', () => {
 describe('assertPathStaysInProject', () => {
   /** `links` are symlinks: name -> raw link text. `real` are plain entries. */
   function stub(links: Record<string, string>, real: readonly string[]) {
+    // Production walks native absolute paths; the fixture must use those too
+    // or its POSIX-only keys silently hide every link on Windows.
+    const nativeLinks = new Map(Object.entries(links).map(([name, value]) => [path.resolve(name), value]));
+    const nativeReal = new Set(real.map(name => path.resolve(name)));
     return {
-      realpathSync: (target: string) => target,
+      realpathSync: (target: string) => path.resolve(target),
       lstatSync: (target: string) => {
-        if (target in links) return { isSymbolicLink: () => true };
-        if (real.includes(target)) return { isSymbolicLink: () => false };
+        if (nativeLinks.has(target)) return { isSymbolicLink: () => true };
+        if (nativeReal.has(target)) return { isSymbolicLink: () => false };
         throw new Error('ENOENT');
       },
       readlinkSync: (target: string) => {
-        const value = links[target];
+        const value = nativeLinks.get(target);
         if (value === undefined) throw new Error('EINVAL');
         return value;
       },

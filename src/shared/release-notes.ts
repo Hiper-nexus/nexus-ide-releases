@@ -12689,7 +12689,7 @@ const RELEASE_076408_FULL: AppRelease = {
 
 export const RELEASE_076408: AppRelease = RELEASE_076408_FULL;
 
-export const CURRENT_RELEASE: AppRelease = {
+const RELEASE_076409_FULL: AppRelease = {
   version: '0.76.409',
   date: '2026-10-22',
   codename: 'A missão deixa de refazer trabalho já feito',
@@ -12706,4 +12706,22 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: RELEASE_076407_FULL.fixes,
 };
 
-export const RELEASE_076409: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076409: AppRelease = RELEASE_076409_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.410',
+  date: '2026-10-22',
+  codename: 'Kits de UI abrem no Windows',
+  summary:
+    'Os kits de UI iniciam no Windows mesmo com espaços e Unicode no caminho. ' +
+    'Uma conexão MCP encerrada ou uma linha JSON sem mensagem deixa de ' +
+    'derrubar o aplicativo. Mantém as melhorias de missão da 0.76.409.',
+  highlights: RELEASE_076409_FULL.highlights,
+  fixes: [
+    { title: 'Kits de UI no Windows', detail: 'Corrigido o início da CLI e do servidor MCP, preservando argumentos literais e caminhos com espaços.' },
+    { title: 'Erros do MCP ficam na chamada', detail: 'Falha de escrita na conexão e JSON sem mensagem são tratados sem derrubar o aplicativo.' },
+    ...RELEASE_076409_FULL.fixes,
+  ],
+};
+
+export const RELEASE_076410: AppRelease = CURRENT_RELEASE;

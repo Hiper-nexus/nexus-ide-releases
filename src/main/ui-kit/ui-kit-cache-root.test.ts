@@ -50,7 +50,7 @@ describe('the cache root is wired at boot', () => {
 
   it('prefers an explicitly injected root', () => {
     expect(resolveUiKitCacheDir('shadcn', { rootDir: '/given' })).toBe(
-      '/given/ui-kit/shadcn',
+      path.normalize('/given/ui-kit/shadcn'),
     );
   });
 });
