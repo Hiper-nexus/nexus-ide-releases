@@ -553,9 +553,11 @@ saber isto antes de mexer:
      os 2,5 s — decide o pré-filtro `isCodeRequest` (mesmo molde do pré-filtro
      de navegador): verbo de escrita ou de edição (criar, corrigir, editar,
      mudar, alterar, add, change, modify…), em português ou inglês, SÓ com
-     contexto de código (`CODE_CONTEXT_PATTERN`: código, teste, componente,
-     endpoint, `crase`, arquivo `.ts`, `.json`…); "refatorar" basta sozinho.
-     "Escreva o PRD", "crie um resumo" e "ajuste o texto" são escrita e ficam
+     contexto de código: marcador forte (`STRONG_CODE_CONTEXT_PATTERN`:
+     função, componente, endpoint, `crase`, arquivo `.ts`, `.json`…) basta; o
+     ambíguo (teste, bug, API, commit, branch) só conta se o pedido não for um
+     texto (mensagem, relatório, resumo, PRD…). "Refatorar" basta sozinho.
+     "Escreva o PRD", "write a commit message" e "crie um bug report" ficam
      calados. Antes o silêncio do Jev valia como "não é código" e o pane
      ficava só com a skill instalada.
      Prompt que já traz `# Ponytail` não recebe de novo.

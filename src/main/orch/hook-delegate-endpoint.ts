@@ -131,17 +131,30 @@ function isBrowserRequest(prompt: string): boolean {
  * ouve falar da ponytail: a skill fica só instalada, à espera de o modelo
  * decidir usá-la. Verbo de ESCRITA só: ler, explicar e analisar não entram. E
  * só com contexto de código: "escreva o PRD", "crie um resumo" e "ajuste o
- * texto" também são escrita. Refatorar é de código por definição.
+ * texto" também são escrita. Refatorar é de código por definição. É heurística
+ * de reserva: com o Jev no ar, quem decide é ele.
  */
 const CODE_WRITE_VERB_PATTERN =
-  /\b(implement(a|e|ar)?|corrij(a|ir)|corrigir|conserta(r)?|arrum(a|ar)?|ajust(a|e|ar)|escrev(a|er)|cri(a|e|ar)|adicion(a|e|ar)|remov(a|er)|apag(a|ue|ar)|migra(r)?|renomei(a|e)|renomear|edit(a|e|ar)|mud(a|e|ar)|alter(a|e|ar)|modifi(ca|que|car)|fix|implement|rewrite|rename|migrate|add|create|delete|remove|update|write|build|edit|change|modify)\b/iu;
+  /\b(implement(a|e|ar)?|corrij(a|ir)|corrigir|conserta(r)?|arrum(a|ar)?|ajust(a|e|ar)|escrev(a|er)|cri(a|e|ar)|adicion(a|e|ar)|remov(a|er)|apag(a|ue|ar)|migra(r)?|renomei(a|e)|renomear|edit(a|e|ar)|mud(a|e|ar)|alter(a|e|ar)|modifi(ca|que|car)|fa[cç]a|fazer|fix|implement|rewrite|rename|migrate|add|create|delete|remove|update|write|build|edit|change|modify|make)\b/iu;
 const CODE_ONLY_VERB_PATTERN = /\b(refator(a|e|ar)?|refactor)\b/iu;
-const CODE_CONTEXT_PATTERN =
-  /\b(c[oó]digo|code|fun[cç][aã]o|function|m[eé]todo|method|classe|class|componentes?|components?|testes?|tests?|bug|endpoint|api|rota|route|handler|hook|m[oó]dulo|module|script|query|schema|migra[cç][aã]o|migration|valida[cç][aã]o|validation|vari[aá]vel|variable|import|lint|typecheck|branch|commit|reposit[oó]rio|repo|banco de dados|database|sql|regex|frontend|backend)\b|`[^`]+`|\b[\w-]+\.(tsx?|jsx?|mjs|cjs|json|vue|svelte|py|go|rs|java|kt|swift|rb|php|cs|cpp|hpp|css|scss|html|xml|sql|sh|ya?ml|toml|gradle|tf)\b|\b(src|lib|app)\//iu;
+/** Marcador que só aparece em código: basta com o verbo. */
+const STRONG_CODE_CONTEXT_PATTERN =
+  /\b(c[oó]digo|code|fun[cç][aã]o|function|m[eé]todo|method|classe|class|componentes?|components?|endpoint|rota|route|handler|hook|m[oó]dulo|module|script|query|schema|migra[cç][aã]o|migration|valida[cç][aã]o|validation|vari[aá]vel|variable|import|lint|typecheck|banco de dados|database|sql|regex|frontend|backend)\b|`[^`]+`|\b[\w-]+\.(tsx?|jsx?|mjs|cjs|json|vue|svelte|py|go|rs|java|kt|swift|rb|php|cs|cpp|hpp|css|scss|html|xml|sql|sh|ya?ml|toml|gradle|tf)\b|\b(src|lib|app)\//iu;
+/**
+ * Marcador ambíguo: também nomeia texto ("commit message", "bug report",
+ * "API summary", "relatório de testes"). Só conta quando o pedido não é um
+ * desses textos.
+ */
+const WEAK_CODE_CONTEXT_PATTERN =
+  /\b(testes?|tests?|bug|api|branch|commit|reposit[oó]rio|repo)\b/iu;
+const TEXT_ARTIFACT_PATTERN =
+  /\b(message|mensagem|report|relat[oó]rio|summary|resumo|e-?mail|prd|post|artigo|article|documenta[cç][aã]o|readme|changelog|release notes|ata|apresenta[cç][aã]o)\b/iu;
 
 function isCodeRequest(prompt: string): boolean {
-  return CODE_ONLY_VERB_PATTERN.test(prompt) ||
-    (CODE_WRITE_VERB_PATTERN.test(prompt) && CODE_CONTEXT_PATTERN.test(prompt));
+  if (CODE_ONLY_VERB_PATTERN.test(prompt)) return true;
+  if (!CODE_WRITE_VERB_PATTERN.test(prompt)) return false;
+  return STRONG_CODE_CONTEXT_PATTERN.test(prompt) ||
+    (WEAK_CODE_CONTEXT_PATTERN.test(prompt) && !TEXT_ARTIFACT_PATTERN.test(prompt));
 }
 
 export const BROWSER_TOOL_HINT =
