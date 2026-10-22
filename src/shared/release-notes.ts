@@ -12825,7 +12825,7 @@ const RELEASE_076414_FULL: AppRelease = {
 
 export const RELEASE_076414: AppRelease = RELEASE_076414_FULL;
 
-export const CURRENT_RELEASE: AppRelease = {
+const RELEASE_076417_FULL: AppRelease = {
   version: '0.76.417',
   date: '2026-10-22',
   codename: 'Conta em uso sem login à toa e Windows integrado',
@@ -12851,4 +12851,28 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076417: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076417: AppRelease = RELEASE_076417_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.419',
+  date: '2026-10-22',
+  codename: 'A conta em uso abre sem pedir login',
+  summary:
+    'No desktop Linux, o pane Claude da conta em uso abre quando só o ' +
+    'relógio venceu o access token, e o login é pedido só com prova, com ' +
+    '«Entrar novamente» em um clique no próprio pane (F-1642). Ponytail ' +
+    '5.3.2 entra em todo trabalho de código, as skills embutidas são ' +
+    'atualizadas sem pré-aprovar ferramenta, e missões sem Git usam a ' +
+    'pasta existente. A 0.76.417 continua o rascunho macOS e não recebe ' +
+    'estes arquivos. A 0.76.414 é o pacote Linux anterior.',
+  highlights: [
+    { title: 'A conta em uso abre o pane', detail: 'Token vencido só pelo relógio, com refresh token no prazo, deixa a CLI do pane renovar. Antes o pane morria com "A sessão expirou" enquanto o painel mostrava a conta conectada. A Reserva renova no spawn, e uma renovação já em andamento é esperada (F-1642).' },
+    { title: 'Login com um clique, só quando precisa', detail: 'Quando a CLI recusa a sessão ou não há refresh token no prazo, o cartão "Não subiu" oferece «Entrar novamente» na conta certa. Recusa sem prova não ganha botão (F-1642).' },
+    { title: 'Ponytail 5.3.2 em todo código', detail: 'No contrato do worker, na skill de todo pane e no lembrete do "+ Pane", que sai também sem o Jev para pedidos de código e respeita "stop ponytail" até "start ponytail".' },
+    { title: 'Skills novas sem pré-aprovar ferramenta', detail: 'impeccable 4.7.0, superpowers 7.0.1 e bmad-templates v6.12.4. O allowed-tools do frontmatter é podado na cópia que chega ao pane.' },
+    ...RELEASE_076417.highlights.slice(4),
+  ],
+  fixes: RELEASE_076417.fixes,
+};
+
+export const RELEASE_076419: AppRelease = CURRENT_RELEASE;
