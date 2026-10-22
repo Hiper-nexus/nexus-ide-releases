@@ -60,6 +60,10 @@ test('each host serves its own robots and sitemap', async () => {
   assert.deepEqual(locs(await marketingSitemap.text()), [
     'https://nexuside.app/',
     'https://nexuside.app/benchmarks/',
+    'https://nexuside.app/blog/',
+    'https://nexuside.app/blog/ia-escritora-revisora-modelos-por-papel/',
+    'https://nexuside.app/blog/criar-saas-com-ia/',
+    'https://nexuside.app/blog/reduzir-consumo-tokens-programando-com-ia/',
     'https://nexuside.app/termos',
     'https://nexuside.app/privacidade',
   ]);

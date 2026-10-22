@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#080709">
+<title>IA escritora e revisora: como dividir o trabalho por papel · NexusIDE</title>
+<meta name="description" content="Entenda como separar implementação e revisão entre agentes de IA, escolher modelos por tarefa e exigir evidências antes de integrar mudanças no projeto.">
+<link rel="canonical" href="https://nexuside.app/blog/ia-escritora-revisora-modelos-por-papel/">
+<link rel="icon" href="/favicon.svg">
+<meta property="og:title" content="IA escritora e revisora: como dividir o trabalho por papel · NexusIDE">
+<meta property="og:description" content="Entenda como separar implementação e revisão entre agentes de IA, escolher modelos por tarefa e exigir evidências antes de integrar mudanças no projeto.">
+<meta property="og:url" content="https://nexuside.app/blog/ia-escritora-revisora-modelos-por-papel/">
+<meta property="og:image" content="https://nexuside.app/og-product.png">
+<meta property="og:type" content="article">
+<meta property="og:locale" content="pt_BR">
+<meta property="og:site_name" content="NexusIDE">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="IA escritora e revisora: como dividir o trabalho por papel · NexusIDE">
+<meta name="twitter:description" content="Entenda como separar implementação e revisão entre agentes de IA, escolher modelos por tarefa e exigir evidências antes de integrar mudanças no projeto.">
+<meta name="twitter:image" content="https://nexuside.app/og-product.png">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"BlogPosting","@id":"https://nexuside.app/blog/ia-escritora-revisora-modelos-por-papel/#article","url":"https://nexuside.app/blog/ia-escritora-revisora-modelos-por-papel/","mainEntityOfPage":"https://nexuside.app/blog/ia-escritora-revisora-modelos-por-papel/","headline":"IA escritora e revisora: como dividir o trabalho por papel","description":"Entenda como separar implementação e revisão entre agentes de IA, escolher modelos por tarefa e exigir evidências antes de integrar mudanças no projeto.","inLanguage":"pt-BR","datePublished":"2026-10-21","dateModified":"2026-10-21","author":{"@type":"Organization","@id":"https://nexuside.app/#organization","name":"NexusIDE","url":"https://nexuside.app/"},"publisher":{"@type":"Organization","@id":"https://nexuside.app/#organization","name":"NexusIDE","url":"https://nexuside.app/"},"image":"https://nexuside.app/og-product.png","isPartOf":{"@type":"Blog","@id":"https://nexuside.app/blog/#blog","url":"https://nexuside.app/blog/","name":"Blog NexusIDE"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"NexusIDE","item":"https://nexuside.app/"},{"@type":"ListItem","position":2,"name":"Blog","item":"https://nexuside.app/blog/"},{"@type":"ListItem","position":3,"name":"IA escritora e revisora: como dividir o trabalho por papel","item":"https://nexuside.app/blog/ia-escritora-revisora-modelos-por-papel/"}]}]}</script>
+<link rel="stylesheet" href="/src/blog.css">
+<script type="module" src="/src/pages.js"></script>
+</head>
+<body class="doc-page blog-page">
+<a class="skip" href="#main">Pular para o conteúdo</a>
+<header class="nav"><a class="brand" href="/"><img src="/favicon.svg" width="32" height="32" alt="">nexus<span class="brand-ide">IDE</span></a><nav class="nav-links" id="nav-menu" aria-label="Principal"><a href="/#recursos">O produto</a><a href="/benchmarks/">Benchmarks</a><a href="/blog/" aria-current="true">Blog</a><a href="/#planos">Planos</a><a href="/conta/">Minha conta</a><a href="https://comunidade.nexuside.app/">Comunidade ↗</a></nav><div class="nav-actions"><button type="button" class="mobile-nav-toggle" aria-expanded="false" aria-controls="nav-menu" aria-label="Abrir menu"><span class="mobile-nav-toggle-bars" aria-hidden="true"></span></button><a class="button button-white" href="/#download">Ver downloads ↗</a></div></header>
+<main id="main" class="doc-main blog-main">
+<nav class="blog-breadcrumb" aria-label="Você está aqui"><ol><li><a href="/">NexusIDE</a></li><li><a href="/blog/">Blog</a></li><li aria-current="page">IA escritora e revisora: como dividir o trabalho por papel</li></ol></nav>
+<article>
+<header class="blog-intro"><p class="blog-category">Agentes e revisão</p><h1>IA escritora e revisora: como dividir o trabalho por papel</h1><p class="doc-lede">Entenda como separar implementação e revisão entre agentes de IA, escolher modelos por tarefa e exigir evidências antes de integrar mudanças no projeto.</p><p class="blog-meta">Por <a href="/blog/#editorial" rel="author">NexusIDE</a> · Publicado em <time datetime="2026-10-21">21 de outubro de 2026</time></p></header>
+<nav class="blog-toc" aria-label="Sumário"><h2>Neste guia</h2><ol><li><a href="#defina-o-resultado-antes-de-escolher-as-ias">Defina o resultado antes de escolher as IAs</a></li><li><a href="#de-a-ia-escritora-uma-entrega-concreta">Dê à IA escritora uma entrega concreta</a></li><li><a href="#faca-a-revisora-examinar-a-mudanca-real">Faça a revisora examinar a mudança real</a></li><li><a href="#separe-papel-de-modelo">Separe papel de modelo</a></li><li><a href="#devolva-problemas-como-correcoes-delimitadas">Devolva problemas como correções delimitadas</a></li><li><a href="#exija-testes-e-mantenha-a-decisao-humana">Exija testes e mantenha a decisão humana</a></li><li><a href="#comece-com-uma-dupla-e-observe">Comece com uma dupla e observe</a></li><li><a href="#fontes">Fontes</a></li></ol></nav>
+<div class="blog-prose">
+<p>Separar quem implementa de quem revisa cria duas responsabilidades claras: produzir uma mudança e procurar problemas nela. Com agentes de IA, essa divisão pode ser útil para organizar o desenvolvimento, desde que a revisão examine o código e os testes, em vez de apenas concordar com o resumo da implementação.</p>
+<p>O benefício esperado é um processo mais verificável. Usar duas IAs, ou dois modelos diferentes, não garante que os erros serão encontrados. As duas podem compartilhar limitações ou interpretar o mesmo requisito de forma errada.</p>
+<h2 id="defina-o-resultado-antes-de-escolher-as-ias">Defina o resultado antes de escolher as IAs</h2>
+<p>Comece pela tarefa e pelos critérios de aceite. Em um exemplo hipotético de agenda online, a mudança será impedir duas reservas para o mesmo horário. O comportamento esperado precisa ser o mesmo para a IA que escreve e para a que revisa.</p>
+<p>Registre também o que está fora do escopo. Se a tarefa é corrigir reservas duplicadas, redesenhar o painel ou trocar o banco de dados não deve entrar no pacote sem uma decisão explícita. Quanto mais fácil identificar a mudança, mais objetiva pode ser a revisão.</p>
+<p>Para quem está começando, o guia sobre <a href="/blog/criar-saas-com-ia/">criar um SaaS com IA</a> explica como transformar uma ideia em critérios que você consegue verificar.</p>
+<h2 id="de-a-ia-escritora-uma-entrega-concreta">Dê à IA escritora uma entrega concreta</h2>
+<p>A escritora, ou agente de implementação, recebe a responsabilidade de produzir a mudança dentro do escopo. A entrega deve incluir o que foi alterado, quais testes foram executados, o resultado e qualquer limitação conhecida.</p>
+<p>Um pedido possível para a agenda é:</p>
+<blockquote><p>Implemente a proteção contra reservas duplicadas. Preserve o fluxo atual e acrescente um teste para duas tentativas de reservar o mesmo horário. Explique os arquivos alterados. Não publique em produção. Se não conseguir executar um teste, informe isso claramente.</p></blockquote>
+<p>Esse pedido não determina sozinho a solução técnica. Ele estabelece o resultado e as evidências esperadas, deixando espaço para que o agente investigue a estrutura existente.</p>
+<h2 id="faca-a-revisora-examinar-a-mudanca-real">Faça a revisora examinar a mudança real</h2>
+<p>A revisora precisa receber o objetivo, os critérios, a versão exata da mudança e acesso ao contexto relevante. Peça que examine o diff, que é a comparação entre versões, e os arquivos relacionados. Um relatório escrito pela própria implementadora não substitui essa inspeção.</p>
+<p>Na agenda, a revisão deve perguntar se a proteção funciona quando duas requisições chegam quase ao mesmo tempo, se a permissão é conferida no servidor e se o teste realmente reproduz a falha que se queria corrigir.</p>
+<p>Peça achados específicos: localização, cenário em que ocorre o problema, impacto e forma de verificar. “Pode estar inseguro” é pouco acionável. “O cliente A consegue cancelar a reserva do cliente B neste fluxo” descreve algo que pode ser confirmado ou refutado.</p>
+<h2 id="separe-papel-de-modelo">Separe papel de modelo</h2>
+<p>Escritora e revisora são responsabilidades. Claude, Codex e outras opções compatíveis são ferramentas ou famílias de modelos que podem assumir essas responsabilidades conforme a configuração disponível.</p>
+<p>O NexusIDE organiza agentes em missões e permite trabalhar com diferentes CLIs no mesmo ambiente, com papéis, terminais e passagens de contexto. Também oferece worktrees, pastas separadas do mesmo repositório para organizar mudanças em paralelo. <a href="/#recursos">Veja os recursos do produto</a>.</p>
+<p>Para uma tarefa rotineira e bem delimitada, experimente uma opção de menor custo na escrita e reserve um modelo mais capaz para a revisão complexa. Isso é uma estratégia de trabalho a validar no seu projeto. Preço mais alto não comprova qualidade, e um modelo barato que exige várias correções pode custar mais por entrega aceita.</p>
+<p>Escolher modelos diferentes pode ser uma estratégia a experimentar para obter outra análise. Não trate diversidade como prova de independência ou qualidade. Compare resultados em tarefas reais e mantenha os mesmos critérios de avaliação. Custo, disponibilidade e contexto necessário também entram na escolha.</p>
+<h2 id="devolva-problemas-como-correcoes-delimitadas">Devolva problemas como correções delimitadas</h2>
+<p>Quando houver um achado, confirme que ele se aplica à versão atual. Encaminhe à escritora o cenário e a evidência, peça uma correção localizada e revise a nova versão. Uma mudança feita depois da revisão pode invalidar parte das conclusões anteriores.</p>
+<p>Evite deixar escritora e revisora alterarem os mesmos arquivos sem coordenação. No processo recomendado aqui, a primeira revisão identifica problemas; a correção entra em uma etapa explícita. Isso é uma organização de trabalho, não uma promessa de bloqueio técnico de escrita no Nexus.</p>
+<p>Se a revisão não encontrar problemas, registre o que foi examinado e as limitações. Não é necessário fabricar alterações para demonstrar atividade.</p>
+<h2 id="exija-testes-e-mantenha-a-decisao-humana">Exija testes e mantenha a decisão humana</h2>
+<p>Uma entrega pode trazer código, testes, comandos executados e pendências. Ela não deve transformar “não consegui verificar” em “está pronto”. Revise também a interface quando o comportamento depender de layout, acessibilidade ou interação.</p>
+<p>A documentação do GitHub ressalta que a revisão por IA pode errar e deve complementar a revisão humana. A concordância de agentes não substitui sua responsabilidade sobre a mudança. <a href="https://docs.github.com/en/copilot/responsible-use/agents">Consulte a orientação sobre uso responsável</a>.</p>
+<p>Em áreas sensíveis, como autenticação, dados de clientes e pagamentos, envolva alguém com experiência para avaliar a entrega antes de liberar o uso real. Decida a publicação com base em evidências e riscos conhecidos, não apenas no tom confiante da resposta.</p>
+<h2 id="comece-com-uma-dupla-e-observe">Comece com uma dupla e observe</h2>
+<p>Para experimentar, escolha uma tarefa pequena, uma escritora e uma revisora. Registre quantos problemas reais foram encontrados, o trabalho de correção e o consumo informado. Acrescente outros papéis apenas quando houver uma necessidade clara. Veja também <a href="/blog/reduzir-consumo-tokens-programando-com-ia/">como acompanhar o consumo de tokens</a>.</p>
+<p><a href="/#download">Veja os downloads do NexusIDE</a> para organizar esse fluxo no seu computador. Confira os instaladores e as <a href="/#planos">condições atuais do Nexus</a>; o acesso aos modelos continua nas suas próprias contas de provedores compatíveis.</p>
+<section class="blog-sources" aria-labelledby="fontes"><h2 id="fontes">Fontes e referências</h2><ul><li><a href="https://docs.github.com/en/copilot/responsible-use/agents">GitHub: uso responsável de agentes de IA ↗</a></li></ul><p>As recomendações práticas são orientação editorial. As fontes descrevem os limites e mecanismos citados; não são testes de desempenho do NexusIDE.</p></section>
+</div>
+</article>
+<aside class="blog-related" aria-labelledby="relacionados"><h2 id="relacionados">Continue a leitura</h2><ul><li><a href="/blog/criar-saas-com-ia/">Criar um SaaS com IA: guia para quem está começando</a></li><li><a href="/blog/reduzir-consumo-tokens-programando-com-ia/">Como reduzir o consumo de tokens ao programar com IA</a></li></ul></aside>
+</main>
+<footer class="footer"><a class="brand" href="/"><img src="/favicon.svg" width="32" height="32" alt="">nexus<span class="brand-ide">IDE</span></a><span class="mono">SUA IDEIA NO COMANDO.</span><div><a href="/blog/">Blog</a><a href="/benchmarks/">Benchmarks</a><a href="/conta/">Minha conta</a><a href="/privacidade">Privacidade do site</a><a href="/termos">Sobre este site</a></div></footer>
+</body>
+</html>
