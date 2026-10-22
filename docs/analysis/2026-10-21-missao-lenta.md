@@ -223,6 +223,36 @@ Cada rodada evitada é um turno de worker mais um de Maestro. Não há traço de
 missão real nesta análise: os números acima são constantes de código e
 contagens estruturais, não cronômetro.
 
+## Achado de lado: o `check` obrigatório está vermelho na main
+
+Levantado em 22/10 ao tentar mergear o PR 159, e vale por si.
+
+O run do CI no commit `145d7cb23` — a release **0.76.373 publicada**, e o ponto
+de partida daquela branch — falhou com **14 testes**. A branch do PR mostra 16,
+e os arquivos coincidem:
+
+| família | arquivos |
+|---|---|
+| F-764, tetos de tempo | `markdown-blocks` (mediu 282 ms contra limite de 200), `ComposerTiptapEditor` (481 contra 300), `memory-links`, `pty-tap-text-budget` |
+| F-908, sonda de cwd via `ps` | `process-cwds`, `worktree-runtime-registry` (6), `tools-panes-isolated-writer` |
+| ambiente | `native-heavy-agy-plugin` (node real), `heavy-command-permit` (serialização) |
+
+Os dois que aparecem só na branch do PR (`pty-tap-text-budget`,
+`terminal-host`) estão em caminhos que ele não toca e passam em macOS,
+254/254 — são a mesma flutuação de tempo das outras.
+
+**Consequência prática.** Com `required_status_checks: ['check']` vermelho por
+ambiente, nenhum PR entra pela proteção da main. As releases 0.76.374 a
+0.76.381 saíram em 21/10 com esse gate vermelho, por tags apontando para
+commits FORA da main — ou seja, quem decide o embarque é o
+`release:candidate` local, não este CI.
+
+**Decidir uma das duas**, porque hoje a proteção não protege e só impede
+merge: dar aos testes de tempo do F-764 e à sonda do F-908 um caminho de pulo
+honesto no runner compartilhado (como `skipIfCwdProbeDeniedBySandbox` já faz
+sob o Seatbelt), ou tirar `check` da lista de obrigatórios enquanto ele não
+for confiável.
+
 ## Recomendação para a próxima rodada
 
 1. Ligar `classifyWorkKind` em `mission-code-completion.ts:145` como perfil de
