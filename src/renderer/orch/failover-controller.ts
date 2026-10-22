@@ -146,7 +146,7 @@ export function useFailoverController(): void {
       // que acabou de nascer.
       if (event.respawnedByMain) {
         if (pane && event.toAccountId) {
-          useLayoutStore.getState().setAccountId(pane.id, event.toAccountId);
+          useLayoutStore.getState().setAccountId(pane.id, event.toAccountId, pane.accountSelection);
         }
         push(
           'success',
@@ -178,7 +178,7 @@ export function useFailoverController(): void {
         ? orchState.missions.find((mission) => mission.id === paneMissionId)
         : undefined;
       if (event.toAccountId && !(owningMission && missionOwnsItsPanes(owningMission))) {
-        useLayoutStore.getState().setAccountId(pane.id, event.toAccountId);
+        useLayoutStore.getState().setAccountId(pane.id, event.toAccountId, pane.accountSelection);
       }
       const updated = listPanes(useLayoutStore.getState().root).find(
         (candidate) => candidate.id === pane.id,

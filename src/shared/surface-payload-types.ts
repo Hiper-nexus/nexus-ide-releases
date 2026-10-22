@@ -478,8 +478,10 @@ export interface PaneModel {
   agentTransport?: 'cli-pty' | 'acp';
   /** The model selected for this agent pane (e.g. "claude-sonnet-4-5"). */
   model?: string;
-  /** Account pinned to this pane; absent means the provider's active/default. */
+  /** Account used by this pane, retained for exact conversation resume. */
   accountId?: string;
+  /** Automatic selection may be reconsidered for a fresh conversation. Legacy bindings stay pinned. */
+  accountSelection?: 'automatic' | 'pinned';
   /** Papel na missão (orquestração) — vira o badge de identidade do pane. */
   role?: 'orchestrator' | 'worker';
   /**

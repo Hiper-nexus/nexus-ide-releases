@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildPtySpawnRequest } from './spawn-request';
-import { spawnRequestSchema } from '../../shared/ipc';
+import { spawnRequestSchema, workspaceLayoutSchema } from '../../shared/ipc';
+import { chooseAccount } from '../../main/persistence/account-select';
 
 const basePane = {
   kind: 'cli-agent' as const,
@@ -14,6 +15,53 @@ const basePane = {
 };
 
 describe('buildPtySpawnRequest', () => {
+  const automaticPane = {
+    ...basePane, adapterId: 'claude', orchRequestId: undefined,
+    accountSelection: 'automatic' as const,
+  };
+  const fresh = { cols: 80, rows: 24, resume: false, resumeLatestOnly: false,
+    restorePersistedAuthority: false };
+
+  it('reavalia a conta automática persistida: 99% semanal cede à irmã com folga', () => {
+    const layout = workspaceLayoutSchema.parse({
+      root: { kind: 'leaf', id: 'leaf-1', pane: { ...automaticPane, title: 'Claude' } },
+      focusedPaneId: 'pane-1',
+    });
+    if (layout.root.kind !== 'leaf') throw new Error('expected leaf');
+    const req = buildPtySpawnRequest({ ...fresh, pane: layout.root.pane, accountId: 'acc-1' });
+    const accounts = ['acc-1', 'acc-2'].map((id, createdAt) => ({
+      id, createdAt, adapterId: 'claude', label: id, mode: 'subscription' as const, upstream: 'anthropic',
+    }));
+    const now = 1_000_000;
+    const quota = new Map(accounts.map((a, i) => [a.id, {
+      updatedAt: now,
+      windows: [{ kind: 'weekly' as const, label: 'Semanal', usedRatio: i === 0 ? 0.99 : 0.07,
+        source: 'provider-api' as const, confidence: 'high' as const }],
+    }]));
+    const selected = req.accountId ?? chooseAccount(accounts, 'acc-1', null, now, undefined,
+      quota, { now, requireSource: 'provider-api', maxAgeMs: 600_000 })?.id;
+    expect(selected).toBe('acc-2');
+    expect(req.accountId).toBeUndefined();
+    expect(spawnRequestSchema.safeParse(req).success).toBe(true);
+  });
+
+  it.each([
+    { resume: true }, { resumeLatestOnly: true }, { restorePersistedAuthority: true }, { preserveAccount: true },
+    { missionId: 'mission-1' },
+    { pane: { ...automaticPane, missionId: 'mission-1' } },
+    { pane: { ...automaticPane, orchRequestId: 'orch-1' } },
+    { pane: { ...automaticPane, role: 'worker' as const } },
+    { pane: { ...automaticPane, accountSelection: undefined } },
+    { pane: { ...automaticPane, accountSelection: 'pinned' as const } },
+    { pane: { ...automaticPane, adapterId: 'codex' } },
+  ])('preserva conta em retomada, autoridade de missão e escolha explícita: %j', (override) => {
+    expect(buildPtySpawnRequest({ ...fresh, pane: automaticPane, ...override }).accountId).toBe('acc-1');
+  });
+
+  it('preserva a substituição explícita do chamador', () => {
+    expect(buildPtySpawnRequest({ ...fresh, pane: automaticPane, accountId: 'acc-2' }).accountId).toBe('acc-2');
+  });
+
   it('monta o payload completo do pane', () => {
     expect(
       buildPtySpawnRequest({

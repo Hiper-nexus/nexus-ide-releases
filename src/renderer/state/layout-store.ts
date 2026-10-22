@@ -132,8 +132,8 @@ interface LayoutState {
   /** User rename — pins the title so shell escapes stop overriding it. */
   renameTitle(paneId: string, title: string): void;
   setBrowserUrl(paneId: string, url: string): void;
-  /** Pin the account used by this pane (used by account failover + resume). */
-  setAccountId(paneId: string, accountId: string | undefined): void;
+  /** Preserve the selected identity for resume, with its automatic/manual origin. */
+  setAccountId(paneId: string, accountId: string | undefined, selection?: PaneModel['accountSelection']): void;
   /** Pin the model used by this pane (used by model failover: rejected model → catalog fallback). */
   setPaneModel(paneId: string, model: string | undefined): void;
   /**
@@ -1390,8 +1390,9 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     persist();
   },
 
-  setAccountId: (paneId, accountId) => {
-    const root = updatePane(get().root, paneId, { accountId });
+  setAccountId: (paneId, accountId, accountSelection) => {
+    const root = updatePane(get().root, paneId, { accountId,
+      accountSelection: accountId ? accountSelection : undefined });
     set({ root });
     persist();
   },
@@ -1403,7 +1404,9 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
   },
 
   setPaneAdapter: (paneId, adapterId, model) => {
-    const root = updatePane(get().root, paneId, { adapterId, model, accountId: undefined });
+    const root = updatePane(get().root, paneId, {
+      adapterId, model, accountId: undefined, accountSelection: undefined,
+    });
     set({ root });
     persist();
   },

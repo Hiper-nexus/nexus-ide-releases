@@ -1323,6 +1323,7 @@ function startSpawn(
   continuityPack?: string,
   restorePersistedAuthority = false,
   skipContinuation = false,
+  preserveAccount = false,
 ): Promise<string | null> {
   const quietSpawn = host.quietSpawn === true;
   host.quietSpawn = false;
@@ -1380,35 +1381,35 @@ function startSpawn(
       // MCP). O PTY nasce com ESTA grade; se o term re-fitou nesse intervalo o
       // reportedGrid precisa ser o spawnGrid para o resize sair já abaixo.
       const spawnGrid = { cols: host.term.cols, rows: host.term.rows };
-      const res = await window.nexus.pty.spawn(
-        buildPtySpawnRequest({
-          pane,
-          cols: spawnGrid.cols,
-          rows: spawnGrid.rows,
-          // Panes always live inside the active workspace: restored panes from
-          // older sessions (or the fresh initial tree) may lack a cwd — they
-          // must open in the workspace folder, never the user's home.
-          cwd: pane.cwd ?? getActiveWorkspacePath() ?? undefined,
-          shell:
-            pane.kind === 'shell' && currentSettings.shell !== ''
-              ? currentSettings.shell
-              : undefined,
-          resume,
-          resumeLatestOnly,
-          restorePersistedAuthority,
-          // paneId estável (layout persistido): com resume, o main retoma a
-          // sessão de provider CAPTURADA deste pane (`--resume <id>`).
-          accountId: accountId ?? pane.accountId,
-          missionId,
-          rendererWaitMs:
-            pane.kind === 'cli-agent'
-              ? Math.min(
-                  600_000,
-                  Math.max(0, Math.round(spawnCallAt - cycleStartMs)),
-                )
-              : undefined,
-        }),
-      );
+      const spawnRequest = buildPtySpawnRequest({
+        pane,
+        cols: spawnGrid.cols,
+        rows: spawnGrid.rows,
+        // Panes always live inside the active workspace: restored panes from
+        // older sessions (or the fresh initial tree) may lack a cwd — they
+        // must open in the workspace folder, never the user's home.
+        cwd: pane.cwd ?? getActiveWorkspacePath() ?? undefined,
+        shell:
+          pane.kind === 'shell' && currentSettings.shell !== ''
+            ? currentSettings.shell
+            : undefined,
+        resume,
+        resumeLatestOnly,
+        restorePersistedAuthority,
+        // paneId estável (layout persistido): com resume, o main retoma a
+        // sessão de provider CAPTURADA deste pane (`--resume <id>`).
+        accountId: accountId ?? pane.accountId,
+        preserveAccount: preserveAccount || Boolean(pack) || Boolean(crossResume),
+        missionId,
+        rendererWaitMs:
+          pane.kind === 'cli-agent'
+            ? Math.min(
+                600_000,
+                Math.max(0, Math.round(spawnCallAt - cycleStartMs)),
+              )
+            : undefined,
+      });
+      const res = await window.nexus.pty.spawn(spawnRequest);
       const spawnRpcMs = Date.now() - spawnCallAt;
       if (pane.kind === 'cli-agent') {
         console.info('[pane-birth]', {
@@ -1549,7 +1550,10 @@ function startSpawn(
         // The renderer's early account-list request may fail. Persist only the
         // account actually selected by Main so resume cannot choose a sibling.
         // Mission account bindings are persisted by Main's sealed pane store.
-        useLayoutStore.getState().setAccountId(pane.id, res.accountId);
+        useLayoutStore.getState().setAccountId(pane.id, res.accountId,
+          pane.accountSelection === 'automatic' ||
+          (pane.adapterId === 'claude' && !spawnRequest.accountId)
+            ? 'automatic' : undefined);
       }
       setHostSession(host, pane.id, res.sessionId, spawnGrid);
       host.exactResumeSessionId =
@@ -4438,6 +4442,7 @@ export function respawnWithResume(
     cross ? options?.continuityPack : undefined,
     false,
     options?.skipContinuation === true,
+    cross,
   );
 }
 

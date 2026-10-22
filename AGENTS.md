@@ -277,11 +277,16 @@ saber isto antes de mexer:
   de permissão); o tooltip é o `title` nativo, porque o `::after` do `data-tip`
   é cortado pelo overflow do toolbar. Só diz o que o recibo traz: `pinned` e
   `native` não listam alternativas (não concorreram), `legacy` não tem chip.
-- **A conta ativa fica até a cota medida zerar.** `chooseAccount` não entrega
-  o pane à irmã só porque ela tem mais folga. Troca quando a ativa está fora
-  da lista (cooldown, sem credencial, excluída pelo hit) ou quando a
-  disponibilidade medida é 0. Cota desconhecida mantém a ativa. Sem conta
-  ativa, a mais livre vence.
+- **Trabalho novo respeita a drenagem.** Com leitura `provider-api` de até
+  10 min, a conta a partir de 89% cede trabalho novo à irmã pela regra de
+  folga (`accountDrainEvidence`; limiar configurável). Sem essa evidência,
+  `chooseAccount` mantém a ativa até esgotar ou sair dos candidatos. Cota
+  desconhecida não é prova de esgotamento; a sessão viva pode terminar sua tarefa.
+- **Escolha automática não vira pin ao salvar (F-1630).** `accountSelection`
+  preserva a origem no layout. Pane Claude automático e solto volta à regra
+  do Main em conversa nova; resume, missão/grant/papel e destino explícito
+  preservam a conta. Layout antigo sem origem permanece vinculado, pois não
+  prova que a escolha era automática. Troca explícita de conta/CLI limpa a marca.
 - **Folga só entre janelas comparáveis (F-995).** Com o snapshot, a regra de
   folga recebe as janelas por conta (`quotaByAccountId`) e decide por
   `compareAccountHeadroom` (`src/main/quota/account-headroom.ts`): esgotada
