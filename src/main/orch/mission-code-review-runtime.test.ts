@@ -223,7 +223,7 @@ describe('Main candidate reviewer ownership', () => {
 // refeita sobre código idêntico quando o juiz passava dos 5 min do TTL).
 // Precisa ser estreita: só juiz VIVO, no candidato EXATO, antes do veredito.
 describe('isReviewing', () => {
-  it('é verdadeiro enquanto o juiz vivo lê o candidato e falso depois do veredito', async () => {
+  it('cobre o juiz vivo E o veredito pronto ainda não consumido', async () => {
     const f = fixture();
     expect(f.runtime.isReviewing(f.input.scope, f.input.mission.id)).toBe(false);
     await f.runtime.ensure(f.input);
@@ -231,7 +231,14 @@ describe('isReviewing', () => {
     expect(f.runtime.isReviewing(f.input.scope, f.input.mission.id, f.input.candidate.fingerprint)).toBe(true);
 
     expect((await f.submit()).accepted).toBe(true);
-    // Veredito registrado: não há mais leitura em voo, o TTL comum volta a valer.
+    // Revisão do Codex no PR 159: a passada que CONSOME o veredito roda
+    // pruneStates + runMechanical antes de ensureIndependentReview. Se o
+    // veredito pronto não protegesse o cache, a suíte rodaria mais uma vez
+    // sobre o candidato inalterado — o defeito que este método evita.
+    expect(f.runtime.isReviewing(f.input.scope, f.input.mission.id)).toBe(true);
+
+    // Deixa de proteger quando a missão sai de running.
+    f.revoke();
     expect(f.runtime.isReviewing(f.input.scope, f.input.mission.id)).toBe(false);
   });
 

@@ -197,6 +197,20 @@ describe('Main code completion production ports', () => {
     expect(state.checks).toHaveBeenCalledOnce();
   });
 
+  // Revisão do Codex no PR 159: a passada que CONSOME o veredito roda
+  // pruneStates + runMechanical ANTES de ensureIndependentReview. Com o
+  // veredito pronto deixando de proteger o cache, a suíte rodava mais uma vez
+  // sobre o candidato inalterado — justamente no caso que o fix mira.
+  it('veredito pronto depois do TTL não faz a suíte rodar de novo', async () => {
+    vi.useFakeTimers();
+    await run(); expect(state.checks).toHaveBeenCalledOnce();
+    // O juiz frontier leva mais que o TTL comum e então registra o veredito.
+    await vi.advanceTimersByTimeAsync(8 * 60_000);
+    expect((await record()).accepted).toBe(true);
+    await run();
+    expect(state.checks).toHaveBeenCalledOnce();
+  });
+
   it('tem teto: nem a revisão em voo preserva as verificações para sempre', async () => {
     vi.useFakeTimers();
     await run(); expect(state.checks).toHaveBeenCalledOnce();

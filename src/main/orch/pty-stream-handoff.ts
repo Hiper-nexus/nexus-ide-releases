@@ -1,6 +1,6 @@
 import { completionFactsFrom, missionGoalOf, scheduleCompletionCheck, scheduleReviewTriageAdvice } from "./jev-mission-advisor";
 import { analysisClient, flushPtyAnalysis, isPtyAnalysisEnabled } from '../pty/pty-analysis-runtime';
-import { checkVisualHandoff } from './visual-handoff-gate';
+import { checkVisualHandoff, visualEvidenceVerified } from './visual-handoff-gate';
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
@@ -396,6 +396,18 @@ async function preparePtyHandoff(
   // partial (texto integral preservado nos artifacts); fraca só por sinal que
   // nem o MCP devolve fica success marcado, como no MCP (F-823).
   // Fail-open como no MCP: exceção vira skipped e nada muda.
+  // F-1635: o portão visual roda ANTES da revisão Jev também aqui (paridade
+  // com o handoff MCP). A captura que ele exige é evidência de verificação
+  // Main-owned; julgada depois, a entrega de aparência era cobrada duas vezes
+  // — o portão pedia a captura e o Jev marcava "sem evidência de verificação"
+  // por não haver saída de teste, que numa entrega visual não existe.
+  const visual = payload.status === 'success' && !isPlanHandoff ? await checkVisualHandoff(ctx, {
+    task: dispatch?.taskId ? suite.tasks.getPlannedTask(dispatch.taskId) : undefined,
+    assertCurrent: () => {
+      if (requireCurrentPtyWorkerContext(sessionId) !== ctx) throw new Error('handoff_provenance: visual proof context changed');
+    },
+  }) : undefined;
+
   let jevOutcome = mechanicalHandoffReviewOutcome({
     kind: "skipped",
     reason: "not-run",
@@ -424,6 +436,7 @@ async function preparePtyHandoff(
           .map((a) => a.kind),
         evidenceIdsCount: 0,
         hasObservedCommit: Boolean(worktreeHeadSha),
+        hasVisualEvidence: visualEvidenceVerified(visual),
         maxBounces: 0,
       });
       jevOutcome = mechanicalHandoffReviewOutcome(jevVerdict);
@@ -434,12 +447,6 @@ async function preparePtyHandoff(
   if (jevOutcome.mark) {
     summary = `[evidência fraca] ${summary}`;
   }
-  const visual = payload.status === 'success' && !isPlanHandoff ? await checkVisualHandoff(ctx, {
-    task: dispatch?.taskId ? suite.tasks.getPlannedTask(dispatch.taskId) : undefined,
-    assertCurrent: () => {
-      if (requireCurrentPtyWorkerContext(sessionId) !== ctx) throw new Error('handoff_provenance: visual proof context changed');
-    },
-  }) : undefined;
   const visualPending = visual?.required === true && !visual.verified;
   if (visualPending) summary = `[verificação visual pendente] ${summary}`;
   // ORC-03: mesmo checkpoint oculto do handoff MCP (fim do turno do writer).
@@ -657,6 +664,15 @@ async function persistPtyHandoff(
         handoffId: committed.handoff.id,
         ...workerActivityProbes,
         isDelivered: (id) => prepared.suite.handoffs.get(id)?.deliveryState !== "queued",
+        // F-1634: o `awaitAckOnSuccess` do handoff MCP NÃO vale aqui, de
+        // propósito (revisão do Codex no PR 159 pediu paridade; recusada com
+        // motivo). Este é o fechamento mecânico de FIM DE TURNO: o worker já
+        // encerrou, a entrega é durável no ledger e o `rework` tenta `resume`
+        // antes de recorrer a brief novo, então a conversa das CLIs
+        // principais sobrevive ao fechamento. Segurar o pane enquanto a fila
+        // do Maestro está cheia é o cenário de travamento do F-572 (~1 GB por
+        // pane), e a decisão de não deixar `deliveryState: queued` segurar
+        // este pane é explícita no F-1409 e coberta por teste.
       },
     );
     return Object.freeze({

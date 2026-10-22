@@ -102,17 +102,26 @@ export class MissionCodeReviewRuntime {
   }
 
   /**
-   * F-1631: um juiz independente está lendo ESTE candidato agora.
+   * F-1631: a certificação DESTE candidato ainda está em andamento?
    *
    * Pergunta de leitura, sem efeito: nunca abre, fecha nem reagenda revisão.
-   * `fingerprint` amarra a resposta ao candidato exato — um juiz que ficou
-   * preso a um candidato anterior não autoriza preservar verificação nova.
+   * `fingerprint` amarra a resposta ao candidato exato — um juiz preso a um
+   * candidato anterior não autoriza preservar verificação nova.
+   *
+   * Revisão da revisão (Codex no PR 159): o veredito PRONTO e ainda não
+   * consumido também conta. `runMissionCodeCompletion` chama `pruneStates()` e
+   * `runMechanical` ANTES de `ensureIndependentReview`, então a passada que vai
+   * consumir o veredito é justamente a que encontraria o cache expirado — e a
+   * suíte rodava mais uma vez sobre o candidato inalterado, exatamente a
+   * repetição que este método existe para evitar. O veredito deixa de proteger
+   * quando o candidato muda (outra chave), a missão sai de `running`
+   * (`#current`) ou o estado é esquecido; o teto de 45 min continua valendo.
    */
   isReviewing(scope: ProjectExecutionScope, missionId: string, fingerprint?: string): boolean {
     const ticket = this.#tickets.get(missionLifecycleKey(scope, missionId));
-    if (!ticket || ticket.result || !this.#current(ticket)) return false;
+    if (!ticket || !this.#current(ticket)) return false;
     if (fingerprint !== undefined && ticket.binding.fingerprint !== fingerprint) return false;
-    if (ticket.flight) return true;
+    if (ticket.result || ticket.flight) return true;
     try { return Boolean(ticket.pane && this.ports.isLive(ticket.pane.sessionId)); }
     catch { return false; }
   }
