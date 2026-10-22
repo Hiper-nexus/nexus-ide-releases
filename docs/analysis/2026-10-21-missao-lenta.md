@@ -496,6 +496,15 @@ ambiente, nenhum PR entra pela proteção da main. As releases 0.76.374 a
 commits FORA da main — ou seja, quem decide o embarque é o
 `release:candidate` local, não este CI.
 
+**Subconjunto provado no head final (22/10, run `39730603408` contra
+`39714368151`).** Com as 47 mudanças desta branch, o `check` falha com **11
+testes em 5 arquivos**; a main, **12 em 6**. Comparando arquivo a arquivo e
+teste a teste, **nada falha só nesta branch**: o conjunto dela é subconjunto
+ESTRITO do da main, que ainda tem o `ComposerTiptapEditor.composer` (teto de
+tempo do F-764, flutuação de máquina compartilhada). Ou seja, este PR não
+acrescentou uma única falha ao portão — ele já estava vermelho, e continua
+vermelho pelo mesmo motivo medido abaixo.
+
 **Precisado em 22/10, no run da main `4c7b89c91`** (`gh run view 39714368151`):
 12 testes em 6 arquivos, e a causa dominante é **UMA**. A sonda real de cwd
 devolve `null` no `ubuntu-latest` — o próprio teste dela falha em
