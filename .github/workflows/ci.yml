@@ -93,7 +93,17 @@ jobs:
       - name: Prove Linux command namespace lifetime
         env:
           NEXUS_LINUX_OWNED_COMMAND_TEST: "1"
-        run: npx vitest run src/main/orch/owned-linux-command.test.ts --maxWorkers=1
+        # O ubuntu-latest (24.04) restringe user namespaces sem privilégio pelo
+        # AppArmor, e o bwrap do apt não tem perfil próprio: a prova travava até
+        # o prazo de 15 s em todo run desde 03/10. A VM é descartável; o estado
+        # fica registrado antes e depois para a próxima investigação.
+        run: |
+          echo "apparmor_restrict_unprivileged_userns=$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo n/a)"
+          bwrap --version
+          if bwrap --unshare-all --ro-bind / / true; then echo "bwrap userns antes: ok"; else echo "bwrap userns antes: recusado"; fi
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          if bwrap --unshare-all --ro-bind / / true; then echo "bwrap userns depois: ok"; else echo "bwrap userns depois: recusado"; fi
+          npx vitest run src/main/orch/owned-linux-command.test.ts --maxWorkers=1
       - name: Build isolated F-764 analysis and regex audit workers
         run: |
           npx vite build --config vite.pty-analysis.config.ts --outDir "$RUNNER_TEMP/f764-pty"
