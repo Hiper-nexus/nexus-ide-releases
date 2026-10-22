@@ -1,10 +1,10 @@
 # Changelog
 
-## 0.76.375 — Kits de UI: shadcn e BoardUI dentro do Nexus
+## 0.76.376 — Kits de UI: shadcn e BoardUI dentro do Nexus
 
 Pacote macOS (DMG e ZIP arm64), assinado com Developer ID e notarizado.
 
-A 0.76.374 foi tagueada e não publicada. A 0.76.373 é o pacote Linux anterior. A 0.76.372, a 0.76.370 e a 0.76.368 no espelho público são publicações Windows e não recebem arquivos macOS. A 0.76.371 é o carimbo macOS anterior. A 0.76.365 no espelho continua Latest; esta release não toma essa marca. A 0.76.362 continua Latest na canônica.
+A 0.76.375 e a 0.76.374 foram tagueadas e não publicadas. A 0.76.373 é o pacote Linux anterior. A 0.76.372, a 0.76.370 e a 0.76.368 no espelho público são publicações Windows e não recebem arquivos macOS. A 0.76.371 é o carimbo macOS anterior. A 0.76.365 no espelho continua Latest; esta release não toma essa marca. A 0.76.362 continua Latest na canônica.
 
 O Nexus entregava um contrato de design (DESIGN.md com tokens) e nenhum componente: o agente recebia a paleta e escrevia cada peça à mão. Agora os dois kits moram dentro dele.
 
@@ -22,6 +22,10 @@ Correções de credencial nesta release:
 - **Remover registry espera o cofre.** Apagar o token podia ser recusado (keychain trancado) e a linha saía mesmo assim, deixando a credencial para trás; agora a linha fica, e o painel diz o motivo.
 - **O recibo de "salvo" é lido de volta.** As configurações podiam recusar a escrita em silêncio e o painel limpava o campo de chave como se tivesse salvo. O Main confere a linha gravada antes de dizer que salvou, e desfaz o token quando ela não aterrissa.
 - **O nome de cofre e a variável de um registry são derivados no Main**, nunca aceitos de fora, e a busca do shadcn deixou de depender de raspagem de texto.
+- **O contrato de autenticação declarado pelo pedido não volta pela porta dos fundos.** Ao montar o registry, o objeto do chamador era carregado junto sempre que o portão recusava um contrato — bastava mandá-lo no pedido para reconstruir o que o portão tinha acabado de negar. Só o contrato resolvido é anexado.
+- **Remover registry não destrói o token que não conseguiu remover.** O cofre é limpo primeiro, então uma escrita de configuração que não aterrissa deixava a linha na tela sem credencial. A remoção é lida de volta e, quando não aterrissou, o token volta ao cofre.
+- **Chave de licença é validada antes de ir ao cofre**, mesmo sem projeto aberto: chave com espaço no meio era guardada como sucesso, vencia a embutida e só fazia o "Ativar" falhar depois.
+- **Registry privado com `X-API-Key`, valor cru ou parâmetro na URL agora é configurável no painel.** Antes só dava para informar namespace, URL e token, o Main derivava `Authorization: Bearer` e esses registries respondiam 401 para sempre.
 
 ## 0.76.373 — Estúdio de vídeo com contador, estilos e ditado
 
