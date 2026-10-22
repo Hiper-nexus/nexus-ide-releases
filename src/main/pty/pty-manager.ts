@@ -126,6 +126,9 @@ import {
   type CodexGovernedProcessSandbox,
 } from "../orch/cli-mcp-session-config";
 import { requiresSpawnGate } from "../orch/spawn-home-policy";
+import { codexExplicitProviderArgs, resolveCodexStartupPolicy } from "../orch/codex-startup-policy";
+import type { CodexStartupPolicy } from "../orch/cli-mcp-session-types";
+import { AgyOnboardingPendingError, assertNoKnownAgyOnboardingBlock } from "../adapters/agy-onboarding";
 import { admitAgentSpawnSync, paneAdmissionRefusalError, registerAgentMemoryCensus } from "../orch/pane-admission";
 import { isReleaseQualifiedMissionWorkerCli } from "../orch/squad-runtime-policy";
 import {
@@ -704,6 +707,8 @@ function fireTaps<T extends (...args: never[]) => void>(
  * concrete sessionId once the PTY exists.
  */
 export interface AgentSpawnDecoration {
+  /** Main-only startup policy; narrowed again for this exact native launch. */
+  codexStartupPolicy?: CodexStartupPolicy;
   /** Main-owned bearer used only for internal governed-profile preparation. */
   authorityToken: string;
   env: Record<string, string>;
@@ -1774,6 +1779,8 @@ export interface AgentSpawnOverrides {
   binPath?: string | null;
   defaultModel?: string | null;
   extraArgs?: string[];
+  /** Exact Main-generated prefix; never inferred from user argv content. */
+  generatedControlArgs?: readonly string[];
   keyEnv?: Record<string, string>;
   /**
    * Env vars stripped AFTER the adapter env is built — an authenticated
@@ -2405,6 +2412,9 @@ export function spawnAgentSession(
     : null;
   if (checkoutProviderHome) {
     for (const target of spawnEnvs) Object.assign(target, checkoutProviderHome.env);
+    if (adapter.id === "agy") {
+      assertNoKnownAgyOnboardingBlock(checkoutProviderHome.env.GEMINI_CLI_HOME, authority, 'unknown', checkoutProviderHome.sourceHome);
+    }
   }
 
   const tuiProviderState = providerStateEnvFor(adapter.id, {
@@ -2540,6 +2550,16 @@ export function spawnAgentSession(
   }
   // F-567: MCP decoration and account env must not restore native conversation stores.
   if (checkoutProviderHome) Object.assign(env, checkoutProviderHome.env);
+  if (adapter.id === "agy" && checkoutProviderHome) {
+    try {
+      const finalAgyHome = env.GEMINI_CLI_HOME;
+      if (!finalAgyHome) throw new AgyOnboardingPendingError();
+      assertNoKnownAgyOnboardingBlock(finalAgyHome, authority, 'unknown', checkoutProviderHome.sourceHome);
+    } catch (error) {
+      decoration?.onSpawnFailed?.();
+      throw error;
+    }
+  }
   const gatedSpawn = requiresSpawnGate(authority.context);
   const governedProfile = Boolean(
     decoration &&
@@ -2598,6 +2618,18 @@ export function spawnAgentSession(
         throw new Error("Codex CLI spawn is missing its main-owned bearer");
       }
       const operatorHome = prepareCodexOperatorMissionHome(token, {
+        model: model || undefined,
+        codexStartupPolicy: resolveCodexStartupPolicy(decoration.codexStartupPolicy, {
+          isFrictionless: executionPolicy.isFrictionless,
+          cliVersion: cachedCliBinaryVersion(bin) ?? null,
+          model: model || undefined,
+          resume: req.resume === true,
+          explicitArgs: [
+            ...adapter.spawn.interactive.slice(1),
+            ...codexExplicitProviderArgs(overrides.extraArgs ?? [], overrides.generatedControlArgs),
+            ...adapter.spawn.extraArgs,
+          ],
+        }),
         heavyCommandEnv: decoration?.env,
         userDataPath: app.getPath("userData"),
         checkoutId: authority.scope.checkoutId,
