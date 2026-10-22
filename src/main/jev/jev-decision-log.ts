@@ -14,7 +14,7 @@ import type { JevSurface } from './jev-autopilot';
 import type { JevAnswer } from './jev-client';
 import { LUNA_DECISION_MODEL, type DecisionProvider, type DecisionRoute, type DecisionUsageReceipt } from '../../shared/decision-models';
 import { USD_PER_INPUT_TOKEN } from './jev-pricing';
-import { parseDecisionRow } from './jev-decision-row';
+import { LOCAL_SKIP_MODEL, normalizeLocalSkip, parseDecisionRow } from './jev-decision-row';
 import type { JevOptimizationEvidence, JevOptimizationStats, DecisionUsageStats } from '../../shared/jev-ipc';
 import { trace } from '../observability/main-trace';
 
@@ -54,8 +54,12 @@ export { JEV_NO_ANSWER_REASONS } from './jev-decision-row';
 export interface JevDecisionEntry {
   id: string;
   at: number;
-  /** Ausente = 'decision' — linhas antigas continuam válidas. */
-  kind?: 'decision' | 'no-answer' | 'optimization';
+  /**
+   * Ausente = 'decision' — linhas antigas continuam válidas. 'skip' = pulo
+   * local: nenhuma requisição saiu, então não é consulta (nem respondida nem
+   * sem resposta). O motivo categórico vai em `decision` (`skip:<motivo>`).
+   */
+  kind?: 'decision' | 'no-answer' | 'optimization' | 'skip';
   reason?: JevNoAnswerReason;
   surface: JevDecisionSurface;
   sessionId?: string;
@@ -156,14 +160,14 @@ export function recordJevDecision(
   deps?: { dir?: string },
 ): string {
   const id = crypto.randomUUID();
-  const line: JevDecisionEntry = { id, at: Date.now(), surface: entry.surface,
+  const line: JevDecisionEntry = normalizeLocalSkip({ id, at: Date.now(), surface: entry.surface,
     kind: entry.kind, reason: entry.reason, sessionId: entry.sessionId, missionId: entry.missionId,
     model: entry.model, questions: entry.questions, probabilities: entry.probabilities,
     confidence: entry.confidence, decision: entry.decision, inputTokens: entry.inputTokens, usd: entry.usd,
     provider: entry.provider, route: entry.route, durationMs: entry.durationMs, requestCount: entry.requestCount,
     usageIncomplete: entry.usageIncomplete, diverged: entry.diverged, ensemblePeers: entry.ensemblePeers,
     budgetChargedUsd: entry.budgetChargedUsd,
-    feedback: entry.feedback, feedbackAt: entry.feedbackAt, optimization: entry.optimization };
+    feedback: entry.feedback, feedbackAt: entry.feedbackAt, optimization: entry.optimization });
   // Espelho e contagem acontecem mesmo se o fs falhar: a decisão existiu.
   countDecisionLine(line);
   traceDecisionLine(line);
@@ -203,8 +207,11 @@ export function jevDecisionBootCounts(): {
 }
 
 function countDecisionLine(entry: JevDecisionEntry): void {
-  const provider = providerOfEntry(entry);
-  bootCounts.byProvider[provider] = (bootCounts.byProvider[provider] ?? 0) + 1;
+  // A local skip reached the surface but no provider did any work.
+  if (entry.kind !== 'skip') {
+    const provider = providerOfEntry(entry);
+    bootCounts.byProvider[provider] = (bootCounts.byProvider[provider] ?? 0) + 1;
+  }
   bootCounts.bySurface[entry.surface] = (bootCounts.bySurface[entry.surface] ?? 0) + 1;
 }
 
@@ -222,9 +229,10 @@ function traceDecisionLine(entry: JevDecisionEntry): void {
   try {
     const outcome = entry.kind ?? 'decision';
     // Pulos são gravados como `skip:<motivo categórico>` (memória, retenção).
-    const skipReason = outcome === 'decision' && entry.decision.startsWith('skip:')
+    // O marcador `judge-unavailable` é pulo sem esse prefixo: o próprio rótulo é o motivo.
+    const skipReason = (outcome === 'decision' || outcome === 'skip') && entry.decision.startsWith('skip:')
       ? entry.decision.slice('skip:'.length)
-      : undefined;
+      : outcome === 'skip' ? entry.decision : undefined;
     if (outcome === 'optimization') {
       const last = optimizationTracedAt.get(entry.surface) ?? -Infinity;
       if (entry.at - last < TRACE_OPTIMIZATION_MIN_INTERVAL_MS) return;
@@ -267,6 +275,41 @@ export function recordJevOptimization(
   return recordJevDecision({
     ...input, kind: 'optimization', questions: [], probabilities: {},
     decision: 'reuse', inputTokens: 0, usd: 0,
+  }, deps);
+}
+
+/** Rótulo categórico (`a-z0-9` e `:._-`, até 80): o que não casa nunca é gravado. */
+const SKIP_REASON_RE = /^[a-z0-9][a-z0-9:._-]{0,79}$/;
+
+/**
+ * Pulo local: a superfície foi alcançada e desistiu ANTES de qualquer
+ * requisição (sem candidato, sem banco, sessão trivial). Não é consulta — o
+ * painel não o soma em consultas, chamadas, decisões nem gasto — mas fica no
+ * diário para mostrar por que uma superfície não dispara. O motivo é só
+ * categoria: texto que não é rótulo vira `invalid-reason`.
+ */
+export function recordJevSkip(
+  input: {
+    surface: JevDecisionSurface;
+    reason: string;
+    sessionId?: string;
+    missionId?: string;
+  },
+  deps?: { dir?: string },
+): string {
+  const reason = SKIP_REASON_RE.test(input.reason) ? input.reason : 'invalid-reason';
+  return recordJevDecision({
+    kind: 'skip',
+    surface: input.surface,
+    ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+    ...(input.missionId === undefined ? {} : { missionId: input.missionId }),
+    model: LOCAL_SKIP_MODEL,
+    questions: [],
+    probabilities: {},
+    decision: `skip:${reason}`,
+    inputTokens: 0,
+    usd: 0,
+    requestCount: 0,
   }, deps);
 }
 
@@ -323,6 +366,8 @@ export function listJevDecisions(opts?: {
   limit?: number;
   surface?: string;
   includeNoAnswer?: boolean;
+  /** Pulos locais não são decisões: só aparecem pedidos explicitamente. */
+  includeSkips?: boolean;
   dir?: string;
 }): JevDecisionEntry[] {
   const limit = Math.min(Math.max(opts?.limit ?? 50, 1), MAX_LIST_LIMIT);
@@ -332,7 +377,8 @@ export function listJevDecisions(opts?: {
   } catch {
     return [];
   }
-  const decisions = entries.filter((e) => e.kind !== 'optimization');
+  const decisions = entries.filter((e) =>
+    e.kind !== 'optimization' && (opts?.includeSkips === true || e.kind !== 'skip'));
   const answered = opts?.includeNoAnswer
     ? decisions
     : decisions.filter((e) => e.kind !== 'no-answer');
@@ -409,6 +455,8 @@ export interface JevWindowStats {
   consultations: number;
   answered: number;
   noAnswer: number;
+  /** Pulos locais na janela: fora de `consultations` (nenhuma requisição saiu). */
+  skipped: number;
   usd: number;
   inputTokens: number;
   optimization?: JevOptimizationStats;
@@ -430,6 +478,8 @@ export interface JevDecisionStats {
       calls: number;
       usd: number;
       noAnswer: number;
+      /** Pulos locais (sem requisição): fora de calls, noAnswer, last30d e decisions. */
+      skipped: number;
       /** jev = decisões respondidas na janela; rule = quedas p/ o caminho determinístico. */
       last30d: { jev: number; rule: number; usd: number };
       decisions: Record<string, number>;
@@ -498,11 +548,13 @@ function addProviderUsage(buckets: Record<string, DecisionUsageStats>, key: stri
 }
 
 /**
- * A linha `judge-unavailable` do handoffReview só registra que a revisão não
- * rodou; a consulta já tem a sua linha `no-answer`. Não é chamada nem custo.
+ * Pulo local (inclusive a linha `judge-unavailable` do handoffReview, que só
+ * registra que a revisão não rodou — a consulta já tem a sua linha
+ * `no-answer`). Não é chamada nem custo. `parseDecisionRow` já normaliza as
+ * linhas antigas com o modelo `unavailable` para `kind: 'skip'`.
  */
-function isUnavailableMarker(entry: JevDecisionEntry): boolean {
-  return entry.kind !== 'no-answer' && entry.decision === 'judge-unavailable';
+function isLocalSkip(entry: JevDecisionEntry): boolean {
+  return entry.kind === 'skip';
 }
 
 /** Quanto a linha pesa no livro da missão: o cobrado, senão o custo medido. */
@@ -545,7 +597,7 @@ async function readMissionSpend(raw: string, before: number, into: Record<string
     if (!trimmed) continue;
     let row: JevDecisionEntry | null = null;
     try { row = parseDecisionRow(JSON.parse(trimmed)); } catch { row = null; }
-    if (!row?.missionId || row.kind === 'optimization' || isUnavailableMarker(row) || row.at >= before) continue;
+    if (!row?.missionId || row.kind === 'optimization' || isLocalSkip(row) || row.at >= before) continue;
     into[row.missionId] = (into[row.missionId] ?? 0) + chargedUsdOf(row);
   }
 }
@@ -598,7 +650,7 @@ async function aggregateMissionUsage(raw: string, into: Record<string, JevMissio
     if (!trimmed) continue;
     let row: JevDecisionEntry | null = null;
     try { row = parseDecisionRow(JSON.parse(trimmed)); } catch { row = null; }
-    if (!row?.missionId || row.kind === 'optimization' || isUnavailableMarker(row)) continue;
+    if (!row?.missionId || row.kind === 'optimization' || isLocalSkip(row)) continue;
     addMissionUsage(into, row.missionId, providerOfEntry(row), row);
   }
 }
@@ -652,12 +704,16 @@ function addMissionUsage(
 }
 
 function emptyWindow(): JevWindowStats {
-  return { consultations: 0, answered: 0, noAnswer: 0, usd: 0, inputTokens: 0 };
+  return { consultations: 0, answered: 0, noAnswer: 0, skipped: 0, usd: 0, inputTokens: 0 };
 }
 
 function addToWindow(window: JevWindowStats, entry: JevDecisionEntry): void {
   addOptimization(window, entry.optimization);
   if (entry.kind === 'optimization') return;
+  if (isLocalSkip(entry)) {
+    window.skipped += 1;
+    return;
+  }
   window.consultations += 1;
   window.usd += entry.usd ?? 0;
   window.inputTokens += entry.inputTokens ?? 0;
@@ -738,16 +794,23 @@ export function jevDecisionStats(deps?: {
       calls: 0,
       usd: 0,
       noAnswer: 0,
+      skipped: 0,
       last30d: { jev: 0, rule: 0, usd: 0 },
       decisions: {},
       feedback: { right: 0, wrong: 0 },
     });
     addOptimization(bucket, entry.optimization);
     if (entry.kind === 'optimization') continue;
+    // Pulo local: a superfície foi alcançada, mas nenhuma consulta saiu.
+    // Visível como pulo da superfície; fora de provider, modelo, missão e gasto.
+    if (isLocalSkip(entry)) {
+      bucket.skipped += 1;
+      continue;
+    }
     const provider = providerOfEntry(entry);
     addProviderUsage(stats.byProvider, provider, entry);
     addProviderUsage(stats.byModel, entry.model, entry);
-    if (entry.missionId && !isUnavailableMarker(entry)) addMissionUsage(stats.byMission, entry.missionId, provider, entry);
+    if (entry.missionId) addMissionUsage(stats.byMission, entry.missionId, provider, entry);
     stats.totals.usd += entry.usd ?? 0;
     stats.totals.inputTokens += entry.inputTokens ?? 0;
     bucket.usd += entry.usd ?? 0;

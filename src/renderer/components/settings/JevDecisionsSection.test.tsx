@@ -100,6 +100,24 @@ describe('JevDecisionsSection', () => {
     expect(host.textContent).toContain('Ainda sem medição de otimização');
   });
 
+  it('mostra pulos locais à parte, sem somá-los em consultas nem chamadas', async () => {
+    const stats = await jev.decisionsStats();
+    Object.assign(stats.windows.today, { skipped: 119 });
+    Object.assign(stats.bySurface, {
+      memoryDistill: {
+        calls: 0, usd: 0, noAnswer: 0, skipped: 119,
+        last30d: { jev: 0, rule: 0, usd: 0 }, decisions: {}, feedback: { right: 0, wrong: 0 },
+      },
+    });
+    jev.decisionsStats.mockResolvedValueOnce(stats);
+    const host = mount(<JevDecisionsSection />);
+    await act(async () => Promise.resolve());
+    expect(host.textContent).toContain('2 consultas');
+    expect(host.textContent).toContain('119 pulos locais');
+    expect(host.textContent).toContain('0 chamadas');
+    expect(host.textContent).not.toContain('121 consultas');
+  });
+
   it('shows measured optimization separately from billed tokens', async () => {
     const stats = await jev.decisionsStats();
     Object.assign(stats.windows.last30d, { optimization: {

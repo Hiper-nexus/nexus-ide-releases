@@ -53,8 +53,11 @@ export const jevDecisionFeedbackRequestSchema = z.object({
 export interface JevDecisionRow {
   id: string;
   at: number;
-  /** 'no-answer' = consulta sem resposta (ausente em linhas antigas = decisão). */
-  kind?: 'decision' | 'no-answer';
+  /**
+   * 'no-answer' = consulta sem resposta (ausente em linhas antigas = decisão).
+   * 'skip' = pulo local sem requisição; a lista do painel não o traz.
+   */
+  kind?: 'decision' | 'no-answer' | 'skip';
   reason?:
     | 'timeout'
     | 'rate-limited'
@@ -110,6 +113,8 @@ export interface JevWindowStatsResult {
   consultations: number;
   answered: number;
   noAnswer: number;
+  /** Pulos locais (nenhuma requisição saiu): fora de `consultations`. Ausente em versões antigas. */
+  skipped?: number;
   usd: number;
   inputTokens: number;
   optimization?: JevOptimizationStats;
@@ -131,6 +136,8 @@ export interface JevDecisionStatsResult {
       calls: number;
       usd: number;
       noAnswer: number;
+      /** Pulos locais da superfície; fora de calls/noAnswer/last30d. Ausente em versões antigas. */
+      skipped?: number;
       /** jev = decisões respondidas na janela; rule = quedas p/ a regra. */
       last30d: { jev: number; rule: number; usd: number };
       decisions: Record<string, number>;
