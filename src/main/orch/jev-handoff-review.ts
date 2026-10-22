@@ -249,8 +249,13 @@ interface HandoffSignal {
  * que o worker declarou é asset de aparência; sem arquivo declarado não dá
  * para provar que é só aparência, e aí a prova de verificação continua devida.
  */
+// F-1635 (revisão do Codex no PR 159): `.html` SAIU daqui. Uma página de
+// arquivo único carrega JavaScript embutido — o checkout com layout e lógica
+// de envio no mesmo arquivo seria classificado como só-aparência, e a captura
+// passaria a desculpar a metade comportamental. Formato que executa não entra
+// nesta lista.
 const APPEARANCE_ASSET =
-  /\.(?:css|scss|sass|less|html?|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf)$/i;
+  /\.(?:css|scss|sass|less|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf)$/i;
 
 function appearanceOnlyDelivery(declaredFiles: readonly string[]): boolean {
   return declaredFiles.length > 0 && declaredFiles.every((file) => APPEARANCE_ASSET.test(file));

@@ -96,7 +96,7 @@ describe('evaluateHandoffEvidence', () => {
   it('has_verification baixo COM captura visual verificada de entrega de aparência → sem sinal', () => {
     const signals = evaluateHandoffEvidence(
       result({ has_verification: 0.1 }).answers,
-      { ...facts, hasVisualEvidence: true, declaredFiles: ['landing/index.html', 'landing/estilo.css'] },
+      { ...facts, hasVisualEvidence: true, declaredFiles: ['landing/estilo.css', 'landing/hero.svg'] },
     );
     expect(signals.some((s) => s.includes('verificação'))).toBe(false);
   });
@@ -117,9 +117,20 @@ describe('evaluateHandoffEvidence', () => {
   it('entrega só de aparência: a captura é a prova e não há devolução', () => {
     const signals = evaluateHandoffEvidence(
       result({ has_verification: 0.1 }).answers,
-      { ...facts, hasVisualEvidence: true, declaredFiles: ['site/index.html', 'site/estilo.css', 'site/logo.svg'] },
+      { ...facts, hasVisualEvidence: true, declaredFiles: ['site/estilo.css', 'site/logo.svg'] },
     );
     expect(signals.some((s) => s.includes('evidência de verificação'))).toBe(false);
+  });
+
+  // F-1635 (revisão do Codex no PR 159): página de arquivo único carrega
+  // JavaScript embutido. Tratar `.html` como só-aparência deixaria a captura
+  // desculpar a lógica de envio escrita no mesmo arquivo.
+  it('html não é só-aparência: formato que executa continua devendo prova', () => {
+    const signals = evaluateHandoffEvidence(
+      result({ has_verification: 0.1 }).answers,
+      { ...facts, hasVisualEvidence: true, declaredFiles: ['site/checkout.html'] },
+    );
+    expect(signals.some((s) => s.includes('evidência de verificação'))).toBe(true);
   });
 
   it('sem arquivos declarados a captura não basta: não dá para provar que é só aparência', () => {

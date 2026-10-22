@@ -88,9 +88,12 @@ import { loadToolset } from "./toolset-loader";
 import {
   assertMissionSpawnAuthorityCurrent,
   findPane,
+  listPaneSnapshots,
   requestPaneClose,
 } from "./pane-registry";
+import type { ProjectExecutionScope } from "../../shared/project-identity-types";
 import {
+  isWorkerSessionBusy,
   missionWriterAwaitsHandoffAck,
   scheduleAutoCloseAfterHandoff,
 } from "./pane-close-scopes";
@@ -2125,6 +2128,31 @@ export async function startMcpServer(): Promise<void> {
   installWorktreeSalvageNotifier();
   // F-795: spool de handoffs que o Main não recebeu — ingestão no boot, na
   // volta do loop (watch) e no fim de cada sessão; nunca no caminho quente.
+  /** F-1634: contexto do writer com o sinal físico de worktree própria. */
+  const spoolWriterContext = (sessionId: string) => {
+    const writer = getContextBySession(sessionId);
+    if (!writer) return null;
+    return {
+      ...writer,
+      scopeRoot: writer.scope?.rootRealPath,
+      executionRoot: writer.executionScope?.rootRealPath,
+    };
+  };
+  /** F-1634: Maestro ocupado, neutro de transporte (PTY e ACP). */
+  const spoolConsumerBusy = (
+    handoff: { readonly missionId?: string | null },
+    scope: ProjectExecutionScope,
+  ): boolean => {
+    const missionId = handoff.missionId ?? undefined;
+    if (!missionId) return false;
+    const orchestrator = getProjectDomainStores(scope).missions.get(missionId)
+      ?.orchestratorSessionId;
+    if (!orchestrator) return false;
+    const snapshot = listPaneSnapshots().find(
+      (pane) => pane.sessionId === orchestrator,
+    );
+    return isWorkerSessionBusy(snapshot?.state ?? null);
+  };
   try {
     startHandoffSpool({
       root: handoffSpoolRoot(app.getPath("userData")),
@@ -2150,8 +2178,12 @@ export async function startMcpServer(): Promise<void> {
               // Main) a sessão já morreu e não há contexto: o predicado
               // devolve false e aquele caminho segue fechando na hora.
               awaitAckOnSuccess: missionWriterAwaitsHandoffAck(
-                handoff.sessionId ? getContextBySession(handoff.sessionId) : null,
+                handoff.sessionId ? spoolWriterContext(handoff.sessionId) : null,
               ),
+              // F-1634: a espera do spool precisa da MESMA sonda do caminho
+              // direto, senão a janela de três minutos fecha o writer enquanto
+              // o Maestro ainda roda o teste que a doutrina manda rodar.
+              isDeliveryConsumerBusy: () => spoolConsumerBusy(handoff, scope),
             },
           ),
       },
