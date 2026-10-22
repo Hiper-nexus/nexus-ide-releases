@@ -23,15 +23,18 @@ Enquanto isso, o juiz independente é um pane frontier com duas idas ao modelo
 e poll de 30 s (`mission-code-review-runtime.ts`): em campo passa dos 5 min.
 Toda tentativa seguinte refazia:
 
-| verificação | teto | arquivo |
+| verificação | custo MEDIDO aqui (21/10) | teto no código |
 |---|---|---|
-| typecheck do projeto inteiro | 120 s | `mechanical-sensors.ts:29` |
-| `npm audit` | 45 s | `mechanical-sensors.ts:30` |
-| portão de regressão **com E2E** | 120 s | `regression-gate.ts:2020` |
+| typecheck do projeto inteiro | **4,4 s** | 120 s (`mechanical-sensors.ts:29`) |
+| `npm audit` | **0,75 s** | 45 s (`mechanical-sensors.ts:30`) |
+| portão de regressão **com E2E** | depende do projeto; a fatia orch+shared desta suíte leva **208 s** | 120 s por execução (`regression-gate.ts:2020`) |
 
-E no caminho da conclusão typecheck e audit são **serializados**
-(`civilian-auto-review.ts:422`). Isto é o "faz teste, volta, faz teste" que o
-operador vê: não é teimosia do modelo, é o motor jogando trabalho válido fora.
+**Atenção aos números:** 120 s e 45 s são TIMEOUT, não custo — medi os dois
+nesta máquina e eles são ordens de magnitude menores. O termo dominante é a
+SUÍTE, não o typecheck. No caminho da conclusão typecheck e audit ainda são
+serializados (`civilian-auto-review.ts:422`), mas o que pesa é a suíte com E2E
+sendo refeita inteira. Isto é o "faz teste, volta, faz teste" que o operador
+vê: não é teimosia do modelo, é o motor jogando trabalho válido fora.
 
 **Corrigido:** o resultado é preservado enquanto um juiz comprovadamente lê
 aquele mesmo `fingerprint`, com teto de 45 min para um candidato abandonado
@@ -143,6 +146,26 @@ recomendação está na seção final.
 - Doutrina base: 2 036/2 048 bytes. Doutrina permanente: 1 497/1 500
   caracteres. Os dois tetos são testados; o espaço das linhas novas saiu de
   frases redundantes das vizinhas.
+
+## Simulação do orçamento (o "teste e vê o tempo" que o operador pediu)
+
+`src/main/orch/mission-ceremony-budget.test.ts` dirige as FUNÇÕES REAIS de
+decisão do motor numa linha do tempo com relógio falso e conta os eventos
+caros. Não é cronômetro de ponta a ponta — não há LLM real aqui —, e é por isso
+que os custos por evento são os medidos acima, não tetos.
+
+Com um juiz frontier lendo o candidato por 8 min (acima do TTL de 5 min):
+
+| | antes | depois |
+|---|---|---|
+| execuções da suíte mecânica | 2× | 1× |
+| rodadas de worker por entrega | 2 | 1 |
+| turnos de coordenação desperdiçados | 1 | 0 |
+| custo modelado por unidade de entrega | 5,2 min | 2,1 min (**−60%**) |
+
+O valor do arquivo é ser catraca: quem reintroduzir o descarte da verificação
+válida, o fecho no submit ou a dupla cobrança da entrega visual faz os números
+piorarem e o teste reprovar.
 
 ## Estimado, não medido
 

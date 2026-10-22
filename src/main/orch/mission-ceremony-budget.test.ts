@@ -1,0 +1,145 @@
+import { describe, expect, it } from 'vitest';
+import type { Mission, SquadAgent } from '../../shared/orch-types';
+import { agentPrompt } from './mission-fast-lane';
+import { evaluateHandoffEvidence } from './jev-handoff-review';
+import { mechanicalChecksStillValid } from './mission-code-completion-production';
+import { visualEvidenceVerified } from './visual-handoff-gate';
+
+/**
+ * Orçamento de cerimônia de uma missão de landing page (21/10/2026).
+ *
+ * O operador pediu para "simular missões do tipo de fazer uma landing page,
+ * testar e ver o tempo… ou simular só via testes mesmo". Não há como rodar uma
+ * LLM real aqui, então isto NÃO é cronômetro de ponta a ponta: é um modelo que
+ * dirige as FUNÇÕES REAIS de decisão do motor numa linha do tempo com relógio
+ * falso e conta os eventos caros — execução da suíte mecânica, rodada de
+ * worker, turno de coordenação.
+ *
+ * Os custos por evento são medidos nesta máquina (21/10): typecheck do projeto
+ * 4,4 s, `npm audit` 0,75 s, fatia orch+shared da suíte 208 s. Os tetos de
+ * `mechanical-sensors.ts` (120 s typecheck, 45 s audit) são TIMEOUT, não custo
+ * — não os use como se fossem.
+ *
+ * O valor deste arquivo é ser catraca: se alguém reintroduzir o descarte da
+ * verificação válida, o fecho no submit ou a dupla cobrança da entrega visual,
+ * os números aqui pioram e o teste reprova.
+ */
+
+/** Custos por evento, medidos; a suíte é o termo dominante. */
+const TYPECHECK_MS = 4_400;
+const AUDIT_MS = 750;
+const IMPACTED_SUITE_MS = 60_000;
+const MECHANICAL_RUN_MS = TYPECHECK_MS + AUDIT_MS + IMPACTED_SUITE_MS;
+/** Turno de LLM: a faixa observada em campo é 30–90 s; usamos o meio. */
+const LLM_TURN_MS = 60_000;
+
+/** O juiz frontier lê o candidato por mais tempo que o TTL comum de 5 min. */
+const JUDGE_READ_MS = 8 * 60_000;
+
+const mission = (description: string): Mission =>
+  ({
+    id: 'm-landing',
+    title: 'Landing page Navalha Go',
+    description,
+    status: 'running',
+    updatedAt: 1,
+    intentVersion: 1,
+    intentContract: { lane: 'standard', goal: description },
+    orchestratorSessionId: 'maestro',
+  }) as Mission;
+
+const orchestrator = (): SquadAgent =>
+  ({ agentName: 'Maestro', category: 'orchestrator', cli: 'claude' }) as SquadAgent;
+
+const OBJECTIVE =
+  'Faça uma landing page do Navalha Go, visual feminino, com hero, serviços, depoimentos e CTA de agendamento.';
+
+/**
+ * Quantas vezes a suíte mecânica roda enquanto o juiz lê o MESMO candidato.
+ * `reviewInFlight: false` reproduz a regra antiga (só TTL); `true` é a de hoje.
+ */
+function mechanicalRuns(reviewInFlight: boolean): number {
+  let runs = 1; // a primeira execução é trabalho legítimo
+  let lastRunAt = 0;
+  // O motor reavalia a cada acordada (RETRY_MS = 30 s) enquanto espera o juiz.
+  for (let now = 30_000; now <= JUDGE_READ_MS; now += 30_000) {
+    if (!mechanicalChecksStillValid({ ageMs: now - lastRunAt, reviewInFlight })) {
+      runs += 1;
+      lastRunAt = now;
+    }
+  }
+  return runs;
+}
+
+/** A entrega visual devolve por "sem evidência de verificação"? */
+function visualDeliveryBounces(countVisualCapture: boolean): boolean {
+  const capture = { required: true, verified: true, artifactId: 'shot-1', sha256: 'f'.repeat(64) } as const;
+  const facts = {
+    declaredFiles: ['index.html', 'styles.css'],
+    evidenceIdsCount: 0,
+    hasObservedCommit: false,
+    ...(countVisualCapture ? { hasVisualEvidence: visualEvidenceVerified(capture) } : {}),
+  };
+  // O modelo não acha saída de teste numa entrega de aparência — não existe.
+  const answers = {
+    is_specific: { type: 'noul' as const, noul: 0.9 },
+    has_verification: { type: 'noul' as const, noul: 0.1 },
+    changed_code: { type: 'noul' as const, noul: 0.9 },
+  };
+  return evaluateHandoffEvidence(answers, facts)
+    .some((signal) => signal.includes('evidência de verificação'));
+}
+
+describe('orçamento de cerimônia: landing page como missão', () => {
+  it('a verificação válida não é mais jogada fora enquanto o juiz lê', () => {
+    const antes = mechanicalRuns(false);
+    const depois = mechanicalRuns(true);
+    expect(antes).toBeGreaterThan(1);
+    expect(depois).toBe(1);
+    // Com o TTL de 5 min e um juiz de 8 min, a suíte rodava ao menos 2 vezes.
+    expect(antes).toBeGreaterThanOrEqual(2);
+  });
+
+  it('a captura do navegador encerra a dupla cobrança da entrega visual', () => {
+    expect(visualDeliveryBounces(false)).toBe(true);
+    expect(visualDeliveryBounces(true)).toBe(false);
+  });
+
+  it('o turno de abertura não é mais gasto num handoff_list vazio', () => {
+    const semPlano = agentPrompt(orchestrator(), mission(OBJECTIVE), [], false, '', null, []);
+    expect(semPlano).toContain('Para cada tarefa ainda não despachada');
+    expect(semPlano).not.toContain('Não duplique a first-wave');
+  });
+
+  it('o orçamento total da entrega melhora, e o relatório sai nos números', () => {
+    const suiteAntes = mechanicalRuns(false);
+    const suiteDepois = mechanicalRuns(true);
+
+    // Rodadas de worker: antes, a devolução por evidência visual custava uma
+    // rodada inteira (pane já fechado no submit => brief original, do zero).
+    const rodadasAntes = 1 + (visualDeliveryBounces(false) ? 1 : 0);
+    const rodadasDepois = 1 + (visualDeliveryBounces(true) ? 1 : 0);
+
+    // Turnos de coordenação: o de abertura desperdiçado some.
+    const turnosAntes = 1;
+    const turnosDepois = 0;
+
+    const custo = (suite: number, rodadas: number, turnos: number): number =>
+      suite * MECHANICAL_RUN_MS + rodadas * LLM_TURN_MS + turnos * LLM_TURN_MS;
+
+    const antes = custo(suiteAntes, rodadasAntes, turnosAntes);
+    const depois = custo(suiteDepois, rodadasDepois, turnosDepois);
+
+    console.log(
+      `[orçamento] suíte mecânica ${suiteAntes}x -> ${suiteDepois}x; ` +
+        `rodadas de worker ${rodadasAntes} -> ${rodadasDepois}; ` +
+        `turnos desperdiçados ${turnosAntes} -> ${turnosDepois}; ` +
+        `custo modelado ${(antes / 60_000).toFixed(1)} min -> ${(depois / 60_000).toFixed(1)} min ` +
+        `(-${(((antes - depois) / antes) * 100).toFixed(0)}%) por unidade de entrega`,
+    );
+
+    expect(depois).toBeLessThan(antes);
+    // Por unidade de entrega, o corte precisa ser material, não cosmético.
+    expect(depois / antes).toBeLessThan(0.75);
+  });
+});
