@@ -308,6 +308,8 @@ describe('hook /hook/delegate', () => {
       'do not refactor; just review the plan',
       'explique a refatoração do checkout',
       'refatore o texto do e-mail de boas-vindas',
+      'do not delete this handler; explain what calls it',
+      'não altere a função; apenas explique',
     ])('sem conselho do Jev, escrita que não é código não recebe o lembrete: %s', async (prompt) => {
       __resetLeanRemindersForTests();
       expect(JSON.stringify((await handleHookDelegateRequest(operator, { prompt }, { advise: vi.fn(async () => null) })).payload))
@@ -323,6 +325,7 @@ describe('hook /hook/delegate', () => {
       'refatore o checkout',
       'please refactor the payments module',
       'pode refatorar o login?',
+      'não mexa no layout, mas corrija o bug do login',
       'edit this component',
       'change the endpoint',
       'modify the validation function',
@@ -340,6 +343,23 @@ describe('hook /hook/delegate', () => {
       const out = await handleHookDelegateRequest(operator, { prompt }, { advise: vi.fn(async () => null) });
       expect(JSON.stringify(out.payload)).toContain('ponytail');
     });
+
+    // Revisão do PR #164: a skill promete "ativa até o operador dizer stop
+    // ponytail ou normal mode", e o hook voltava a mandar o lembrete.
+    it.each(['stop ponytail', 'normal mode', 'modo normal, por favor'])(
+      'depois de "%s" o pane não recebe mais o lembrete, até "start ponytail"',
+      async (optOut) => {
+        __resetLeanRemindersForTests();
+        const noAdvice = { advise: vi.fn(async () => null) };
+        await handleHookDelegateRequest(operator, { prompt: optOut }, noAdvice);
+        const silenced = await handleHookDelegateRequest(operator, { prompt: 'corrija o bug do login' }, noAdvice);
+        expect(JSON.stringify(silenced.payload)).not.toContain('ponytail');
+
+        await handleHookDelegateRequest(operator, { prompt: 'start ponytail' }, noAdvice);
+        const back = await handleHookDelegateRequest(operator, { prompt: 'corrija o bug do login' }, noAdvice);
+        expect(JSON.stringify(back.payload)).toContain('ponytail');
+      },
+    );
 
     it('delegação e lembrete saem juntos no mesmo additionalContext', async () => {
       __resetLeanRemindersForTests();

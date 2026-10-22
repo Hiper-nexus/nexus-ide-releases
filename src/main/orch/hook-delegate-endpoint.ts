@@ -134,8 +134,17 @@ function isBrowserRequest(prompt: string): boolean {
  * texto" também são escrita. Uma ordem de refatorar basta sozinha. É heurística
  * de reserva: com o Jev no ar, quem decide é ele.
  */
-const CODE_WRITE_VERB_PATTERN =
-  /\b(implement(a|e|ar)?|corrij(a|ir)|corrigir|conserta(r)?|arrum(a|ar)?|ajust(a|e|ar)|escrev(a|er)|cri(a|e|ar)|adicion(a|e|ar)|remov(a|er)|apag(a|ue|ar)|migra(r)?|renomei(a|e)|renomear|edit(a|e|ar)|mud(a|e|ar)|alter(a|e|ar)|modifi(ca|que|car)|fa[cç]a|fazer|fix|implement|rewrite|rename|migrate|add|create|delete|remove|update|write|build|edit|change|modify|make)\b/iu;
+const CODE_WRITE_VERBS =
+  'implement(a|e|ar)?|corrij(a|ir)|corrigir|conserta(r)?|arrum(a|ar)?|ajust(a|e|ar)|escrev(a|er)|cri(a|e|ar)|adicion(a|e|ar)|remov(a|er)|apag(a|ue|ar)|migra(r)?|renomei(a|e)|renomear|edit(a|e|ar)|mud(a|e|ar)|alter(a|e|ar)|modifi(ca|que|car)|fa[cç]a|fazer|fix|implement|rewrite|rename|migrate|add|create|delete|remove|update|write|build|edit|change|modify|make';
+const CODE_WRITE_VERB_PATTERN = new RegExp(`\\b(${CODE_WRITE_VERBS})\\b`, 'iu');
+/**
+ * Verbo proibido não é pedido: "do not delete this handler; explain…" e "não
+ * altere a função; apenas explique" saem do texto antes da busca pelo verbo.
+ */
+const NEGATED_CODE_WRITE_VERB_PATTERN = new RegExp(
+  `\\b(?:do not|don'?t|never|n[aã]o|nunca|sem)\\s+(?:${CODE_WRITE_VERBS})\\b`,
+  'giu',
+);
 /**
  * Refatorar é de código por definição, mas só como ORDEM: no começo da frase
  * ou depois de "please/pode/vamos". "Explain the refactor", "do not
@@ -160,7 +169,7 @@ const TEXT_ARTIFACT_PATTERN =
 function isCodeRequest(prompt: string): boolean {
   const text = prompt.trim();
   if (REFACTOR_COMMAND_PATTERN.test(text)) return !TEXT_ARTIFACT_PATTERN.test(text);
-  if (!CODE_WRITE_VERB_PATTERN.test(prompt)) return false;
+  if (!CODE_WRITE_VERB_PATTERN.test(text.replace(NEGATED_CODE_WRITE_VERB_PATTERN, ' '))) return false;
   return STRONG_CODE_CONTEXT_PATTERN.test(prompt) ||
     (WEAK_CODE_CONTEXT_PATTERN.test(prompt) && !TEXT_ARTIFACT_PATTERN.test(prompt));
 }
@@ -191,6 +200,28 @@ export const MAESTRO_TURN_REMINDER =
 
 const maestroRemindedAt = new Map<string, number>();
 const leanRemindedAt = new Map<string, number>();
+/**
+ * Sessões em que o operador desligou a ponytail ("stop ponytail", "normal
+ * mode", como a skill promete) até religar ("start ponytail"). Sem isto o
+ * lembrete voltava no pedido seguinte e desfazia o pedido do operador.
+ */
+const leanOptedOut = new Set<string>();
+const LEAN_OPT_OUT_MAX_SESSIONS = 512;
+const PONYTAIL_OPT_OUT_PATTERN = /\b(?:stop ponytail|normal mode|modo normal|pare (?:a|o) ponytail|desligue (?:a|o) ponytail)\b/iu;
+const PONYTAIL_OPT_IN_PATTERN = /\b(?:start ponytail|ponytail on|ligue (?:a|o) ponytail|volte (?:a|à|ao) ponytail)\b/iu;
+
+function updateLeanOptOut(sessionId: string, prompt: string): void {
+  if (PONYTAIL_OPT_IN_PATTERN.test(prompt)) {
+    leanOptedOut.delete(sessionId);
+    return;
+  }
+  if (!PONYTAIL_OPT_OUT_PATTERN.test(prompt)) return;
+  if (leanOptedOut.size >= LEAN_OPT_OUT_MAX_SESSIONS) {
+    const oldest = leanOptedOut.values().next().value;
+    if (oldest !== undefined) leanOptedOut.delete(oldest);
+  }
+  leanOptedOut.add(sessionId);
+}
 const designRemindedAt = new Map<string, number>();
 const doctrineDeliveredAt = new Map<string, number>();
 const businessModelDeliveredAt = new Map<string, { hash: string; at: number }>();
@@ -238,6 +269,7 @@ function claimLeanReminder(sessionId: string, now: number): boolean {
 export function __resetLeanRemindersForTests(): void {
   maestroRemindedAt.clear();
   leanRemindedAt.clear();
+  leanOptedOut.clear();
   designRemindedAt.clear();
   doctrineDeliveredAt.clear();
   businessModelDeliveredAt.clear();
@@ -916,10 +948,12 @@ export async function handleHookDelegateRequest(
     const writesCode = advice
       ? advice.writesCode >= LEAN_REMINDER_MIN_WRITES_CODE
       : isCodeRequest(prompt);
+    if (ctx.sessionId) updateLeanOptOut(ctx.sessionId, prompt);
     if (
       writesCode &&
       !prompt.includes(PONYTAIL_RULES_HEADING) &&
       ctx.sessionId &&
+      !leanOptedOut.has(ctx.sessionId) &&
       claimLeanReminder(ctx.sessionId, now)
     ) {
       parts.push(LEAN_CODE_REMINDER);

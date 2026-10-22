@@ -562,7 +562,10 @@ saber isto antes de mexer:
      "Escreva o PRD", "write a commit message" e "crie um bug report" ficam
      calados. Antes o silêncio do Jev valia como "não é código" e o pane
      ficava só com a skill instalada.
-     Prompt que já traz `# Ponytail` não recebe de novo.
+     Prompt que já traz `# Ponytail` não recebe de novo. Verbo negado ("do not
+     delete…", "não altere…") não conta. "stop ponytail", "normal mode" ou
+     "modo normal" desligam o lembrete naquela sessão até "start ponytail",
+     como a skill promete.
 - Medido pelo autor contra o MESMO agente sem a skill (Opus 5.5, 39 tarefas, 5
   runs cada): −53% de código, −41% de tempo, −26% de custo, −45% de tokens de
   saída, 98% da lógica de risco com teste (sem ela, 68%).

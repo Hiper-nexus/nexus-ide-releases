@@ -38,8 +38,10 @@ ${PONYTAIL_RULES}
 
 ## Levels
 
-Active for the whole session until the operator says "stop ponytail" or "normal
-mode". The level changes in words ("modo ultra"), never by slash command: the
+Active for the whole session until the operator says "stop ponytail", "normal
+mode" or "modo normal", and back with "start ponytail"; the Nexus reminder in
+the operator pane honors the same words. The level changes in words ("modo
+ultra"), never by slash command: the
 Nexus ships the ruleset, not the upstream hooks and \`/ponytail\` commands.
 
 | Level | Behavior |
