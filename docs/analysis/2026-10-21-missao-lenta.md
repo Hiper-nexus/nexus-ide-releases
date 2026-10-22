@@ -410,6 +410,68 @@ console está limpo" em prova de comportamento de verdade, e aí a landing page
 não levaria devolução nenhuma. Exige migração de artefato e mexer no caminho da
 captura; não fiz às cegas, tarde e com outras sessões ativas no repositório.
 
+## Estado da release: empacota, mas publicar É o merge negado
+
+`npm run make` roda verde nesta branch (22/10): `premake` passa — skills,
+sinks de renderer, main-sync, typecheck, rebuild de nativos — e o Forge produz
+`NexusIDE-0.76.406-arm64.dmg` (173 MB) e o ZIP do Squirrel (174 MB). Sem
+`NEXUS_MAC_PUBLISH_RELEASE` o Forge **não assina** (`createMacSignOptions`
+devolve `undefined`), então a assinatura sai `adhoc` e nada de keychain ou
+notarização é acionado — é build de prontidão, não artefato distribuível, e a
+versão ainda é a 0.76.406 já publicada.
+
+**Por que a release não foi publicada:** `npm run release:candidate` exige
+`NEXUS_MAC_PUBLISH_RELEASE=1` **e uma tag assinada** (`v<versão>`, com SHA do
+objeto, impressão do assinante e assinatura verificada) — ele é inseparável do
+caminho de publicação. E o publicador faz **fast-forward da `origin/main`** até
+o commit da release (`publish-release.mjs`): como a main é ancestral desta
+branch, publicar daqui realizaria o merge que a permissão da sessão negou duas
+vezes. Os dois entregáveis são um bloqueio só.
+
+**O número da release não foi fixado de propósito.** Outra sessão publicou da
+0.76.382 à 0.76.406 nas últimas duas horas; qualquer número escolhido agora
+estaria velho no momento do merge, e colisão de número já custou duas releases
+antes. Escolha no ato: `git fetch && gh release list` e pegue o próximo livre.
+
+## Armadilha do ambiente que eu pisei, e o achado que ela destravou
+
+Rodar `npm run make` neste worktree **quebrou os nativos compartilhados** de
+todas as sessões, e vale registrar as duas razões.
+
+**1. Conferir que `node_modules` não é symlink NÃO basta.** Aqui ele é
+diretório real, mas `better-sqlite3` e `onnxruntime-node` DENTRO dele são
+symlinks para o `node_modules` do checkout principal — que outros cinco
+worktrees ligam inteiro. O `rebuild:electron` do `premake` escreveu através do
+link e deixou o nativo compartilhado na ABI do Electron (148): qualquer sessão
+rodando teste ali passou a falhar. Antes de build neste repositório, confira
+pacote por pacote, não a pasta.
+
+**2. `npm run rebuild:node` mente.** Ele imprime "rebuilt dependencies
+successfully" e **não reconstrói nada**: é `npm rebuild better-sqlite3`, e o
+npm 12.2 bloqueia o script de instalação do pacote
+(`prebuild-install || node-gyp rebuild --release`) com o aviso "85 packages had
+install scripts blocked because they are not covered by allowScripts" — mesmo
+com `"better-sqlite3@12.11.1": true` presente no campo `allowScripts` do
+`package.json` e essa sendo a versão instalada. `--allow-scripts` na linha de
+comando é recusado em instalação com escopo de projeto (`EALLOWSCRIPTS`). É a
+mesma família do F-1571, agora no caminho dos nativos de teste em vez do das
+CLIs. O `rebuild:electron` escapa porque o `electron-rebuild` chama o node-gyp
+direto, sem passar por script de instalação — por isso virar para Electron
+funciona e voltar para Node não.
+
+**O que de fato restaura** (medido, `CHECK exit=0` e e2e verde depois):
+
+```bash
+cd node_modules/better-sqlite3 && npm run build-release
+```
+
+O `build-release` é script PRÓPRIO do pacote (`node-gyp rebuild --release`),
+não script de instalação, então o npm 12 não o bloqueia. **Não corrigi o
+`rebuild-node-natives.mjs`**: é ferramenta de build de todas as sessões e de
+CI, eu não entendi por que o npm 12 ignora o `allowScripts` declarado, e um
+palpite errado ali quebra o ambiente de todo mundo. Fica como tarefa com a
+medição na mão.
+
 ## Achado de lado: o `check` obrigatório está vermelho na main
 
 Levantado em 22/10 ao tentar mergear o PR 159, e vale por si.
