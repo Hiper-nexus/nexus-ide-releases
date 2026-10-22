@@ -54,6 +54,8 @@ export interface McpOneShotRequest {
   readonly kit: UiKitId;
   /** Project directory; guarded exactly as a CLI run is. */
   readonly cwd: string;
+  /** Main's trusted execution root when cwd is a selected monorepo workspace. */
+  readonly installationRoot?: string;
   /** True when the tool writes the project or changes licence state. */
   readonly writes?: boolean;
   readonly method: McpOneShotMethod;
@@ -181,7 +183,9 @@ export async function callMcpToolOnce(
   const timeoutMs = request.timeoutMs ?? UI_KIT_MCP_TIMEOUT_MS;
   // Same gate as a CLI run: a writing tool may not land in a checkout whose
   // node_modules is a shared symlink.
-  const cwd = assertSafeUiKitCwd(request.cwd, { writes: request.writes === true });
+  const cwd = assertSafeUiKitCwd(request.cwd, {
+    writes: request.writes === true, installationRoot: request.installationRoot,
+  });
   const launch = resolveUiKitNpxLaunch({ platform });
   const args = [...launch.argsPrefix, '-y', UI_KIT_PACKAGES[request.kit], 'mcp'];
   const env = buildUiKitChildEnv();
@@ -197,7 +201,7 @@ export async function callMcpToolOnce(
     let releaseWrite: () => void = () => {};
     if (request.writes === true) {
       try {
-        releaseWrite = claimUiKitProjectWrite(cwd);
+        releaseWrite = claimUiKitProjectWrite(cwd, Date.now(), request.installationRoot);
       } catch (error) {
         reject(error);
         return;

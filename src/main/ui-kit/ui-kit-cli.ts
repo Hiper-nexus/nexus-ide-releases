@@ -201,8 +201,10 @@ export interface UiKitCliRunRequest {
   readonly kit: UiKitId;
   /** Argv AFTER `npx -y <package>`. Built by the kit modules, never by a model. */
   readonly args: readonly string[];
-  /** Absolute directory. The project root for a writing run. */
+  /** Absolute component destination (the selected workspace, or project root). */
   readonly cwd: string;
+  /** Main's trusted execution root when cwd is a selected monorepo workspace. */
+  readonly installationRoot?: string;
   /** True when the command writes files / installs dependencies. */
   readonly writes?: boolean;
   /**
@@ -366,8 +368,21 @@ export function assertSafeUiKitArgs(args: readonly string[]): readonly string[] 
 
 export interface AssertSafeCwdOptions {
   readonly writes?: boolean;
+  readonly installationRoot?: string;
   readonly statSync?: (target: string) => fs.Stats;
   readonly lstatSync?: (target: string) => fs.Stats;
+}
+
+/** The installation root is supplied by Main, never discovered above its scope. */
+function resolveUiKitInstallationRoot(cwd: string, installationRoot: string): string {
+  if (!path.isAbsolute(installationRoot) || !path.isAbsolute(cwd)) {
+    throw new UiKitCliError('CWD_NOT_ABSOLUTE', 'UI-kit installation root and cwd must be absolute');
+  }
+  const rootReal = fs.realpathSync(installationRoot);
+  const cwdReal = fs.realpathSync(cwd);
+  const relative = path.relative(rootReal, cwdReal);
+  if (relative !== '') assertPathStaysInProject(rootReal, relative);
+  return rootReal;
 }
 
 /**
@@ -402,6 +417,12 @@ export function assertSafeUiKitCwd(
     );
   }
   if (!options.writes) return cwd;
+
+  if (options.installationRoot !== undefined) {
+    const root = resolveUiKitInstallationRoot(cwd, options.installationRoot);
+    const { installationRoot: _root, ...rootOptions } = options;
+    assertSafeUiKitCwd(root, rootOptions);
+  }
 
   const lstatSync = options.lstatSync ?? fs.lstatSync;
   const modules = path.join(cwd, 'node_modules');
@@ -517,26 +538,35 @@ export function resolveUiKitNpxLaunch(
 }
 
 /**
- * Projects with a WRITING kit run in flight, by real path.
+ * Installation roots with a WRITING kit run in flight, by real path.
  *
  * An MCP client cuts a tool call long before an install finishes (Codex: 120 s
  * against our 300 s), the install keeps running, and the agent's retry started
  * a SECOND `shadcn add` / `npm install` in the same tree — two writers on one
- * lockfile. One writer per project; the second is refused at once with what
+ * lockfile. One writer per installation root; the second is refused at once with what
  * to do, instead of queueing behind a run nobody is watching.
  */
 const writingProjects = new Map<string, number>();
 
 function projectWriteKey(cwd: string): string {
+  let key: string;
   try {
-    return fs.realpathSync(cwd);
+    key = fs.realpathSync(cwd);
   } catch {
-    return path.resolve(cwd);
+    key = path.resolve(cwd);
   }
+  return process.platform === 'win32' ? key.toLowerCase() : key;
 }
 
-export function claimUiKitProjectWrite(cwd: string, now: number = Date.now()): () => void {
-  const key = projectWriteKey(cwd);
+export function claimUiKitProjectWrite(
+  cwd: string,
+  now: number = Date.now(),
+  installationRoot?: string,
+): () => void {
+  // All selected siblings and the root itself contend for the same physical
+  // installation. Independent projects retain their own key.
+  const key = projectWriteKey(installationRoot === undefined
+    ? cwd : resolveUiKitInstallationRoot(cwd, installationRoot));
   const since = writingProjects.get(key);
   if (since !== undefined) {
     throw new UiKitCliError(
@@ -612,7 +642,7 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
     let args: string[];
     let env: NodeJS.ProcessEnv;
     try {
-      cwd = assertSafeUiKitCwd(request.cwd, { writes });
+      cwd = assertSafeUiKitCwd(request.cwd, { writes, installationRoot: request.installationRoot });
       args = [...assertSafeUiKitArgs(request.args)];
       env = buildUiKitChildEnv(process.env, request.extraEnv ?? {});
     } catch (error) {
@@ -753,7 +783,7 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
     let releaseWrite: () => void = () => {};
     if (writes && request.projectWriteClaimed !== true) {
       try {
-        releaseWrite = claimUiKitProjectWrite(cwd);
+        releaseWrite = claimUiKitProjectWrite(cwd, Date.now(), request.installationRoot);
       } catch (error) {
         dropScratch();
         dropCapture();

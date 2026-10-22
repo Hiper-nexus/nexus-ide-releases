@@ -355,6 +355,7 @@ export async function runShadcnCommand(
   input: {
     readonly command: ShadcnCommand;
     readonly cwd: string;
+    readonly installationRoot?: string;
     readonly signal?: AbortSignal;
   },
   deps: UiKitServiceDeps = {},
@@ -381,18 +382,18 @@ export async function runShadcnCommand(
   // SEARCH that quietly edited project config would not be a read, and the
   // catalog tool is classified read-only precisely because it is one: an
   // undeclared namespace comes back in `unmappedRegistries` instead.
-  if (needed.length > 0 && writes) {
+  if (writes) {
     // The cwd guard BEFORE the write. `runUiKitCli` checks it too, but only
     // after this point: in a checkout whose node_modules is a shared symlink
     // the run is refused, and leaving the project's components.json edited by
     // a run that never happened is the worst of both.
-    assertSafeUiKitCwd(input.cwd, { writes: true });
+    assertSafeUiKitCwd(input.cwd, { writes: true, installationRoot: input.installationRoot });
   }
-  // One writer per project, held from the components.json edit to the CLI's
+  // One writer per installation root, held from the components.json edit to the CLI's
   // exit. Claimed inside `runUiKitCli`, a retry that was about to be refused
   // with PROJECT_BUSY had already rewritten the config under the install that
   // was still running.
-  const releaseWrite = writes ? claimUiKitProjectWrite(input.cwd) : () => {};
+  const releaseWrite = writes ? claimUiKitProjectWrite(input.cwd, Date.now(), input.installationRoot) : () => {};
   let result: Awaited<ReturnType<UiKitCliRunner>>;
   let scoped: ReturnType<typeof buildScopedRegistryEnv>;
   try {
@@ -412,6 +413,7 @@ export async function runShadcnCommand(
       kit: 'shadcn',
       args,
       cwd: input.cwd,
+      installationRoot: input.installationRoot,
       writes,
       ...(writes ? { projectWriteClaimed: true } : {}),
       // Resolve the package outside the project and point the CLI back at it:
@@ -458,6 +460,7 @@ export async function runBoardUiCommand(
   input: {
     readonly command: BoardUiCliCommand;
     readonly cwd: string;
+    readonly installationRoot?: string;
     readonly signal?: AbortSignal;
   },
   deps: UiKitServiceDeps = {},
@@ -471,6 +474,7 @@ export async function runBoardUiCommand(
     kit: 'boardui',
     args: buildBoardUiArgs(input.command),
     cwd: input.cwd,
+    installationRoot: input.installationRoot,
     writes: boardUiCommandWrites(input.command),
     // `list` resolves OUTSIDE the project (no `--cwd` needed: it prints the
     // vendor's catalogue and was measured working in an empty directory), so
@@ -587,11 +591,15 @@ export async function callBoardUiTool(
     /** Untrusted by design: the allowlist below is what makes it safe. */
     readonly args?: unknown;
     readonly cwd: string;
+    readonly installationRoot?: string;
     readonly signal?: AbortSignal;
   },
   deps: UiKitServiceDeps = {},
 ): Promise<BoardUiToolResult> {
   const tool = assertBoardUiTool(input.tool);
+  if (boardUiToolWrites(tool)) {
+    assertSafeUiKitCwd(input.cwd, { writes: true, installationRoot: input.installationRoot });
+  }
   // Every path — tools and panel alike — goes through the allowlist, so a
   // `projectDir` can never redirect an install out of the execution scope.
   //
@@ -650,6 +658,7 @@ export async function callBoardUiTool(
   const result = await call({
     kit: 'boardui',
     cwd: input.cwd,
+    installationRoot: input.installationRoot,
     writes: boardUiToolWrites(tool),
     method: 'tools/call',
     tool,
@@ -1622,6 +1631,7 @@ export async function installItems(
     readonly kit: UiKitId;
     readonly items: readonly string[];
     readonly cwd: string;
+    readonly installationRoot?: string;
     readonly overwrite?: boolean;
     readonly path?: string;
     readonly signal?: AbortSignal;
@@ -1630,6 +1640,9 @@ export async function installItems(
 ): Promise<UiKitRunResult> {
   const unfit = projectNotFitForKit(input.cwd, input.kit);
   if (unfit) return unfit;
+  // Before tier/license probing can start a vendor process, and before any
+  // registry config is written. The runners recheck at the actual spawn.
+  assertSafeUiKitCwd(input.cwd, { writes: true, installationRoot: input.installationRoot });
   const fit = uiKitProjectFit(input.cwd, input.kit);
   const warn = (result: UiKitRunResult): UiKitRunResult =>
     fit.ok && fit.warning ? { ...result, warning: fit.warning } : result;
@@ -1681,6 +1694,7 @@ async function installFitItems(
           ...(input.path ? { path: input.path } : {}),
         },
         cwd: input.cwd,
+        installationRoot: input.installationRoot,
         ...(input.signal ? { signal: input.signal } : {}),
       },
       deps,
@@ -1697,6 +1711,7 @@ async function installFitItems(
         ...(input.path ? { path: input.path } : {}),
       },
       cwd: input.cwd,
+      installationRoot: input.installationRoot,
       ...(input.signal ? { signal: input.signal } : {}),
     },
     deps,
