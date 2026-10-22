@@ -379,6 +379,7 @@ describe('contrato com o registro real de tools', () => {
     'nexus_browser_navigate',
     'nexus_browser_click',
     'nexus_browser_fill',
+    'nexus_browser_select',
     'nexus_browser_press',
     'nexus_browser_hover',
     'nexus_browser_scroll',

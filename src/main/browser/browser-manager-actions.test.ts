@@ -264,6 +264,7 @@ import {
   ensureBrowser,
   historyBrowserPane,
   hoverBrowserElement,
+  selectBrowserOption,
   loadBrowser,
   lockBrowserToExactUrl,
   openCdpRelayForPane,
@@ -953,6 +954,82 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
       const result = await hoverBrowserElement(PANE, scope, 'e1');
       expect(sendInputEvent.mock.calls.map((call) => call[0])).toEqual([{ type: 'mouseMove', x: 140, y: 50 }]);
       expect(result).toMatchObject({ hovered: true, input: 'native' });
+      destroyBrowser(PANE, scope);
+    });
+  });
+
+  describe('select', () => {
+    const defaultAutomation = state.runAutomation.getMockImplementation()!;
+    afterEach(() => state.runAutomation.mockImplementation(defaultAutomation));
+
+    it('chooses a native option through the page primitive', async () => {
+      await boot();
+      state.runAutomation.mockImplementation(async (_pane: string, _wc: unknown, command: string, ...rest: unknown[]): Promise<unknown> => {
+        const args = rest[0];
+        if (command === 'select') {
+          expect(args).toEqual({ ref: 'e4', option: 'São Paulo' });
+          return { selected: true, ref: 'e4', option: { label: 'São Paulo', index: 1 } };
+        }
+        return defaultAutomation(_pane, _wc, command);
+      });
+      const result = await selectBrowserOption(PANE, scope, 'e4', { option: 'São Paulo' });
+      expect(result).toMatchObject({ selected: true, via: 'native-select', option: { label: 'São Paulo' } });
+      expect(result.changed).toBeDefined();
+      destroyBrowser(PANE, scope);
+    });
+
+    it('opens an ARIA combobox and clicks the option with that name', async () => {
+      await boot();
+      const clicked: string[] = [];
+      state.runAutomation.mockImplementation(async (_pane: string, _wc: unknown, command: string, ...rest: unknown[]): Promise<unknown> => {
+        const args = rest[0];
+        if (command === 'select') throw new Error('browser element is not a native select');
+        if (command === 'click') {
+          clicked.push((args as { ref: string }).ref);
+          return { clicked: true, element: { ref: (args as { ref: string }).ref, tag: 'div', role: 'option', name: 'x' } };
+        }
+        if (command === 'find') {
+          return {
+            matches: [
+              { ref: 'e9', tag: 'span', role: 'span', name: 'Brasil', score: 1 },
+              { ref: 'e7', tag: 'div', role: 'option', name: 'Brasil', score: 1 },
+            ],
+            total: 2,
+          };
+        }
+        return defaultAutomation(_pane, _wc, command);
+      });
+      const result = await selectBrowserOption(PANE, scope, 'e3', { option: 'Brasil' });
+      expect(clicked).toEqual(['e3', 'e7']);
+      expect(result).toMatchObject({ selected: true, via: 'aria-listbox', option: { label: 'Brasil' } });
+      destroyBrowser(PANE, scope);
+    });
+
+    it('returns the option candidates without clicking when the ARIA option is ambiguous', async () => {
+      await boot();
+      const clicked: string[] = [];
+      state.runAutomation.mockImplementation(async (_pane: string, _wc: unknown, command: string, ...rest: unknown[]): Promise<unknown> => {
+        const args = rest[0];
+        if (command === 'select') throw new Error('browser element is not a native select');
+        if (command === 'click') {
+          clicked.push((args as { ref: string }).ref);
+          return { clicked: true, element: { ref: 'e3', tag: 'button', role: 'combobox', name: 'País' } };
+        }
+        if (command === 'find') {
+          return {
+            matches: [
+              { ref: 'e7', tag: 'div', role: 'option', name: 'Guiné', score: 0.9 },
+              { ref: 'e8', tag: 'div', role: 'option', name: 'Guiné-Bissau', score: 0.9 },
+            ],
+            total: 2,
+          };
+        }
+        return defaultAutomation(_pane, _wc, command);
+      });
+      const result = await selectBrowserOption(PANE, scope, 'e3', { option: 'guine' });
+      expect(clicked).toEqual(['e3']);
+      expect(result).toMatchObject({ selected: false, ambiguous: true });
+      expect(result.candidates?.map((candidate) => candidate.ref)).toEqual(['e7', 'e8']);
       destroyBrowser(PANE, scope);
     });
   });

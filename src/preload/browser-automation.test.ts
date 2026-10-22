@@ -821,3 +821,133 @@ describe('layout_audit (responsividade)', () => {
     });
   });
 });
+
+describe('shadow DOM and same-origin iframes', () => {
+  function deepFixture() {
+    const dom = new JSDOM(
+      `<!doctype html><body>
+        <h1>Loja</h1>
+        <shop-card id="card"></shop-card>
+        <shop-card id="hidden-card" style="display:none"></shop-card>
+        <closed-card id="closed"></closed-card>
+        <iframe id="frame"></iframe>
+      </body>`,
+      { url: 'https://example.test/', pretendToBeVisual: true },
+    );
+    const doc = dom.window.document;
+    for (const id of ['card', 'hidden-card']) {
+      const root = doc.getElementById(id)!.attachShadow({ mode: 'open' });
+      root.innerHTML = `<p>Texto sombra ${id}</p><button>Comprar ${id}</button>`;
+    }
+    doc.getElementById('closed')!.attachShadow({ mode: 'closed' }).innerHTML = '<button>Fechado</button>';
+    const frameDoc = (doc.getElementById('frame') as HTMLIFrameElement).contentDocument!;
+    frameDoc.body.innerHTML = `
+      <p>Conteúdo do iframe</p>
+      <label for="cupom">Cupom</label><input id="cupom">
+      <button>Aplicar</button>
+      <table><tr><th>Frete</th><td>R$ 12,90</td></tr></table>`;
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    return { dom, doc, frameDoc, automation };
+  }
+
+  it('read and find see open shadow roots and same-origin frames, never closed or hidden trees', async () => {
+    const { automation } = deepFixture();
+    const read = (await automation.run('read', {})) as {
+      bodyText: string; elements: Array<{ name: string; ref: string }>;
+    };
+    const names = read.elements.map((element) => element.name);
+    expect(names).toContain('Comprar card');
+    expect(names).toContain('Aplicar');
+    expect(names).toContain('Cupom');
+    expect(names).not.toContain('Comprar hidden-card');
+    expect(names).not.toContain('Fechado');
+    expect(read.bodyText).toContain('Texto sombra card');
+    expect(read.bodyText).toContain('Conteúdo do iframe');
+    expect(read.bodyText).not.toContain('Texto sombra hidden-card');
+    const found = (await automation.run('find', { text: 'aplicar' })) as { matches: Array<{ name: string }> };
+    expect(found.matches.map((match) => match.name)).toEqual(['Aplicar']);
+  });
+
+  it('click and fill act inside the shadow root and the iframe', async () => {
+    const { doc, frameDoc, automation } = deepFixture();
+    const read = (await automation.run('read', {})) as { elements: Array<{ name: string; ref: string }> };
+    const ref = (name: string) => read.elements.find((element) => element.name === name)!.ref;
+    let bought = false;
+    doc.getElementById('card')!.shadowRoot!.querySelector('button')!.addEventListener('click', () => { bought = true; });
+    await automation.run('click', { ref: ref('Comprar card') });
+    expect(bought).toBe(true);
+    let typed = '';
+    frameDoc.getElementById('cupom')!.addEventListener('input', (event) => {
+      typed = (event.target as HTMLInputElement).value;
+    });
+    await automation.run('fill', { ref: ref('Cupom'), text: 'NEXUS10' });
+    expect(typed).toBe('NEXUS10');
+  });
+
+  it('wait sees text that appears inside a shadow root', async () => {
+    const { doc, automation } = deepFixture();
+    setTimeout(() => {
+      doc.getElementById('card')!.shadowRoot!.querySelector('p')!.textContent = 'Pedido confirmado';
+    }, 30);
+    await expect(automation.run('wait', { condition: 'text', value: 'Pedido confirmado', timeoutMs: 2_000 }))
+      .resolves.toMatchObject({ matched: true });
+  });
+
+  it('extract finds label → value pairs inside the iframe', async () => {
+    const { automation } = deepFixture();
+    const candidates = (await automation.run('extract_candidates', {})) as {
+      pairs: Array<{ label: string; value: string }>;
+    };
+    expect(candidates.pairs).toContainEqual(expect.objectContaining({ label: 'Frete', value: 'R$ 12,90' }));
+  });
+});
+
+describe('select', () => {
+  function selectFixture() {
+    const dom = new JSDOM(
+      `<!doctype html><body>
+        <label for="uf">Estado</label>
+        <select id="uf"><option value="">Escolha</option><option value="SP">São Paulo</option>
+          <option value="RJ">Rio de Janeiro</option><option value="RS">Rio Grande do Sul</option></select>
+        <label for="pass">Senha</label><select id="pass" autocomplete="cc-csc"><option>1</option></select>
+        <button role="combobox">País</button>
+      </body>`,
+      { url: 'https://example.test/', pretendToBeVisual: true },
+    );
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    return { dom, automation };
+  }
+
+  it('selects a native option by label (diacritics-insensitive) or value and fires input/change', async () => {
+    const { dom, automation } = selectFixture();
+    const read = (await automation.run('read', {})) as { elements: Array<{ name: string; ref: string }> };
+    const ref = read.elements.find((element) => element.name === 'Estado')!.ref;
+    const select = dom.window.document.getElementById('uf') as HTMLSelectElement;
+    const events: string[] = [];
+    select.addEventListener('input', () => events.push('input'));
+    select.addEventListener('change', () => events.push('change'));
+    await expect(automation.run('select', { ref, option: 'sao paulo' }))
+      .resolves.toMatchObject({ selected: true, option: { label: 'São Paulo', index: 1 } });
+    expect(select.value).toBe('SP');
+    expect(events).toEqual(['input', 'change']);
+    await automation.run('select', { ref, value: 'RS' });
+    expect(select.value).toBe('RS');
+  });
+
+  it('refuses an ambiguous or missing option and lists what exists', async () => {
+    const { automation } = selectFixture();
+    const read = (await automation.run('read', {})) as { elements: Array<{ name: string; ref: string }> };
+    const ref = read.elements.find((element) => element.name === 'Estado')!.ref;
+    await expect(automation.run('select', { ref, option: 'Rio' })).rejects.toThrow(/ambiguous.*Rio de Janeiro.*Rio Grande do Sul/);
+    await expect(automation.run('select', { ref, option: 'Bahia' })).rejects.toThrow(/no option.*São Paulo/);
+  });
+
+  it('refuses sensitive selects and reports a non-native target for the ARIA path', async () => {
+    const { automation } = selectFixture();
+    const read = (await automation.run('read', {})) as { elements: Array<{ name: string; ref: string; tag: string }> };
+    const sensitive = read.elements.find((element) => element.tag === 'select' && element.name !== 'Estado')!.ref;
+    await expect(automation.run('select', { ref: sensitive, option: '1' })).rejects.toThrow(/sensitive/);
+    const combo = read.elements.find((element) => element.name === 'País')!.ref;
+    await expect(automation.run('select', { ref: combo, option: 'Brasil' })).rejects.toThrow(/not a native select/);
+  });
+});

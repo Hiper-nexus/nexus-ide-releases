@@ -255,6 +255,11 @@ describe('confirmationReason', () => {
     expect(reason).not.toContain('sensitive-user-input');
   });
 
+  it('never echoes the chosen option of a browser select in the confirmation', () => {
+    const reason = confirmationReason('nexus_browser_select', { paneId: 'browser-1', ref: 'e4', option: 'Plano Premium' });
+    expect(reason).toBe('choose an option in element e4 in browser pane browser-1');
+  });
+
   it('names the history step of a navigate instead of an unknown URL', () => {
     expect(confirmationReason('nexus_browser_navigate', { paneId: 'browser-1', history: 'back' }))
       .toBe('go back in browser pane browser-1');

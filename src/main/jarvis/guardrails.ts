@@ -117,6 +117,7 @@ const JARVIS_HANDS_FREE_TOOLS: ReadonlySet<string> = new Set([
   'browser_navigate',
   'browser_click',
   'browser_fill',
+  'browser_select',
   'browser_press',
   'browser_hover',
   'browser_scroll',
@@ -326,6 +327,10 @@ export function confirmationReason(
   }
   if (toolName === 'nexus_browser_click' || toolName === 'browser_click') {
     return `click element ${String(args.ref ?? 'unknown')} in browser pane ${String(args.paneId ?? 'unknown')}`;
+  }
+  if (toolName === 'nexus_browser_select' || toolName === 'browser_select') {
+    // Like fill: the chosen option is not echoed into the confirmation.
+    return `choose an option in element ${String(args.ref ?? args.label ?? 'unknown')} in browser pane ${String(args.paneId ?? 'unknown')}`;
   }
   if (toolName === 'nexus_browser_fill' || toolName === 'browser_fill') {
     return `fill element ${String(args.ref ?? 'unknown')} in browser pane ${String(args.paneId ?? 'unknown')}`;

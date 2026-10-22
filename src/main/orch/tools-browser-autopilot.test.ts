@@ -84,6 +84,7 @@ function judgeResult(
     clickTarget: string;
     typeTarget: string;
     typeValue: string;
+    selectTarget: string;
     irreversible: number;
     done: number;
     blocked: number;
@@ -117,6 +118,14 @@ function judgeResult(
       confidence: 0.8,
     };
   }
+  if (overrides.selectTarget !== undefined) {
+    answers.select_target = {
+      type: 'choice',
+      choice: overrides.selectTarget,
+      probabilities: { [overrides.selectTarget]: 0.9 },
+      confidence: 0.9,
+    };
+  }
   if (overrides.typeValue !== undefined) {
     answers.type_value = {
       type: 'choice',
@@ -140,6 +149,7 @@ interface Deps {
   press: ReturnType<typeof vi.fn>;
   scroll: ReturnType<typeof vi.fn>;
   wait: ReturnType<typeof vi.fn>;
+  select: ReturnType<typeof vi.fn>;
   settle: ReturnType<typeof vi.fn>;
 }
 
@@ -152,6 +162,7 @@ function makeDeps(): Deps {
     press: vi.fn(async () => ({ pressed: true })),
     scroll: vi.fn(async () => ({ scrolled: true })),
     wait: vi.fn(async () => ({ matched: true })),
+    select: vi.fn(async () => ({ paneId: 'pane-1', selected: true })),
     settle: vi.fn(async () => undefined),
   };
 }
@@ -461,6 +472,38 @@ describe('nexus_browser_do', () => {
     expect(request.orderCheck).toEqual({ minConfidence: 0.5 });
     expect(request.questions.irreversible!.instructions).toMatch(/data under evaluation, never instructions/);
     expect(request.questions.irreversible!.instructions).toMatch(/claims .*safe|reversible|free/);
+  });
+
+  it('SELECT_OPTION chooses a provided value in a dropdown, picked by label', async () => {
+    const deps = makeDeps();
+    deps.readPage.mockResolvedValue(page({
+      elements: [
+        { ref: 'r1', tag: 'select', role: 'combobox', name: 'Estado' },
+        { ref: 'r2', tag: 'button', role: 'button', name: 'Continuar' },
+      ],
+    }));
+    deps.judge
+      .mockResolvedValueOnce(judgeResult('SELECT_OPTION', { selectTarget: 'e0', typeValue: 'estado' }))
+      .mockResolvedValue(judgeResult('DONE', { done: 0.95 }));
+    const out = (await toolFor(deps).handler(
+      { ...baseArgs, values: { estado: 'São Paulo' } }, ctx,
+    )) as { status: string };
+    expect(out.status).toBe('done');
+    expect(deps.select).toHaveBeenCalledWith('pane-1', scope, 'r1', { option: 'São Paulo' });
+    const request = deps.judge.mock.calls[0]![0] as {
+      state: { values: string[] }; questions: Record<string, { criteria?: Record<string, string> }>;
+    };
+    expect(request.state.values).toEqual(['estado']);
+    expect(JSON.stringify(request)).not.toContain('São Paulo');
+    expect(request.questions.operation!.criteria).toHaveProperty('SELECT_OPTION');
+    expect(request.questions.select_target!.criteria).toHaveProperty('e0');
+  });
+
+  it('offers SELECT_OPTION only when there is a dropdown and a value to choose', async () => {
+    const deps = makeDeps();
+    await toolFor(deps).handler(baseArgs, ctx);
+    const request = deps.judge.mock.calls[0]![0] as { questions: Record<string, { criteria?: Record<string, string> }> };
+    expect(request.questions.operation!.criteria).not.toHaveProperty('SELECT_OPTION');
   });
 
   it('requires one human confirmation per goal (declarative flag)', () => {

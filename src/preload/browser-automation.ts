@@ -101,6 +101,10 @@ function finiteClampInt(
     ? Math.min(max, Math.max(min, Math.round(value)))
     : fallback;
 }
+/** Open shadow roots + same-origin frames searched per read (with the document). */
+const MAX_SEARCH_ROOTS = 64;
+/** Elements inspected while discovering shadow hosts and frames. */
+const MAX_HOST_SCAN = 20_000;
 /** Coalescing window after a DOM mutation before re-checking a wait. */
 const POLL_MS = 50;
 /** Slow tick for changes no mutation reports (layout-only, media queries). */
@@ -206,8 +210,9 @@ function textLines(win: BrowserDomWindow, element: Element): string[] {
   const walk = (node: Node): void => {
     for (const child of node.childNodes) {
       if (child.nodeType === win.Node.TEXT_NODE) out += child.textContent ?? '';
-      else if (child instanceof win.Element) {
-        if (child.tagName === 'BR') out += '\n';
+      // nodeType, not instanceof: an iframe element belongs to another realm.
+      else if (child.nodeType === 1) {
+        if ((child as Element).tagName === 'BR') out += '\n';
         else walk(child);
       }
     }
@@ -236,33 +241,65 @@ function elementHasSensitiveMarker(element: Element): boolean {
   return isSensitiveBrowserMarker(marker);
 }
 
+/**
+ * The parent in the flattened tree: the light-DOM parent, the host of a shadow
+ * root, or the `<iframe>` that holds this document. Visibility and sensitivity
+ * must cross those boundaries — a password widget inside a component, or a
+ * shadow tree under a `display:none` host, is still what its host says it is.
+ */
+function composedParent(element: Element): Element | null {
+  if (element.parentElement) return element.parentElement;
+  const parent = element.parentNode;
+  if (!parent) return null;
+  if (parent.nodeType === 11) return (parent as ShadowRoot).host ?? null;
+  if (parent.nodeType === 9) {
+    try {
+      return ((parent as Document).defaultView?.frameElement as Element | null) ?? null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 export function isSensitiveTree(element: Element): boolean {
   let current: Element | null = element;
   for (let depth = 0; current && depth < 4; depth += 1) {
     if (elementHasSensitiveMarker(current)) return true;
-    current = current.parentElement;
+    current = composedParent(current);
   }
   return false;
 }
 
+const VISIBILITY_STYLE_DEPTH = 16;
+
 function isElementVisible(win: BrowserDomWindow, element: Element): boolean {
   if (!element.isConnected) return false;
-  if (element.closest(SKIP_TEXT_SELECTOR)) return false;
+  // A detached iframe keeps its document object but no window.
+  if (!element.ownerDocument.defaultView) return false;
   let current: Element | null = element;
-  for (let depth = 0; current && depth < 12; depth += 1) {
-    try {
-      const style = win.getComputedStyle(current);
-      if (
-        style.display === 'none' ||
-        style.visibility === 'hidden' ||
-        style.visibility === 'collapse'
-      ) {
-        return false;
+  let segmentStart = true;
+  for (let depth = 0; current && depth < 64; depth += 1) {
+    // closest() stops at a shadow or frame boundary; re-check each segment.
+    if (segmentStart && current.closest(SKIP_TEXT_SELECTOR)) return false;
+    if (depth < VISIBILITY_STYLE_DEPTH) {
+      try {
+        const styleWin = (current.ownerDocument.defaultView ?? win) as BrowserDomWindow;
+        const style = styleWin.getComputedStyle(current);
+        if (
+          style.display === 'none' ||
+          style.visibility === 'hidden' ||
+          style.visibility === 'collapse'
+        ) {
+          return false;
+        }
+      } catch {
+        // Cross-browser SVG/style edge: attributes above still provide a safe floor.
       }
-    } catch {
-      // Cross-browser SVG/style edge: attributes above still provide a safe floor.
     }
-    current = current.parentElement;
+    const next = composedParent(current);
+    segmentStart = next !== null && next !== current.parentElement;
+    current = next;
   }
   return true;
 }
@@ -285,7 +322,11 @@ function collectVisibleText(win: BrowserDomWindow, root: Node, maxChars: number)
       truncated = true;
       break;
     }
-    const parent = walker.currentNode.parentElement;
+    const textNode = walker.currentNode;
+    // Text directly under a shadow root has no parent element: use the host.
+    const parent =
+      textNode.parentElement ??
+      (textNode.parentNode?.nodeType === 11 ? (textNode.parentNode as ShadowRoot).host : null);
     if (!parent || !isElementVisible(win, parent) || isSensitiveTree(parent)) continue;
     const text = normalizedText(walker.currentNode.nodeValue ?? '');
     if (!text) continue;
@@ -338,10 +379,15 @@ function elementName(win: BrowserDomWindow, element: Element): string {
 
   const labelledBy = element.getAttribute('aria-labelledby');
   if (labelledBy) {
+    // ids resolve in the element's own tree (a shadow root has its own ids).
+    const scope = element.getRootNode() as Document | ShadowRoot;
+    const byId = (id: string): Element | null =>
+      (typeof scope.getElementById === 'function' ? scope.getElementById(id) : null) ??
+      element.ownerDocument.getElementById(id);
     const text = labelledBy
       .split(/\s+/)
       .slice(0, 8)
-      .map((id) => element.ownerDocument.getElementById(id)?.textContent ?? '')
+      .map((id) => byId(id)?.textContent ?? '')
       .join(' ');
     if (normalizedText(text)) {
       return redactBrowserText(normalizedText(text)).slice(0, MAX_NAME_CHARS);
@@ -438,7 +484,7 @@ export function createBrowserAutomation(
       throw new Error('invalid browser element reference');
     }
     const element = references.get(raw);
-    if (!element || !element.isConnected) {
+    if (!element || !element.isConnected || !element.ownerDocument.defaultView) {
       references.delete(raw);
       throw new Error('browser element reference is stale; read the page again');
     }
@@ -508,9 +554,95 @@ export function createBrowserAutomation(
     return descriptor;
   }
 
+  /**
+   * Every tree the agent can act in: the document, each OPEN shadow root and
+   * each visible same-origin frame (recursively). Closed shadow roots and
+   * cross-origin frames stay invisible by construction. Bounded so a page of
+   * thousands of components cannot stall a read.
+   */
+  function searchRoots(): Array<Document | ShadowRoot> {
+    const roots: Array<Document | ShadowRoot> = [];
+    const pending: Array<Document | ShadowRoot> = [win.document];
+    let scanned = 0;
+    while (pending.length > 0 && roots.length < MAX_SEARCH_ROOTS) {
+      const root = pending.shift()!;
+      roots.push(root);
+      for (const element of root.querySelectorAll('*')) {
+        scanned += 1;
+        if (scanned > MAX_HOST_SCAN) return roots;
+        const shadow = (element as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+        if (shadow) pending.push(shadow);
+        if (element.tagName === 'IFRAME' || element.tagName === 'FRAME') {
+          let frameDocument: Document | null = null;
+          try {
+            frameDocument = (element as HTMLIFrameElement).contentDocument;
+          } catch {
+            frameDocument = null; // cross-origin
+          }
+          if (frameDocument?.documentElement && isElementVisible(win, element)) {
+            pending.push(frameDocument);
+          }
+        }
+      }
+    }
+    return roots;
+  }
+
+  function queryAllDeep(selector: string, roots = searchRoots()): Element[] {
+    return roots.flatMap((root) => [...root.querySelectorAll(selector)]);
+  }
+
+  /** Visible text of the page and of every searchable shadow root / frame. */
+  function visiblePageText(maxChars: number, roots = searchRoots()): { text: string; truncated: boolean } {
+    const parts: string[] = [];
+    let used = 0;
+    let truncated = false;
+    for (const root of roots) {
+      const node = root.nodeType === 9 ? (root as Document).body : root;
+      if (!node) continue;
+      const remaining = maxChars - used;
+      if (remaining <= 0) {
+        truncated = true;
+        break;
+      }
+      const piece = collectVisibleText(win, node, remaining);
+      if (piece.truncated) truncated = true;
+      if (!piece.text) continue;
+      parts.push(piece.text);
+      used += piece.text.length + 1;
+    }
+    return { text: parts.join(' ').slice(0, maxChars), truncated };
+  }
+
+  /** Focus inside shadow roots and same-origin frames, not just their host. */
+  function deepActiveElement(): Element | null {
+    let active: Element | null = win.document.activeElement;
+    for (let depth = 0; active && depth < 16; depth += 1) {
+      const shadowActive = (active as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot?.activeElement;
+      if (shadowActive) {
+        active = shadowActive;
+        continue;
+      }
+      if (active.tagName === 'IFRAME' || active.tagName === 'FRAME') {
+        let inner: Element | null = null;
+        try {
+          inner = (active as HTMLIFrameElement).contentDocument?.activeElement ?? null;
+        } catch {
+          inner = null;
+        }
+        if (inner && inner !== active) {
+          active = inner;
+          continue;
+        }
+      }
+      break;
+    }
+    return active;
+  }
+
   /** Interactive candidates in document order (fixed selector, never page input). */
-  function interactiveElements(): Element[] {
-    return [...win.document.querySelectorAll(INTERACTIVE_SELECTOR)].filter(
+  function interactiveElements(roots = searchRoots()): Element[] {
+    return queryAllDeep(INTERACTIVE_SELECTOR, roots).filter(
       (element) => !isCollapsedSelectOption(element),
     );
   }
@@ -519,15 +651,13 @@ export function createBrowserAutomation(
     pruneReferences();
     const maxChars = clampInt(args.maxChars, DEFAULT_TEXT_CHARS, MAX_TEXT_CHARS);
     const maxElements = clampInt(args.maxElements, DEFAULT_ELEMENTS, MAX_ELEMENTS);
-    const body = win.document.body;
-    const text = body
-      ? collectVisibleText(win, body, maxChars)
-      : { text: '', truncated: false };
-    const candidates = interactiveElements();
+    const roots = searchRoots();
+    const text = visiblePageText(maxChars, roots);
+    const candidates = interactiveElements(roots);
     const visible = candidates
       .filter((element) => isElementVisible(win, element))
       .slice(0, maxElements);
-    const headings = [...win.document.querySelectorAll('h1,h2,h3,h4,h5,h6')]
+    const headings = queryAllDeep('h1,h2,h3,h4,h5,h6', roots)
       .filter((element) => isElementVisible(win, element) && !isSensitiveTree(element))
       .slice(0, MAX_HEADINGS)
       .map((heading) => ({
@@ -554,7 +684,7 @@ export function createBrowserAutomation(
       elements: visible.map(describe),
       truncated: text.truncated || candidates.length > visible.length,
       viewport: viewportState(),
-      alerts: collectAlerts(),
+      alerts: collectAlerts(roots),
     };
   }
 
@@ -569,7 +699,7 @@ export function createBrowserAutomation(
   const ALERT_CLASS_PATTERN =
     /(?:^|[\s_-])(error|errors|invalid|is-invalid|has-error|alert-danger|alert-error|form-error|field-error|error-message)(?:[\s_-]|$)/i;
 
-  function collectAlerts(): BrowserPageAlert[] {
+  function collectAlerts(roots = searchRoots()): BrowserPageAlert[] {
     const out: BrowserPageAlert[] = [];
     const seen = new Set<Element>();
     const push = (element: Element, role: string, ref: boolean): void => {
@@ -589,13 +719,11 @@ export function createBrowserAutomation(
         text,
       });
     };
-    for (const element of win.document.querySelectorAll(ALERT_ROLE_SELECTOR)) {
+    for (const element of queryAllDeep(ALERT_ROLE_SELECTOR, roots)) {
       if (out.length >= MAX_ALERTS) break;
       push(element, implicitRole(element), true);
     }
-    for (const element of win.document.querySelectorAll(
-      ALERT_CLASS_CANDIDATE_SELECTOR,
-    )) {
+    for (const element of queryAllDeep(ALERT_CLASS_CANDIDATE_SELECTOR, roots)) {
       if (out.length >= MAX_ALERTS) break;
       const cls = element.getAttribute('class') ?? '';
       if (!ALERT_CLASS_PATTERN.test(cls)) continue;
@@ -697,6 +825,7 @@ export function createBrowserAutomation(
    */
   function extractCandidates(): BrowserExtractCandidates {
     pruneReferences();
+    const roots = searchRoots();
     const jsonLd: unknown[] = [];
     for (const script of win.document.querySelectorAll(
       'script[type="application/ld+json"]',
@@ -739,7 +868,7 @@ export function createBrowserAutomation(
       ++visited > EXTRACT_MAX_CANDIDATE_NODES;
 
     // dl: dt → next dd sibling.
-    for (const dt of win.document.querySelectorAll('dt')) {
+    for (const dt of queryAllDeep('dt', roots)) {
       if (overBudget()) break;
       if (isSensitiveTree(dt) || !isElementVisible(win, dt)) continue;
       let dd = dt.nextElementSibling;
@@ -755,7 +884,7 @@ export function createBrowserAutomation(
     }
 
     // tables: th → td, or first cell → remaining cells.
-    for (const row of win.document.querySelectorAll('tr')) {
+    for (const row of queryAllDeep('tr', roots)) {
       if (overBudget()) break;
       if (isSensitiveTree(row) || !isElementVisible(win, row)) continue;
       const cells = [...row.querySelectorAll('th,td')];
@@ -774,12 +903,15 @@ export function createBrowserAutomation(
     // label[for] / wrapping label → campo: só <select> (a opção escolhida é
     // conteúdo da página); valores digitados nunca saem da página — só a
     // opção escolhida de um select.
-    for (const label of win.document.querySelectorAll('label')) {
+    for (const label of queryAllDeep('label', roots)) {
       if (overBudget()) break;
       if (isSensitiveTree(label) || !isElementVisible(win, label)) continue;
       const forId = label.getAttribute('for');
+      const labelScope = label.getRootNode() as Document | ShadowRoot;
       const field = forId
-        ? win.document.getElementById(forId)
+        ? (typeof labelScope.getElementById === 'function'
+            ? labelScope.getElementById(forId)
+            : label.ownerDocument.getElementById(forId))
         : label.querySelector('input,textarea,select');
       if (!field || isSensitiveTree(field)) continue;
       if (field.tagName.toLowerCase() !== 'select') continue;
@@ -795,7 +927,7 @@ export function createBrowserAutomation(
     }
 
     // "Label: value" on leaf elements.
-    for (const el of win.document.querySelectorAll(LABEL_LINE_ELEMENTS)) {
+    for (const el of queryAllDeep(LABEL_LINE_ELEMENTS, roots)) {
       if (overBudget()) break;
       if (isSensitiveTree(el) || !isElementVisible(win, el)) continue;
       if (el.children.length > 0) continue;
@@ -807,9 +939,7 @@ export function createBrowserAutomation(
     }
 
     // Typed tokens over the already-redacted visible text.
-    const bodyText = win.document.body
-      ? collectVisibleText(win, win.document.body, MAX_TEXT_CHARS).text
-      : '';
+    const bodyText = visiblePageText(MAX_TEXT_CHARS, roots).text;
     const tokens: BrowserExtractCandidates['tokens'] = [];
     const seenTokens = new Set<string>();
     const collectTokens = (
@@ -991,7 +1121,7 @@ export function createBrowserAutomation(
     if (kind === 'key') {
       const target = args.ref !== undefined && args.ref !== null
         ? resolveRef(args.ref)
-        : (win.document.activeElement ?? win.document.body);
+        : (deepActiveElement() ?? win.document.body);
       if (!target) return { token: null, reason: 'no-target' };
       if (args.ref !== undefined && args.ref !== null && !isElementVisible(win, target)) {
         throw new Error('browser element is not visible');
@@ -1062,6 +1192,9 @@ export function createBrowserAutomation(
     }
 
     const tag = element.tagName.toLowerCase();
+    // The element's own realm: an iframe field has its own prototypes, and
+    // React's value tracker only sees the native setter of that realm.
+    const realm = (element.ownerDocument.defaultView ?? win) as BrowserDomWindow;
     if (tag === 'input') {
       const input = element as HTMLInputElement;
       const type = (input.type || 'text').toLowerCase();
@@ -1069,14 +1202,14 @@ export function createBrowserAutomation(
         throw new Error('browser input type cannot be filled as text');
       }
       const setter = Object.getOwnPropertyDescriptor(
-        win.HTMLInputElement.prototype,
+        realm.HTMLInputElement.prototype,
         'value',
       )?.set;
       if (!setter) throw new Error('browser input setter is unavailable');
       setter.call(input, text);
     } else if (tag === 'textarea') {
       const setter = Object.getOwnPropertyDescriptor(
-        win.HTMLTextAreaElement.prototype,
+        realm.HTMLTextAreaElement.prototype,
         'value',
       )?.set;
       if (!setter) throw new Error('browser textarea setter is unavailable');
@@ -1088,9 +1221,81 @@ export function createBrowserAutomation(
     }
 
     (element as HTMLElement).focus?.({ preventScroll: true });
-    element.dispatchEvent(new win.Event('input', { bubbles: true, composed: true }));
-    element.dispatchEvent(new win.Event('change', { bubbles: true, composed: true }));
+    element.dispatchEvent(new realm.Event('input', { bubbles: true, composed: true }));
+    element.dispatchEvent(new realm.Event('change', { bubbles: true, composed: true }));
     return { filled: true, ref: refFor(element), length: text.length };
+  }
+
+  const MAX_LISTED_OPTIONS = 30;
+
+  /**
+   * `select`: picks one option of a native `<select>` by visible label
+   * (case/diacritics-insensitive: exact, then prefix, then substring — a tie
+   * is refused with the options listed), by `value` or by `index`. Fires
+   * input + change in the element's realm like a person choosing. A target
+   * that is not a native select is reported so Main can open the ARIA
+   * combobox/listbox and click the option instead.
+   */
+  function select(args: Record<string, unknown>): {
+    selected: true;
+    ref: string;
+    option: { label: string; index: number };
+  } {
+    const element = resolveRef(args.ref);
+    if (!isElementVisible(win, element)) throw new Error('browser element is not visible');
+    if (element.tagName.toLowerCase() !== 'select') {
+      throw new Error('browser element is not a native select');
+    }
+    if (isSensitiveTree(element)) {
+      throw new Error('refusing to choose in a password, token, payment, or sensitive field');
+    }
+    if (element.hasAttribute('disabled') || element.getAttribute('aria-disabled') === 'true') {
+      throw new Error('browser select is disabled');
+    }
+    const selectElement = element as HTMLSelectElement;
+    const options = [...selectElement.options];
+    const labelOf = (option: HTMLOptionElement): string =>
+      redactBrowserText(normalizedText(option.label || option.textContent || '')).slice(0, 120);
+    const listed = (): string =>
+      options.slice(0, MAX_LISTED_OPTIONS).map(labelOf).filter(Boolean).join(' | ');
+    let index = -1;
+    if (typeof args.index === 'number' && Number.isInteger(args.index)) {
+      index = args.index >= 0 && args.index < options.length ? args.index : -1;
+      if (index < 0) throw new Error(`browser select has no option at index ${args.index}; options: ${listed()}`);
+    } else if (typeof args.value === 'string') {
+      index = options.findIndex((option) => option.value === args.value);
+      if (index < 0) throw new Error(`browser select has no option with that value; options: ${listed()}`);
+    } else if (typeof args.option === 'string' && args.option.trim()) {
+      const wanted = fold(args.option.slice(0, 200));
+      const folded = options.map((option) => fold(option.label || option.textContent || ''));
+      for (const matches of [
+        (label: string) => label === wanted,
+        (label: string) => label.startsWith(wanted),
+        (label: string) => label.includes(wanted),
+      ]) {
+        const hits = folded.flatMap((label, position) => (matches(label) ? [position] : []));
+        if (hits.length === 1) {
+          index = hits[0]!;
+          break;
+        }
+        if (hits.length > 1) {
+          const names = hits.slice(0, MAX_LISTED_OPTIONS).map((position) => labelOf(options[position]!)).join(' | ');
+          throw new Error(`browser select option is ambiguous: ${names}`);
+        }
+      }
+      if (index < 0) throw new Error(`browser select has no option like that; options: ${listed()}`);
+    } else {
+      throw new Error('browser select needs option, value or index');
+    }
+    const chosen = options[index]!;
+    if (chosen.disabled) throw new Error('browser select option is disabled');
+    if (selectElement.multiple) chosen.selected = true;
+    else selectElement.selectedIndex = index;
+    const realm = (element.ownerDocument.defaultView ?? win) as BrowserDomWindow;
+    selectElement.focus?.({ preventScroll: true });
+    element.dispatchEvent(new realm.Event('input', { bubbles: true, composed: true }));
+    element.dispatchEvent(new realm.Event('change', { bubbles: true, composed: true }));
+    return { selected: true, ref: refFor(element), option: { label: labelOf(chosen), index } };
   }
 
   function wait(args: Record<string, unknown>): Promise<{
@@ -1117,12 +1322,9 @@ export function createBrowserAutomation(
     const matches = (): boolean => {
       if (condition === 'load') return win.document.readyState === 'complete';
       if (condition === 'text') {
-        const body = win.document.body;
-        return body
-          ? collectVisibleText(win, body, MAX_TEXT_CHARS)
-              .text.toLocaleLowerCase()
-              .includes(redactBrowserText(query).toLocaleLowerCase())
-          : false;
+        return visiblePageText(MAX_TEXT_CHARS)
+          .text.toLocaleLowerCase()
+          .includes(redactBrowserText(query).toLocaleLowerCase());
       }
       const element = references.get(ref);
       return Boolean(element?.isConnected && isElementVisible(win, element));
@@ -1165,9 +1367,16 @@ export function createBrowserAutomation(
       const fallback = win.setInterval(check, WAIT_FALLBACK_TICK_MS);
       if (typeof win.MutationObserver === 'function') {
         observer = new win.MutationObserver(schedule);
-        observer.observe(win.document, {
-          subtree: true, childList: true, characterData: true, attributes: true,
-        });
+        // Shadow roots and frames do not report to an observer on the document.
+        for (const root of searchRoots()) {
+          try {
+            observer.observe(root, {
+              subtree: true, childList: true, characterData: true, attributes: true,
+            });
+          } catch {
+            // A root the observer cannot attach to is still covered by the tick.
+          }
+        }
       }
       win.document.addEventListener('readystatechange', schedule);
       check();
@@ -1331,10 +1540,7 @@ export function createBrowserAutomation(
         throw new Error('browser element is not visible');
       }
     } else {
-      target =
-        win.document.activeElement instanceof win.Element
-          ? win.document.activeElement
-          : win.document.body;
+      target = deepActiveElement() ?? win.document.body;
     }
     (target as HTMLElement).focus?.({ preventScroll: true });
     // Synthesized KeyboardEvents carry isTrusted=false; this is the best a
@@ -1532,6 +1738,7 @@ export function createBrowserAutomation(
       if (command === 'input_prepare') return inputPrepare(args);
       if (command === 'input_confirm') return inputConfirm(args);
       if (command === 'fill') return fill(args);
+      if (command === 'select') return select(args);
       if (command === 'wait') return wait(args);
       if (command === 'scroll') return scroll(args);
       if (command === 'press') return press(args, options?.signal);

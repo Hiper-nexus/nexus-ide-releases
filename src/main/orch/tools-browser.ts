@@ -18,6 +18,7 @@ import {
   readBrowserPage,
   readBrowserPageCompact,
   scrollBrowserPane,
+  selectBrowserOption,
   waitForBrowser,
   type BrowserDeviceKind,
   type BrowserInlineRead,
@@ -675,6 +676,56 @@ const browserFillTool: McpToolDef = {
   },
 };
 
+const browserSelectTool: McpToolDef = {
+  name: 'nexus_browser_select',
+  requiresConfirm: true,
+  description:
+    'Choose an option in a dropdown by opaque `ref` — or by `label` (the ' +
+    'field\'s accessible name). Pass `option` (visible option text, case- and ' +
+    'accent-insensitive), or `value`/`index` for a native <select>. A native ' +
+    '<select> is set directly and fires input/change; a component dropdown ' +
+    '(Radix/shadcn Select, combobox, listbox) is opened with a real click and ' +
+    'the option with that name is clicked. Ambiguous or missing options come ' +
+    'back as `candidates` (or an error listing the options) and nothing is ' +
+    'chosen. Sensitive fields are refused.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      paneId: { type: 'string' },
+      ref: { type: 'string' },
+      label: { type: 'string', description: 'Accessible name of the dropdown instead of a ref' },
+      option: { type: 'string', description: 'Visible text of the option to choose' },
+      value: { type: 'string', description: 'Option value (native <select> only)' },
+      index: { type: 'integer', minimum: 0, description: 'Option index (native <select> only)' },
+      read: READ_ARG_PROP,
+      judge: JUDGE_ARG_PROP,
+    },
+    required: ['paneId'],
+  },
+  handler: async (args, ctx) => {
+    const paneId = requireStr(args, 'paneId');
+    authorizePaneRef(ctx, paneId, 'write');
+    const target =
+      str(args, 'ref') ??
+      (typeof args.label === 'string' ? { text: args.label } : null);
+    if (!target) throw new Error('missing required argument: ref or label');
+    const choice = {
+      ...(typeof args.option === 'string' ? { option: args.option } : {}),
+      ...(typeof args.value === 'string' ? { value: args.value } : {}),
+      ...(typeof args.index === 'number' ? { index: args.index } : {}),
+    };
+    if (Object.keys(choice).length !== 1) {
+      throw new Error('provide exactly one of option, value or index');
+    }
+    return selectBrowserOption(paneId, ctx.scope, target, choice, {
+      read: inlineReadArg(args),
+      judge: args.judge !== false,
+      sessionId: ctx.sessionId,
+      missionId: ctx.missionId,
+    });
+  },
+};
+
 const browserWaitTool: McpToolDef = {
   name: 'nexus_browser_wait',
   description:
@@ -849,6 +900,7 @@ export function buildBrowserTools(): McpToolDef[] {
     browserInspectTool,
     browserClickTool,
     browserFillTool,
+    browserSelectTool,
     browserWaitTool,
     browserScrollTool,
     browserPressTool,

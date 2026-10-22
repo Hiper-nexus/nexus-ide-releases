@@ -21,6 +21,7 @@ const COMMANDS = new Set<BrowserAutomationCommand>([
   'input_prepare',
   'input_confirm',
   'fill',
+  'select',
   'wait',
   'scroll',
   'press',

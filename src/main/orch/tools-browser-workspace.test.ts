@@ -55,6 +55,7 @@ const stubs = vi.hoisted(() => ({
   analyzeBrowserResponsive: vi.fn(async () => ({ paneId: 'browser-1', breakpoints: [] as unknown[] })),
   pressBrowserKey: vi.fn(async () => ({ paneId: 'browser-1' })),
   historyBrowserPane: vi.fn(async () => ({ paneId: 'browser-1', navigated: true })),
+  selectBrowserOption: vi.fn(async () => ({ paneId: 'browser-1', selected: true })),
   resolveReviewAuthority: vi.fn(() => null as {
     reviewSessionId: string;
     reviewerSessionId: string;
@@ -96,6 +97,7 @@ vi.mock('../browser/browser-manager', () => ({
   pressBrowserKey: stubs.pressBrowserKey,
   hoverBrowserElement: vi.fn(),
   historyBrowserPane: stubs.historyBrowserPane,
+  selectBrowserOption: stubs.selectBrowserOption,
 }));
 vi.mock('../perf/perf-ipc', () => ({ collectPerfSnapshot: vi.fn() }));
 vi.mock('./pane-registry', () => ({
@@ -336,6 +338,16 @@ describe('preview tool workspace confinement', () => {
       tool.handler({ dir: '/Users/example' }, context),
     ).rejects.toThrow(/escapes workspace/);
     expect(stubs.startPreview).not.toHaveBeenCalled();
+  });
+
+  it('select needs write authority and confirmation and passes the label target and the option', async () => {
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_select')!;
+    expect(tool.requiresConfirm).toBe(true);
+    await tool.handler({ paneId: 'browser-1', label: 'Estado', option: 'São Paulo' }, context);
+    expect(authorizePaneRef).toHaveBeenLastCalledWith(context, 'browser-1', 'write');
+    expect(stubs.selectBrowserOption).toHaveBeenCalledWith('browser-1', scope, { text: 'Estado' },
+      { option: 'São Paulo' }, expect.objectContaining({ judge: true }));
+    await expect(tool.handler({ paneId: 'browser-1', ref: 'e1' }, context)).rejects.toThrow(/option, value or index/);
   });
 
   it('navigate walks the history (back/forward/reload) instead of a url', async () => {

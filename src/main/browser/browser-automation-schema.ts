@@ -198,3 +198,13 @@ export const browserInputPrepareSchema = z.union([
 ]);
 
 export const browserInputConfirmSchema = z.object({ delivered: z.boolean() }).strict();
+
+export const browserSelectResultSchema = z
+  .object({
+    selected: z.literal(true),
+    ref: z.string().regex(/^e[1-9]\d{0,7}$/),
+    option: z
+      .object({ label: z.string().max(120), index: z.number().int().min(0).max(100_000) })
+      .strict(),
+  })
+  .strict();

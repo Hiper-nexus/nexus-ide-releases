@@ -361,6 +361,20 @@ describe('fields advertised by the tool schema are accepted', () => {
   });
 });
 
+describe('browser select', () => {
+  it('needs one target (ref|label) and one choice (option|value|index)', () => {
+    expect(validateToolArgs('nexus_browser_select', { paneId: 'b', ref: 'e4', option: 'São Paulo' }))
+      .toEqual({ paneId: 'b', ref: 'e4', option: 'São Paulo' });
+    expect(validateToolArgs('nexus_browser_select', { paneId: 'b', label: 'Estado', index: 2 }))
+      .toEqual({ paneId: 'b', label: 'Estado', index: 2 });
+    expect(() => validateToolArgs('nexus_browser_select', { paneId: 'b', ref: 'e4' })).toThrow();
+    expect(() => validateToolArgs('nexus_browser_select', { paneId: 'b', ref: 'e4', option: 'a', value: 'b' }))
+      .toThrow();
+    expect(() => validateToolArgs('nexus_browser_select', { paneId: 'b', option: 'a' })).toThrow();
+    expect(() => validateToolArgs('nexus_browser_select', { paneId: 'b', ref: '#uf', option: 'a' })).toThrow();
+  });
+});
+
 describe('browser history through navigate', () => {
   it('accepts exactly one of url or history', () => {
     expect(validateToolArgs('nexus_browser_navigate', { paneId: 'b', history: 'back' }))

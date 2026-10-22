@@ -7,6 +7,7 @@ import {
   pressBrowserKey,
   readBrowserPage,
   scrollBrowserPane,
+  selectBrowserOption,
   waitForBrowser,
 } from '../browser/browser-manager';
 import {
@@ -86,7 +87,7 @@ interface IndexedElement {
   role: string;
   name: string;
   value?: string;
-  kind: 'clickable' | 'textfield' | 'other';
+  kind: 'clickable' | 'textfield' | 'select' | 'other';
 }
 
 interface PageRead {
@@ -115,10 +116,11 @@ const CLICKABLE_ROLES = new Set([
   'menuitemradio',
   'tab',
   'switch',
-  'combobox',
-  'listbox',
   'treeitem',
 ]);
+
+/** Dropdowns: a native <select> or a component combobox/listbox. */
+const SELECT_ROLES = new Set(['combobox', 'listbox']);
 
 function classifyElement(el: PageRead['elements'][number]): IndexedElement['kind'] {
   if (el.disabled) return 'other';
@@ -134,6 +136,7 @@ function classifyElement(el: PageRead['elements'][number]): IndexedElement['kind
     return 'textfield';
   }
   const role = el.role.toLowerCase();
+  if (tag === 'select' || SELECT_ROLES.has(role)) return 'select';
   if (tag === 'a' || tag === 'button' || CLICKABLE_ROLES.has(role)) {
     return 'clickable';
   }
@@ -205,6 +208,7 @@ export interface BrowserDoDeps {
   press?: typeof pressBrowserKey;
   scroll?: typeof scrollBrowserPane;
   wait?: typeof waitForBrowser;
+  select?: typeof selectBrowserOption;
   settle?: (ms: number) => Promise<void>;
 }
 
@@ -215,7 +219,9 @@ function buildQuestions(
   clickables: IndexedElement[],
   textfields: IndexedElement[],
   valueLabels: string[],
+  selects: IndexedElement[] = [],
 ): Record<string, JevQuestion> {
+  const canSelect = selects.length > 0 && valueLabels.length > 0;
   const questions: Record<string, JevQuestion> = {
     operation: {
       type: 'choice',
@@ -224,6 +230,9 @@ function buildQuestions(
       criteria: {
         CLICK: 'click a button, link, checkbox, radio or option',
         TYPE_TEXT: 'type one of the provided values into a text field',
+        ...(canSelect
+          ? { SELECT_OPTION: 'choose one of the provided values in a dropdown or select' }
+          : {}),
         PRESS_ENTER: 'press Enter in the focused field to submit',
         SCROLL_DOWN: 'scroll down to reveal more of the page',
         SCROLL_UP: 'scroll up',
@@ -276,10 +285,20 @@ function buildQuestions(
       },
     };
   }
+  if (canSelect) {
+    questions.select_target = {
+      type: 'choice',
+      instructions: 'Which dropdown should receive the chosen value?',
+      criteria: {
+        ...Object.fromEntries(selects.map((el) => [`e${el.i}`, el.name || el.role])),
+        none: 'no listed dropdown should be changed now',
+      },
+    };
+  }
   if (valueLabels.length > 0) {
     questions.type_value = {
       type: 'choice',
-      instructions: 'Which provided value should be typed?',
+      instructions: 'Which provided value should be typed or chosen?',
       criteria: {
         ...Object.fromEntries(valueLabels.map((l) => [l, `the value labelled "${l}"`])),
         none: 'no provided value should be typed now',
@@ -307,6 +326,7 @@ async function runBrowserDo(
   const press = deps.press ?? pressBrowserKey;
   const scroll = deps.scroll ?? scrollBrowserPane;
   const wait = deps.wait ?? waitForBrowser;
+  const select = deps.select ?? selectBrowserOption;
   const settle = deps.settle ?? defaultSettle;
 
   const paneId = args.paneId;
@@ -374,10 +394,12 @@ async function runBrowserDo(
     const table = buildElementTable(read);
     tableHashes.push(tableHash(table));
     if (tableHashes.length > 3) tableHashes.shift();
-    const clickables = table.filter((el) => el.kind === 'clickable');
+    const selects = table.filter((el) => el.kind === 'select');
+    // A combobox can also just be clicked open (search-as-you-type pickers).
+    const clickables = table.filter((el) => el.kind === 'clickable' || el.kind === 'select');
     const textfields = table.filter((el) => el.kind === 'textfield');
 
-    const questions = buildQuestions(clickables, textfields, valueLabels);
+    const questions = buildQuestions(clickables, textfields, valueLabels, selects);
     const result: JevResult | null = await judgeFn({
       state: {
         goal: args.goal,
@@ -416,6 +438,7 @@ async function runBrowserDo(
     const clickTarget = choiceAnswer(result.answers, 'click_target');
     const typeTarget = choiceAnswer(result.answers, 'type_target');
     const typeValue = choiceAnswer(result.answers, 'type_value');
+    const selectTarget = choiceAnswer(result.answers, 'select_target');
     const irreversible = noulAnswer(result.answers, 'irreversible');
     const done = noulAnswer(result.answers, 'done');
     const blocked = noulAnswer(result.answers, 'blocked');
@@ -430,6 +453,7 @@ async function runBrowserDo(
     };
     const clickEl = resolveTarget(clickTarget, clickables);
     const typeEl = resolveTarget(typeTarget, textfields);
+    const selectEl = resolveTarget(selectTarget, selects);
     const valueLabel =
       typeValue && typeValue.choice !== 'none' ? typeValue.choice : null;
 
@@ -476,6 +500,9 @@ async function runBrowserDo(
       (operation === 'CLICK' && (clickTarget?.confidence ?? 0) < DECISION_MIN_CONFIDENCE) ||
       (operation === 'TYPE_TEXT' &&
         ((typeTarget?.confidence ?? 0) < DECISION_MIN_CONFIDENCE ||
+          (typeValue?.confidence ?? 0) < DECISION_MIN_CONFIDENCE)) ||
+      (operation === 'SELECT_OPTION' &&
+        ((selectTarget?.confidence ?? 0) < DECISION_MIN_CONFIDENCE ||
           (typeValue?.confidence ?? 0) < DECISION_MIN_CONFIDENCE));
     if (unsureTarget) return finish('uncertain', { elements: table });
     const irreversibleByName =
@@ -487,6 +514,10 @@ async function runBrowserDo(
       }
       if (operation === 'TYPE_TEXT' && typeEl) {
         proposed.target = { ref: typeEl.ref, name: typeEl.name };
+        if (valueLabel) proposed.valueLabel = valueLabel;
+      }
+      if (operation === 'SELECT_OPTION' && selectEl) {
+        proposed.target = { ref: selectEl.ref, name: selectEl.name };
         if (valueLabel) proposed.valueLabel = valueLabel;
       }
       return finish('needs_confirmation', {
@@ -532,6 +563,20 @@ async function runBrowserDo(
             value: valueLabel,
             url: read.url,
           });
+          break;
+        }
+        case 'SELECT_OPTION': {
+          if (!selectEl || !valueLabel || !(valueLabel in values)) {
+            return finish('uncertain', { elements: table });
+          }
+          const chosen = await select(paneId, scope, selectEl.ref, { option: values[valueLabel] });
+          if (!chosen.selected) {
+            return finish('uncertain', {
+              elements: table,
+              ...(chosen.candidates ? { candidates: chosen.candidates } : {}),
+            });
+          }
+          history.push({ operation, target: selectEl.name, value: valueLabel, url: read.url });
           break;
         }
         case 'PRESS_ENTER': {

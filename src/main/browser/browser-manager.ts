@@ -96,6 +96,7 @@ import {
   browserPageReadResultSchema,
   browserPressResultSchema,
   browserScrollResultSchema,
+  browserSelectResultSchema,
   browserWaitResultSchema,
 } from './browser-automation-schema';
 import { renderBrowserOutline } from './browser-outline';
@@ -2810,6 +2811,103 @@ export async function clickBrowserElement(
       resolvedBy,
       ...(confidence !== undefined ? { confidence } : {}),
     },
+    options,
+  );
+}
+
+/** What to choose: a visible option label, an option value or its index. */
+export interface BrowserSelectChoice {
+  option?: string;
+  value?: string;
+  index?: number;
+}
+
+export interface BrowserSelectResult {
+  paneId: string;
+  selected: boolean;
+  via?: 'native-select' | 'aria-listbox';
+  option?: { label: string; index?: number };
+  ambiguous?: boolean;
+  candidates?: BrowserFindMatch[];
+  resolvedBy?: 'ref' | 'text' | 'jev';
+  after?: BrowserAfterState;
+  changed?: BrowserChanged;
+  errors?: BrowserErrorReport;
+  judgment?: BrowserPageJudgment | null;
+  judgmentSkipped?: BrowserJudgmentSkipped;
+  page?: (BrowserPageReadResult | BrowserCompactPageResult) & { paneId: string };
+}
+
+const ARIA_OPTION_ROLES = new Set([
+  'option', 'menuitem', 'menuitemradio', 'menuitemcheckbox', 'treeitem',
+]);
+
+/**
+ * `nexus_browser_select`: a native `<select>` is set by the page primitive
+ * (label, value or index; input + change fire). A component-kit dropdown
+ * (Radix/shadcn Select, combobox, listbox) has no `<select>`: it is opened
+ * with a real click and the option with that accessible name is clicked —
+ * one clear option only, otherwise the candidates come back and nothing else
+ * is clicked.
+ */
+export async function selectBrowserOption(
+  paneId: string,
+  scope: ProjectExecutionScope,
+  target: BrowserActionTarget,
+  choice: BrowserSelectChoice,
+  options?: BrowserActionOptions,
+): Promise<BrowserSelectResult> {
+  const entry = withEntry(paneId, scope);
+  let ref: string;
+  let resolvedBy: 'ref' | 'text' | 'jev' = 'ref';
+  if (typeof target === 'string') {
+    ref = target;
+  } else {
+    const resolution = await resolveBrowserElementByText(entry, scope, target.text, options);
+    if (!resolution.ok) {
+      return { paneId, selected: false, ambiguous: true, candidates: resolution.candidates };
+    }
+    ref = resolution.match.ref;
+    resolvedBy = resolution.resolvedBy;
+  }
+  const before = snapshotBrowserBefore(entry);
+  try {
+    const result = browserSelectResultSchema.parse(
+      await runBrowserAutomationForPane(paneId, scope, 'select', { ref, ...choice }),
+    );
+    return attachAfterAndMaybePage(
+      entry,
+      before,
+      { paneId, selected: true, via: 'native-select' as const, option: result.option, resolvedBy },
+      options,
+    );
+  } catch (error) {
+    if (!(error instanceof Error) || !/not a native select/.test(error.message)) throw error;
+  }
+  if (typeof choice.option !== 'string' || !choice.option.trim()) {
+    throw new Error('a component dropdown is chosen by its option label (option), not value/index');
+  }
+  // Open it like a person, then look for the option it rendered.
+  await clickBrowserElement(paneId, scope, ref);
+  const find = options?.deps?.find ?? findBrowserElements;
+  const { matches } = await find(paneId, scope, { text: choice.option, limit: 25 });
+  const pool = matches.filter((match) => ARIA_OPTION_ROLES.has(match.role));
+  const exact = pool.filter((match) => match.score >= 1);
+  const pick = exact.length === 1 ? exact[0] : pool.length === 1 && pool[0]!.score >= 0.75 ? pool[0] : undefined;
+  if (!pick) {
+    return {
+      paneId,
+      selected: false,
+      ambiguous: pool.length > 1,
+      candidates: pool.slice(0, BROWSER_ACTION_MAX_CANDIDATES),
+      resolvedBy,
+    };
+  }
+  await clickBrowserElement(paneId, scope, pick.ref);
+  return attachAfterAndMaybePage(
+    entry,
+    before,
+    { paneId, selected: true, via: 'aria-listbox' as const, option: { label: pick.name }, resolvedBy },
     options,
   );
 }

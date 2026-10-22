@@ -137,6 +137,28 @@ const browserFillSchema = z
     }
   });
 
+const browserSelectSchema = z
+  .object({
+    paneId,
+    ref: browserRef.optional(),
+    label: z.string().min(1).max(200).optional(),
+    option: z.string().min(1).max(200).optional(),
+    value: z.string().max(1_000).optional(),
+    index: z.number().int().min(0).max(100_000).optional(),
+    read: browserInlineReadSchema,
+    judge: browserJudgeArg,
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if ((value.ref === undefined) === (value.label === undefined)) {
+      ctx.addIssue({ code: 'custom', message: 'provide exactly one of ref or label' });
+    }
+    const choices = [value.option, value.value, value.index].filter((item) => item !== undefined);
+    if (choices.length !== 1) {
+      ctx.addIssue({ code: 'custom', message: 'provide exactly one of option, value or index' });
+    }
+  });
+
 const browserExtractFieldSchema = z
   .object({
     name: z.string().min(1).max(64),
@@ -463,6 +485,7 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
   ['browser_inspect', z.object({ paneId, ref: browserRef }).strict()],
   ['browser_click', browserClickSchema],
   ['browser_fill', browserFillSchema],
+  ['browser_select', browserSelectSchema],
   ['browser_wait', browserWaitSchema],
   [
     'browser_scroll',

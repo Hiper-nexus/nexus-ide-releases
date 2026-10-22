@@ -362,6 +362,8 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   // uma confirmação por objetivo, mesma classe de efeito.
   'browser_do',
   'browser_fill',
+  // Choosing an option is the same page write as click/fill.
+  'browser_select',
   // computer_do executa as mesmas primitivas de escrita (System Events) —
   // uma confirmação por objetivo, mesma classe de efeito.
   'computer_do',
