@@ -286,7 +286,7 @@ vi.mock('./mission-pane-authority', () => ({
 vi.mock('./legacy-handoff', async original => ({ ...await original<typeof import('./legacy-handoff')>(), LEGACY_MARKER: 'marker' }));
 vi.mock('./ponytail', () => ({ PONYTAIL_RULES: '' }));
 vi.mock('./engineering-charter', () => ({ ENGINEERING_CHARTER: '' }));
-vi.mock('./design-charter', () => ({ DESIGN_CHARTER: '' }));
+vi.mock('./design-charter', () => ({ DESIGN_CHARTER: '' , UI_KIT_BRIEF_LINE: '[UI-KIT]' }));
 vi.mock('./agent-identity-spawn', () => ({
   issueAgentIdentityBestEffort: stubs.issueAgentIdentityBestEffort,
 }));

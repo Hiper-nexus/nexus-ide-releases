@@ -1,7 +1,12 @@
 import { expect, test, vi } from 'vitest';
 vi.mock('../persistence/settings-store', () => ({ getOrchSettings: () => ({ agentTransport: 'acp', acpHarnessId: 'fixture' }) }));
 vi.mock('../acp/harness-store', () => ({ getAcpHarness: () => ({ id: 'fixture', command: '/never-started', args: [], env: {} }) }));
-vi.mock('./store-util', () => ({ makeId: (prefix: string) => `${prefix}-fixture` }));
+// Partial: the rest of store-util (ChangeHub…) is loaded by modules further
+// down the import graph, and a whole-module stub broke them at import time.
+vi.mock('./store-util', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./store-util')>()),
+  makeId: (prefix: string) => `${prefix}-fixture`,
+}));
 vi.mock('./workspace-path', () => ({ resolveCwdForScope: () => process.cwd() }));
 vi.mock('./gate', () => ({ mintToken: vi.fn(), releaseSessionByToken: vi.fn() }));
 vi.mock('./agent-identity-spawn', () => ({ issueAgentIdentityBestEffort: vi.fn() }));
