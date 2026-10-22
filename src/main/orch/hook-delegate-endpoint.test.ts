@@ -134,7 +134,8 @@ describe('hook /hook/delegate', () => {
         suggestSkill: vi.fn(async () => ({ name: 'bmad-create-prd', pkg: 'project', confidence: 0.65 })),
       },
     );
-    expect(JSON.stringify(out.payload)).not.toContain('bmad-create-prd');
+    // PRD é escrita, não código: nem skill fraca nem o lembrete da ponytail.
+    expect(out.payload).toEqual({});
   });
 
   it('F-1309: sem sugestão e com sinal de degradação, o aviso aparece uma vez por sessão', async () => {
@@ -287,6 +288,33 @@ describe('hook /hook/delegate', () => {
       __resetLeanRemindersForTests();
       expect((await handleHookDelegateRequest(operator, { prompt: NOT_CODE }, { advise: vi.fn(async () => null) })).payload)
         .toEqual({});
+    });
+
+    // Revisão do PR #164: "escreva", "crie" e "ajuste" também são escrita de
+    // texto. Sem conselho do Jev, o verbo só conta com contexto de código; em
+    // inglês, "add/create/delete/remove" entram junto do português.
+    it.each([
+      'escreva o PRD do checkout',
+      'crie um resumo da reunião de ontem',
+      'ajuste o texto do e-mail para o cliente',
+      'remove the duplicate paragraph from the announcement',
+    ])('sem conselho do Jev, escrita que não é código não recebe o lembrete: %s', async (prompt) => {
+      __resetLeanRemindersForTests();
+      expect(JSON.stringify((await handleHookDelegateRequest(operator, { prompt }, { advise: vi.fn(async () => null) })).payload))
+        .not.toContain('ponytail');
+    });
+
+    it.each([
+      'add validation to the signup form',
+      'create a component for the pricing table',
+      'delete this handler from `routes.ts`',
+      'corrija o bug do login',
+      'adicione um endpoint de exportação na API',
+      'refatore o checkout',
+    ])('sem conselho do Jev, pedido de código recebe o lembrete: %s', async (prompt) => {
+      __resetLeanRemindersForTests();
+      const out = await handleHookDelegateRequest(operator, { prompt }, { advise: vi.fn(async () => null) });
+      expect(JSON.stringify(out.payload)).toContain('ponytail');
     });
 
     it('delegação e lembrete saem juntos no mesmo additionalContext', async () => {

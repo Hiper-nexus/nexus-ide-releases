@@ -53,8 +53,8 @@ Nexus ships the ruleset, not the upstream hooks and \`/ponytail\` commands.
  * Vendored verbatim from mattpocock/skills — skills/productivity/grilling
  * (MIT, Copyright (c) 2026 Matt Pocock). See
  * third_party/licenses/mattpocock-skills-MIT.txt. Usada pelo squad de
- * planejamento: fatos vêm do código, decisões vêm do usuário, uma pergunta
- * por vez.
+ * planejamento: fatos vêm do código, decisões vêm do usuário, perguntadas em
+ * rodadas pela fronteira da árvore de decisões (upstream de 21/10/2026).
  */
 const GENERATED_GRILLING_SKILL = `---
 name: grilling
