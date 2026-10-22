@@ -801,3 +801,55 @@ describe('F-1143 — operator MCP adoption metadata publication', () => {
       expect(snapshot.role).toBeUndefined();
     });
 });
+
+// Revisão 22/10 (F-168): com a janela noutro projeto o renderer não monta
+// navegador novo para este, e a missão do projeto fora da tela não conseguia
+// capturar nada para o portão visual. O navegador que o PRÓPRIO agente abriu
+// segue vivo, estacionado: ele volta para o agente em vez da recusa.
+describe('review 22/10 (F-168) — off-screen project: the agent gets its parked browser back', () => {
+  const onScreen = { ...scope, projectId: 'project-on-screen', checkoutId: 'checkout-on-screen', rootRealPath: '/on-screen' };
+  async function openBrowser(caller: CallerCtx, wc: WebContents, agentName: string): Promise<string> {
+    const pending = registry.requestBrowserPane({ url: 'about:blank', scope, role: 'worker',
+      missionId: caller.missionId, agentName, caller });
+    const request = vi.mocked(wc.send).mock.calls.at(-1)![1] as { requestId: string; paneId: string };
+    registry.resolveBrowserOpen({ requestId: request.requestId, paneId: request.paneId, ok: true }, wc);
+    await expect(pending).resolves.toMatchObject({ ok: true, paneId: request.paneId });
+    return request.paneId;
+  }
+  function agentPane(id: string) {
+    return { paneId: `pane-${id}`, sessionId: id, kind: 'cli-agent' as const, title: id, adapterId: 'provider', accountId: 'account' };
+  }
+  function showOtherProject(wc: WebContents): void {
+    facts.rendererScopes.set(wc.id, onScreen);
+    facts.scopeChange!(wc, scope, onScreen);
+  }
+
+  it("hands the same agent's parked browser back instead of refusing", async () => {
+    const wc = owner(1);
+    const worker = renderSession(wc, 'worker');
+    const paneId = await openBrowser(worker, wc, 'worker');
+    registry.syncPanes([agentPane('worker'), { paneId, sessionId: null, kind: 'browser', title: 'preview' }], wc);
+    showOtherProject(wc);
+    vi.mocked(wc.send).mockClear();
+    await expect(registry.requestBrowserPane({ url: 'about:blank', scope, role: 'worker', missionId: 'mission',
+      agentName: 'worker', caller: worker })).resolves.toMatchObject({ ok: true, paneId });
+    // Nothing is asked of the renderer: it shows another project.
+    expect(wc.send).not.toHaveBeenCalled();
+  });
+
+  it("never hands over another agent's tab, and keeps the refusal with a way out when there is none", async () => {
+    const wc = owner(1);
+    const opener = renderSession(wc, 'worker-a');
+    const other = renderSession(wc, 'worker-b');
+    const paneId = await openBrowser(opener, wc, 'worker-a');
+    registry.syncPanes([agentPane('worker-a'), agentPane('worker-b'),
+      { paneId, sessionId: null, kind: 'browser', title: 'preview' },
+      { paneId: 'browser-operator', sessionId: null, kind: 'browser', title: 'operator tab' }], wc);
+    showOtherProject(wc);
+    const refused = await registry.requestBrowserPane({ url: 'about:blank', scope, role: 'worker',
+      missionId: 'mission', agentName: 'worker-b', caller: other });
+    expect(refused).toMatchObject({ ok: false });
+    expect(refused.paneId).toBeUndefined();
+    expect(refused.error).toMatch(/another project/);
+  });
+});
