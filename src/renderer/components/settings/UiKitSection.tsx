@@ -139,8 +139,14 @@ export function UiKitSection() {
   async function activateLicense() {
     setBusy('license');
     try {
-      await window.nexus.uiKit.license({ action: 'activate' });
-      await refreshStatus();
+      const view = await window.nexus.uiKit.license({ action: 'activate' });
+      setStatus((prev) => (prev ? { ...prev, license: view } : prev));
+      // Same rule as saving: on failure the answer from Main is the last word.
+      // The activation refuses for LOCAL reasons — the native licence file is
+      // unreadable, belongs to this machine, or cannot be written — and the
+      // refresh replaced that with the vendor's generic status, so the
+      // operator could not tell what to fix.
+      if (view.state === 'active') await refreshStatus();
     } finally {
       setBusy(null);
     }

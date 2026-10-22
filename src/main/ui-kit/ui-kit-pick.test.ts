@@ -5,6 +5,7 @@ import {
   candidateNeedsLicense,
   pickUiKit,
   pickUiKitByHeuristic,
+  taskItemAffinity,
   taskLooksLikeUiWork,
   type UiKitCandidate,
   type UiKitPickDeps,
@@ -381,6 +382,43 @@ describe('the heuristic answers a generic task', () => {
   it('answers nothing when there is nothing to answer with', () => {
     const result = pickUiKitByHeuristic({ task: 'build a dashboard', candidates: [] });
 
+    expect(result.item).toBeNull();
+  });
+});
+
+describe('affinity, not catalogue order', () => {
+  const COARSE = [
+    { kit: 'boardui' as const, slug: 'tree-view', label: 'Tree view', category: 'base', tier: 'free' as const },
+    { kit: 'boardui' as const, slug: 'stat-cards', label: 'Stat cards', category: 'base', tier: 'free' as const },
+    { kit: 'boardui' as const, slug: 'button', label: 'Button', category: 'base', tier: 'free' as const },
+  ];
+
+  it('reads a concept the catalogue never spells out', () => {
+    // The live BoardUI list has no slug or category carrying "dashboard", so
+    // literal overlap was zero for every item.
+    expect(taskItemAffinity('monte um painel', COARSE[1]!)).toBeGreaterThan(0);
+    expect(taskItemAffinity('monte um painel', COARSE[0]!)).toBe(0);
+    expect(taskItemAffinity('build a dashboard', COARSE[1]!)).toBeGreaterThan(0);
+  });
+
+  it('does not install the first item of a coarse catalogue', () => {
+    // `tree-view` came first and the fallback took it blindly: a tree view
+    // installed for a dashboard.
+    const result = pickUiKitByHeuristic({
+      task: 'build a dashboard for the admin area',
+      candidates: COARSE,
+    });
+
+    expect(result.item?.slug).toBe('stat-cards');
+  });
+
+  it('answers NO item when nothing has any affinity', () => {
+    const result = pickUiKitByHeuristic({
+      task: 'deixe a interface mais bonita',
+      candidates: COARSE,
+    });
+
+    expect(result.needsKit).toBe(true);
     expect(result.item).toBeNull();
   });
 });

@@ -396,8 +396,8 @@ export function resolveRegistryAuthContract(input: {
   //   - a token is being typed NOW: the operator chose that destination;
   //   - the URL is EXACTLY the one already stored: the credential already
   //     goes there, and this is the re-save that must not drop its auth;
-  //   - the namespace is a preset and the URL is on the preset's own HOST:
-  //     the only URL Nexus itself vouches for.
+  //   - the namespace is a preset and the URL is EXACTLY the preset's: the
+  //     only URL Nexus itself vouches for.
   //
   // Each piece of this gate was a separate leak, found one review round
   // apart, because the check used to sit in the middle of the shape decision
@@ -410,16 +410,20 @@ export function resolveRegistryAuthContract(input: {
   // Nothing is deleted from the vault to achieve this (the operator asked that
   // their credentials not be removed): with no contract the token is
   // unreachable rather than gone.
+  // The WHOLE preset URL, not its host. I had compared hosts, reasoning that
+  // the credential leaves to a host and the vendor already has it — but a
+  // vendor can serve someone else's content at another path on the same host,
+  // and the operator authorized this key for the URL they typed, not for the
+  // host. `operatorTokenForRegistry` already demanded the exact URL for the
+  // bundled key; this makes the rule one rule.
   const known = findKnownRegistry(input.namespace);
-  const atPresetHost =
-    known !== null &&
-    (input.url === undefined ||
-      hostOfRegistryUrl(known.url) === hostOfRegistryUrl(input.url));
+  const atPresetUrl =
+    known !== null && (input.url === undefined || known.url === input.url);
   // The whole URL, not the host: a different path on the same host is a
   // different registry, and the stored SHAPE (a vendor's own header name) was
   // not agreed for it. The operator retypes the token, and the panel says so.
   const sameStoredUrl = input.storedUrl !== undefined && input.storedUrl === input.url;
-  if (!input.hasToken && !sameStoredUrl && !atPresetHost) return undefined;
+  if (!input.hasToken && !sameStoredUrl && !atPresetUrl) return undefined;
 
   if (input.declared) return input.declared;
   if (input.stored && sameStoredUrl) return input.stored;

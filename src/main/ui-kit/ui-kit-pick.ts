@@ -109,6 +109,92 @@ const SHADCN_WORDS = [
   'navbar', 'breadcrumb', 'pagination', 'theme', 'tema', 'registry',
 ];
 
+/**
+ * What a task WORD means in a catalogue's vocabulary.
+ *
+ * Literal overlap is not enough: the live BoardUI list has no slug or category
+ * carrying the word "dashboard", so "build a dashboard" matched nothing at
+ * all, every candidate fell into the category spread, and the no-Jev path then
+ * took whatever happened to be first — `tree-view` for a dashboard. A
+ * heuristic is allowed a little domain knowledge; what it is not allowed is to
+ * pretend an arbitrary pick was a ranked one.
+ */
+const TASK_CONCEPTS: readonly (readonly [string, readonly string[]])[] = [
+  ['dashboard', ['stat', 'chart', 'metric', 'kpi', 'revenue', 'analytic', 'overview']],
+  ['painel', ['stat', 'chart', 'metric', 'kpi', 'revenue', 'analytic', 'overview']],
+  ['analytics', ['chart', 'stat', 'metric', 'graph']],
+  ['grafico', ['chart', 'graph', 'spark']],
+  ['gráfico', ['chart', 'graph', 'spark']],
+  ['chart', ['chart', 'graph', 'spark']],
+  ['receita', ['revenue', 'sales', 'chart']],
+  ['revenue', ['revenue', 'sales', 'chart']],
+  ['login', ['login', 'auth', 'sign', 'password', 'credential']],
+  ['entrar', ['login', 'auth', 'sign']],
+  ['cadastro', ['signup', 'register', 'form', 'auth']],
+  ['signup', ['signup', 'register', 'form']],
+  ['form', ['form', 'input', 'field', 'select', 'checkbox']],
+  ['formulario', ['form', 'input', 'field']],
+  ['formulário', ['form', 'input', 'field']],
+  ['tabela', ['table', 'grid', 'data']],
+  ['table', ['table', 'grid', 'data']],
+  ['chat', ['chat', 'composer', 'message', 'thread', 'prompt']],
+  ['agente', ['agent', 'chat', 'composer', 'thinking']],
+  ['agent', ['agent', 'chat', 'composer', 'thinking']],
+  ['calendario', ['calendar', 'date', 'schedule']],
+  ['calendário', ['calendar', 'date', 'schedule']],
+  ['calendar', ['calendar', 'date', 'schedule']],
+  ['kanban', ['board', 'kanban', 'task', 'column']],
+  ['tarefa', ['task', 'todo', 'board']],
+  ['sidebar', ['sidebar', 'nav', 'menu']],
+  ['menu', ['menu', 'nav', 'dropdown', 'sidebar']],
+  ['landing', ['hero', 'pricing', 'feature', 'cta', 'marketing']],
+  ['preco', ['pricing', 'price', 'plan']],
+  ['preço', ['pricing', 'price', 'plan']],
+  ['pricing', ['pricing', 'price', 'plan']],
+  ['checkout', ['checkout', 'payment', 'cart', 'order']],
+  ['onboarding', ['onboarding', 'step', 'wizard', 'questionnaire']],
+  ['perfil', ['profile', 'avatar', 'account', 'user']],
+  ['profile', ['profile', 'avatar', 'account', 'user']],
+  ['notificacao', ['notification', 'toast', 'alert', 'badge']],
+  ['notificação', ['notification', 'toast', 'alert', 'badge']],
+  ['configuracao', ['setting', 'preference', 'form', 'tabs']],
+  ['configuração', ['setting', 'preference', 'form', 'tabs']],
+  ['settings', ['setting', 'preference', 'form', 'tabs']],
+];
+
+/** Words worth matching on: shorter ones carry no signal. */
+const MIN_TASK_WORD = 3;
+
+export function taskAffinityWords(task: string): readonly string[] {
+  const words = new Set<string>();
+  for (const word of task.toLowerCase().split(/[^\p{L}\p{N}]+/u)) {
+    if (word.length >= MIN_TASK_WORD) words.add(word);
+  }
+  for (const [concept, expansions] of TASK_CONCEPTS) {
+    if (!words.has(concept)) continue;
+    for (const expansion of expansions) words.add(expansion);
+  }
+  return [...words];
+}
+
+/**
+ * How much an item answers a task: literal words plus the concepts they
+ * imply, over the slug, the label and the category. Zero means the heuristic
+ * has NO opinion about this item, and a zero-scoring item must never be
+ * presented as a ranked choice.
+ */
+export function taskItemAffinity(
+  task: string,
+  candidate: Pick<UiKitCandidate, 'slug' | 'label' | 'category'>,
+): number {
+  const haystack =
+    `${candidate.slug} ${candidate.label} ${candidate.category}`.toLowerCase();
+  return taskAffinityWords(task).reduce(
+    (total, word) => (haystack.includes(word) ? total + 1 : total),
+    0,
+  );
+}
+
 function normalize(text: string): string {
   return ` ${text.toLowerCase()} `;
 }
@@ -184,8 +270,29 @@ export function pickUiKitByHeuristic(
   // caller ranks candidates by relevance before handing them over, so the
   // FIRST candidate of the chosen kit is the ranked best guess, not an
   // arbitrary one.
-  const firstIn = (target: UiKitId): UiKitCandidate | null =>
-    request.candidates.find((entry) => entry.kit === target) ?? null;
+  //
+  // And "ranked" has to MEAN something: the catalogue's own categories are
+  // coarse ('base'), so a task whose words touch nothing left every candidate
+  // in the category spread and the first of that spread was arbitrary —
+  // `tree-view` installed for "build a dashboard". So the fallback takes the
+  // first candidate of the kit only when it has some affinity with the task;
+  // with none, the honest answer is no item, and the reason says so.
+  const firstIn = (target: UiKitId): UiKitCandidate | null => {
+    // The one with the MOST affinity, not the one that happens to be first:
+    // this must not depend on the caller having ranked the list, because when
+    // it does not, "first" is the vendor's catalogue order.
+    let best: UiKitCandidate | null = null;
+    let bestScore = 0;
+    for (const candidate of request.candidates) {
+      if (candidate.kit !== target) continue;
+      const score = taskItemAffinity(request.task, candidate);
+      if (score > bestScore) {
+        best = candidate;
+        bestScore = score;
+      }
+    }
+    return best;
+  };
 
   let best = matchIn(kit);
   if (!best) {

@@ -316,3 +316,16 @@ describe('rankForTask', () => {
     expect(ranked[0]?.category).toBe('base');
   });
 });
+
+describe('ranking reaches past the catalogue head on a coarse catalogue', () => {
+  it('puts a dashboard item first even when no slug says "dashboard"', () => {
+    const ranked = rankForTask('monte um painel com a receita do mês', [
+      { kit: 'boardui', slug: 'tree-view', label: 'Tree view', category: 'base', tier: 'free' },
+      { kit: 'boardui', slug: 'close-button', label: 'Close button', category: 'base', tier: 'free' },
+      { kit: 'boardui', slug: 'revenue-chart-card', label: 'Revenue chart card', category: 'base', tier: 'free' },
+      { kit: 'boardui', slug: 'stat-cards', label: 'Stat cards', category: 'base', tier: 'free' },
+    ]);
+
+    expect(['revenue-chart-card', 'stat-cards']).toContain(ranked[0]?.slug);
+  });
+});

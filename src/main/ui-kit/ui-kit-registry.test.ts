@@ -856,12 +856,26 @@ describe('the preset fallback is bounded by the preset host', () => {
     ).toBe('SHADCNUIKIT_REGISTRY_TOKEN');
   });
 
-  it('accepts another path on the preset host: same host, same credential scope', () => {
+  it('REFUSES another path on the preset host without a fresh token', () => {
+    // I had allowed this, reasoning that the token leaves to a host and the
+    // vendor already has it. A vendor can serve someone else's content at
+    // another path, and the operator authorized this key for the URL they
+    // typed — so the preset vouches for its own URL, nothing wider.
     expect(
       resolveRegistryAuthContract({
         namespace: '@shadcnuikit',
         url: 'https://shadcnuikit.com/registry/v2/{name}.json',
         hasToken: false,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('accepts that same path once a token is typed for it', () => {
+    expect(
+      resolveRegistryAuthContract({
+        namespace: '@shadcnuikit',
+        url: 'https://shadcnuikit.com/registry/v2/{name}.json',
+        hasToken: true,
       })?.envVar,
     ).toBe('SHADCNUIKIT_REGISTRY_TOKEN');
   });

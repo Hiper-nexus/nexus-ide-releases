@@ -887,3 +887,32 @@ it('keeps the vault reason when a licence key cannot be stored', async () => {
     act(() => root.unmount());
   }
 });
+
+it('keeps the reason an activation refused', async () => {
+  // The activation refuses for LOCAL reasons — the licence file is unreadable,
+  // belongs to this machine, or cannot be written — and the immediate refresh
+  // replaced that with the vendor's generic status.
+  api({
+    status: vi.fn().mockResolvedValue(
+      status({ license: { state: 'absent', stored: true, masked: '••••9999' } }),
+    ),
+    license: vi.fn().mockResolvedValue({
+      state: 'unknown',
+      stored: true,
+      masked: '••••9999',
+      detail: 'o license.json desta máquina não pôde ser lido',
+    }),
+  });
+  const { host, root } = await mount();
+  try {
+    const activate = [...host.querySelectorAll('button')].find((entry) =>
+      entry.textContent?.startsWith('Ativar'),
+    );
+    expect(activate).toBeDefined();
+    await act(async () => activate!.click());
+
+    expect(host.textContent).toMatch(/não pôde ser lido/);
+  } finally {
+    act(() => root.unmount());
+  }
+});

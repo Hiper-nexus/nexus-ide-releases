@@ -2,6 +2,7 @@ import { UI_KIT_IDS, type UiKitId } from './ui-kit-cli';
 import { liveCandidates } from './ui-kit-catalog';
 import {
   pickUiKit,
+  taskItemAffinity,
   type UiKitCandidate,
   type UiKitPickResult,
 } from './ui-kit-pick';
@@ -63,17 +64,6 @@ export function interleaveByKit(
   return out;
 }
 
-/** Words worth matching on: short ones carry no signal. */
-const MIN_TASK_WORD = 3;
-
-function taskWords(task: string): readonly string[] {
-  const seen = new Set<string>();
-  for (const word of task.toLowerCase().split(/[^a-z0-9]+/)) {
-    if (word.length >= MIN_TASK_WORD) seen.add(word);
-  }
-  return [...seen];
-}
-
 /**
  * Order one kit's catalogue by how much it answers the task.
  *
@@ -92,11 +82,10 @@ export function rankForTask(
   task: string,
   candidates: readonly UiKitCandidate[],
 ): readonly UiKitCandidate[] {
-  const words = taskWords(task);
-  const score = (candidate: UiKitCandidate): number => {
-    const haystack = `${candidate.slug} ${candidate.label} ${candidate.category}`.toLowerCase();
-    return words.reduce((total, word) => (haystack.includes(word) ? total + 1 : total), 0);
-  };
+  // ONE source for "does this item answer this task": the picker's fallback
+  // asks the same question before it trusts the head of this list.
+  const score = (candidate: UiKitCandidate): number =>
+    taskItemAffinity(task, candidate);
 
   const matched: UiKitCandidate[] = [];
   const byCategory = new Map<string, UiKitCandidate[]>();
