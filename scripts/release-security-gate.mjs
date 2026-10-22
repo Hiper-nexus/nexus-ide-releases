@@ -133,10 +133,15 @@ function writeJson(filePath, value) {
   return { bytes: Buffer.byteLength(content), sha256: sha256(content) };
 }
 
-function vulnerabilityTotal(audit) {
+function vulnerabilityTotal(audit, label = 'de produção') {
   const total = audit?.metadata?.vulnerabilities?.total;
   if (!Number.isSafeInteger(total) || total < 0) {
-    throw new Error('audit de produção inválido: total de vulnerabilidades ausente');
+    // NAMED, because this message is the first thing anyone debugging a
+    // blocked release reads: it said "de produção" for every audit, so a
+    // toolchain failure sent me looking at the wrong one.
+    throw new Error(
+      `audit ${label} inválido: total de vulnerabilidades ausente`,
+    );
   }
   return total;
 }
@@ -170,10 +175,53 @@ function npmVersion(root) {
   return result.stdout.trim();
 }
 
-function runAudit(runCommand, args, label) {
-  const result = runCommand(args);
-  const audit = parseJson(result.stdout, `audit ${label}`);
-  const total = vulnerabilityTotal(audit);
+/** Synchronous, because this whole gate is. */
+function sleepSync(ms) {
+  if (!(ms > 0)) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+export const AUDIT_ATTEMPTS = 3;
+export const AUDIT_RETRY_DELAY_MS = 2_000;
+
+/**
+ * Ask the registry for an audit, more than once.
+ *
+ * Measured on 21–22/10: npm's audit endpoints answer `400 Bad Request`
+ * INTERMITTENTLY — two release candidates died on it and the third probe got a
+ * normal report minutes later, from the same lockfile and the same pinned npm.
+ * A release gate that dies on one flaky request is not stricter, just more
+ * fragile: the retry asks again instead of deciding on a non-answer.
+ *
+ * It never softens the verdict. A report that ARRIVES and is dirty fails on
+ * the first attempt — retrying only ever happens when no report arrived.
+ */
+function attemptAudit(runCommand, args, sleep = sleepSync) {
+  let last = null;
+  for (let attempt = 1; attempt <= AUDIT_ATTEMPTS; attempt += 1) {
+    const result = runCommand(args);
+    const audit = parseJsonOrNull(result.stdout);
+    if (audit && typeof audit === 'object' && audit.metadata !== undefined) {
+      return { result, audit };
+    }
+    last = { result, audit };
+    if (attempt < AUDIT_ATTEMPTS) sleep(AUDIT_RETRY_DELAY_MS);
+  }
+  return last;
+}
+
+function parseJsonOrNull(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function runAudit(runCommand, args, label, sleep = sleepSync) {
+  const { result, audit: parsed } = attemptAudit(runCommand, args, sleep);
+  const audit = parsed ?? parseJson(result.stdout, `audit ${label}`);
+  const total = vulnerabilityTotal(audit, label);
   if (result.status !== 0 || total !== 0) {
     throw new Error(
       `release bloqueada: ${label} tem ${total} ` +
@@ -193,12 +241,26 @@ function runAudit(runCommand, args, label) {
  * registry's own error (`message` plus the `uri` it posted to) and no
  * `metadata`.
  */
-function auditEndpointAnswered(audit) {
-  if (!audit || typeof audit !== 'object') return true;
-  if (audit.metadata !== undefined) return true;
-  const message = typeof audit.message === 'string' ? audit.message : '';
-  const uri = typeof audit.uri === 'string' ? audit.uri : '';
-  return !(/\/-\/npm\/v1\/security\/audits/u.test(uri) || /audit/iu.test(message));
+function auditEndpointFailed(audit, result) {
+  // TWO conditions, because "no report" and "a report I cannot verify" must
+  // stay different things.
+  //
+  // (1) No `metadata` — every npm audit report carries it. (2) Evidence that
+  // something ERRORED: a non-zero exit, or the registry/endpoint named in the
+  // payload or on stderr. npm words that envelope differently per build (the
+  // pinned npm this gate bootstraps answered a shape my first predicate read
+  // as a report, so the gate failed again), hence the broad match on the
+  // second condition and the narrow invariant on the first.
+  //
+  // A malformed report with a clean exit and no error said anywhere stays a
+  // HARD failure: that is the "unverifiable file" this gate refuses to
+  // publish, and it has its own test.
+  if (!audit || typeof audit !== 'object' || audit.metadata !== undefined) return false;
+  if ((result?.status ?? 0) !== 0) return true;
+  const said = `${typeof audit.message === 'string' ? audit.message : ''} ${
+    typeof audit.uri === 'string' ? audit.uri : ''
+  } ${String(result?.stderr ?? '')}`;
+  return /audit|registry|endpoint/iu.test(said);
 }
 
 /**
@@ -210,13 +272,23 @@ function auditEndpointAnswered(audit) {
  * manifest (`productionAuditSource`) and into the stored report, never
  * silent, and it happens ONLY when the registry answered an error.
  */
-function auditProductionTree(runCommand, args, label) {
-  const result = runCommand(args);
-  const audit = parseJson(result.stdout, `audit ${label}`);
-  if (!auditEndpointAnswered(audit)) {
-    return { endpointUnavailable: true, detail: String(audit.message ?? '').slice(0, 300) };
+function auditProductionTree(runCommand, args, label, sleep = sleepSync) {
+  const { result, audit: retried } = attemptAudit(runCommand, args, sleep);
+  const audit = retried ?? parseJson(result.stdout, `audit ${label}`);
+  if (auditEndpointFailed(audit, result)) {
+    // Keep what the registry actually said, whatever its shape: it is the
+    // only diagnosis of why the production report is unavailable.
+    const detail =
+      typeof audit?.message === 'string' && audit.message.length > 0
+        ? audit.message
+        : JSON.stringify(audit ?? null);
+    return {
+      endpointUnavailable: true,
+      detail: detail.slice(0, 600),
+      stderr: String(result.stderr ?? '').trim().slice(0, 600),
+    };
   }
-  const total = vulnerabilityTotal(audit);
+  const total = vulnerabilityTotal(audit, label);
   if (result.status !== 0 || total !== 0) {
     throw new Error(
       `release bloqueada: ${label} tem ${total} ` +
@@ -282,10 +354,12 @@ export function buildReleaseSecurityArtifacts(options = {}) {
     throw new Error('security gate tag signature state is incoherent');
   }
 
+  const sleep = options.sleep ?? sleepSync;
   const productionAttempt = auditProductionTree(
     runCommand,
     ['audit', '--omit=dev', '--json'],
     'árvore de produção',
+    sleep,
   );
   const productionSbom = runSbom(runCommand, [
     'sbom',
@@ -298,6 +372,7 @@ export function buildReleaseSecurityArtifacts(options = {}) {
     runCommand,
     ['audit', '--json'],
     'build toolchain',
+    sleep,
   );
   const toolchainSbom = runSbom(runCommand, [
     'sbom',
@@ -318,6 +393,7 @@ export function buildReleaseSecurityArtifacts(options = {}) {
               'o endpoint de audit por árvore de produção respondeu erro; ' +
               'este relatório é o da ÁRVORE COMPLETA, superconjunto da de produção',
             registryDetail: productionAttempt.detail,
+            registryStderr: productionAttempt.stderr,
           },
         },
         total: toolchainAudit.total,
@@ -423,6 +499,7 @@ export function buildReleaseSecurityArtifactsWithPinnedNpm(options = {}) {
       };
     };
     return buildReleaseSecurityArtifacts({
+      ...(options.sleep ? { sleep: options.sleep } : {}),
       ...options,
       root,
       runCommand,
