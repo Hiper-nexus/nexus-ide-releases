@@ -1102,6 +1102,15 @@ interface PaneSpawnTiming {
   readonly meta: PaneSpawnTimingMeta;
 }
 
+/** F-215 + pool hit rate: what the isolated writer's worktree cost this spawn. */
+function recordIsolatedWriterTiming(spawnTiming: PaneSpawnTiming | undefined, writer: IsolatedWriterAllocation): void {
+  if (!spawnTiming) return;
+  spawnTiming.meta.pooled = writer.pooled === true;
+  if (!writer.materialize) return;
+  spawnTiming.meta.gitWorktreeMs = writer.materialize.gitWorktreeMs;
+  spawnTiming.meta.cowMs = writer.materialize.cowMs;
+}
+
 const paneSpawn: McpToolDef = {
   name: 'nexus_pane_spawn',
   description:
@@ -2152,11 +2161,7 @@ const paneSpawnAfterTabMission = {
               ...(baseRootRealPath ? { baseRootRealPath } : {}),
               ...(baseRef ? { baseRef } : {}),
             });
-            if (spawnTiming) spawnTiming.meta.pooled = isolatedWriter.pooled === true;
-            if (spawnTiming && isolatedWriter.materialize) {
-              spawnTiming.meta.gitWorktreeMs = isolatedWriter.materialize.gitWorktreeMs;
-              spawnTiming.meta.cowMs = isolatedWriter.materialize.cowMs;
-            }
+            recordIsolatedWriterTiming(spawnTiming, isolatedWriter);
           } catch (error) {
             // Pedido explícito (`true`) continua recusando: o chamador pediu
             // worktree. O automático é melhoria, não pré-condição — falhou, o
@@ -2574,11 +2579,7 @@ const paneSpawnAfterTabMission = {
                   ...(baseRootRealPath ? { baseRootRealPath } : {}),
                   ...(baseRef ? { baseRef } : {}),
                 });
-                if (spawnTiming) spawnTiming.meta.pooled = isolatedWriter.pooled === true;
-                if (spawnTiming && isolatedWriter.materialize) {
-                  spawnTiming.meta.gitWorktreeMs = isolatedWriter.materialize.gitWorktreeMs;
-                  spawnTiming.meta.cowMs = isolatedWriter.materialize.cowMs;
-                }
+                recordIsolatedWriterTiming(spawnTiming, isolatedWriter);
               } catch (error) {
                 // `true` explícito recusa (o chamador pediu worktree); o
                 // automático degrada para o checkout com o claim síncrono.
