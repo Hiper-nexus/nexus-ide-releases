@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { PONYTAIL_RULES } from './ponytail';
+import { stripAgentPluginAllowedTools } from './agent-plugin-skill';
 import { BUILTIN_BRIDGEMIND_SKILLS } from './bridge-mind-skills';
 import { IMPECCABLE_MANIFEST } from './impeccable-manifest';
 import { ARCHIFY_MANIFEST } from './archify-manifest';
@@ -315,6 +316,66 @@ export const BUNDLED_MANIFESTS: Record<string, Record<string, SkillAsset>> = {
   'stack-advisor': STACK_ADVISOR_MANIFEST,
   'nexus-video': NEXUS_VIDEO_MANIFEST,
 };
+
+/**
+ * `allowed-tools` no frontmatter PRÉ-APROVA chamadas e tira o PreToolUse da
+ * decisão — a mesma razão pela qual o caminho de agent-plugin o poda da cópia
+ * da sessão. Nenhuma skill embutida declarava a chave até o impeccable 4.7.0
+ * pedir `Bash(npx impeccable *)`, que roda um pacote baixado na hora.
+ *
+ * A poda acontece AQUI, uma vez, e não em cada caminho de entrega: são dois
+ * (o cache gerado do Main e a instalação na pasta do CLI) e manter os dois em
+ * paridade é como a chave escaparia. `BUNDLED_MANIFESTS` segue cru para o
+ * teste de contrato provar que o manifest bate byte a byte com o disco — a
+ * procedência continua verbatim; podada é só a cópia que chega ao pane.
+ *
+ * Reusa `stripAgentPluginAllowedTools`: é o parser YAML de verdade (pega a
+ * chave entre aspas, que uma regex deixaria passar) e já é a política do
+ * repositório. Nada sobrevive: um arquivo vendorado não prova a política
+ * nativa do usuário, e `gateToolName` recusa todo nome nativo como `Bash(…)`.
+ *
+ * Frontmatter que não parseia faz a skill sair do mapa (fail-closed, nunca
+ * entregue com a chave); `bundled-skills-contract.test.ts` exige as doze de
+ * volta, então isso quebra o CI em vez de sumir calado em produção.
+ */
+/** Só o bloco entre os `---` iniciais; o corpo pode citar a chave em prosa. */
+function frontmatterOf(content: string): string {
+  const fence = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)\s*(?:\r?\n|$)/u.exec(content);
+  return fence ? fence[1] : '';
+}
+
+function deliveredManifest(
+  manifest: Record<string, SkillAsset>,
+): Record<string, SkillAsset> | null {
+  const skill = manifest['SKILL.md'];
+  if (skill === undefined || skill.encoding !== 'utf8') return manifest;
+  // Detectar é de propósito mais largo que a sintaxe de chave do YAML (aspas,
+  // espaço à frente): um falso positivo só reserializa um frontmatter à toa,
+  // um falso negativo entregaria a chave. Quem REMOVE é o parser YAML abaixo.
+  if (!/^[ \t]*["']?allowed-tools["']?[ \t]*:/mu.test(frontmatterOf(skill.content))) {
+    return manifest;
+  }
+  let pruned: string;
+  try {
+    pruned = stripAgentPluginAllowedTools(skill.content);
+  } catch {
+    return null;
+  }
+  // Sem o digest de build: ele descreve os bytes CRUS, e mantê-lo faria o
+  // cache dar por verificado um arquivo que ainda traz a chave.
+  const { sha256: _sha256, size: _size, ...rest } = skill as SkillAsset &
+    Partial<AssetBuildDigest>;
+  return { ...manifest, 'SKILL.md': { ...rest, content: pruned } };
+}
+
+/** O que os panes recebem de fato: `BUNDLED_MANIFESTS` sem pré-aprovação. */
+export const DELIVERED_MANIFESTS: Record<string, Record<string, SkillAsset>> =
+  Object.fromEntries(
+    Object.entries(BUNDLED_MANIFESTS)
+      .map(([name, manifest]) => [name, deliveredManifest(manifest)] as const)
+      .filter((entry): entry is readonly [string, Record<string, SkillAsset>] =>
+        entry[1] !== null),
+  );
 
 /**
  * SKILL.md bodies written inline by this module (not manifest assets):
@@ -759,7 +820,7 @@ function writeGeneratedSkills(root: string): string {
   // Main-owned generated cache asset by asset: helper-only updates must reach
   // new sessions even when SKILL.md is unchanged, and files a previous bundle
   // dropped must not survive into a fresh provider install.
-  for (const [name, manifest] of Object.entries(BUNDLED_MANIFESTS)) {
+  for (const [name, manifest] of Object.entries(DELIVERED_MANIFESTS)) {
     materializeManifestSkill(root, name, manifest);
   }
   return root;
@@ -876,7 +937,7 @@ function bundledManifestFor(
   if (source.plugin) return undefined;
   const rel = path.relative(generatedRoot, source.dir);
   if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return undefined;
-  return BUNDLED_MANIFESTS[skillName(source.name)];
+  return DELIVERED_MANIFESTS[skillName(source.name)];
 }
 
 function copySkill(source: SkillSource, targetRoot: string): boolean {
