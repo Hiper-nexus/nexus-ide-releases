@@ -1,5 +1,13 @@
 vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import { AsyncProcessGitRunner } from '../runtime/git-command';
+import { configureWorktreeRuntimeRegistry, disposeWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
+import { missionExecutionScope, prepareMissionExecutionScope } from './mission-execution-scope';
 import type {
   MissionAttachmentSnapshot,
   MissionIntentContract,
@@ -396,6 +404,102 @@ describe('mission routing before approval', () => {
 });
 
 describe('production MissionEngine preparation ports', () => {
+  it.each(['plain', 'unborn', 'without-git-cli', 'unborn-without-git-cli'] as const)('starts and resumes a local %s project without requiring a worktree or changing its files', async mode => {
+    const directory = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-local-mission-')));
+    const root = path.join(directory, 'project');
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(root, 'draft.txt'), 'local work, not published');
+    const runGit = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: 'pipe' }).trim();
+    const initialized = mode.startsWith('unborn');
+    if (initialized) runGit('init', '-q');
+    const projectScope = { ...scope, rootRealPath: root };
+    const manager = new ProjectRuntimeManager({ baseDir: path.join(directory, 'runtime'), appVersion: 'test' });
+    configureWorktreeRuntimeRegistry(manager);
+    try {
+      if (mode.includes('without-git-cli')) vi.stubEnv('PATH', directory);
+      const store = createStoreHarness();
+      const preparation = createMissionEnginePreparationPorts({
+        scope: projectScope, missions: store.missions,
+        deps: { now: () => 200, routeIntent: async () => null,
+          persistRuntimeSquad: () => runtimeSquad, getSquad: () => runtimeSquad,
+          resolveRuntime: () => runtime, discardRuntimeSquad: () => true },
+      });
+      await preparation.arm(request);
+      const mission = store.current()!;
+      await expect(prepareMissionExecutionScope(projectScope, mission)).resolves.toBe(projectScope);
+      expect(mission.intentContract?.workspaceBinding?.spaceId).toBeUndefined();
+      mission.intentContract!.dispatchedAt = 200;
+      disposeWorktreeRuntimeRegistry();
+      configureWorktreeRuntimeRegistry(manager);
+      expect(missionExecutionScope(projectScope, mission)).toBe(projectScope);
+      expect(fs.readFileSync(path.join(root, 'draft.txt'), 'utf8')).toBe('local work, not published');
+      expect(fs.existsSync(path.join(root, '.git'))).toBe(initialized);
+      vi.unstubAllEnvs();
+      if (mode === 'unborn') expect(() => runGit('rev-parse', '--verify', 'HEAD')).toThrow();
+    } finally {
+      vi.unstubAllEnvs();
+      disposeWorktreeRuntimeRegistry();
+      manager.closeAll();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('does not persist under the old project when workspace selection yields during a Git probe', async () => {
+    const directory = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mission-scope-probe-')));
+    fs.mkdirSync(path.join(directory, '.git'));
+    let releaseProbe!: (result: { status: number; stdout: string; stderr: string }) => void;
+    let enteredProbe!: () => void;
+    const entered = new Promise<void>(resolve => { enteredProbe = resolve; });
+    const probe = vi.spyOn(AsyncProcessGitRunner.prototype, 'run').mockImplementationOnce(() => {
+      enteredProbe();
+      return new Promise(resolve => { releaseProbe = resolve; });
+    });
+    try {
+      const store = createStoreHarness();
+      const persistRuntimeSquad = vi.fn(() => runtimeSquad);
+      const preparation = createMissionEnginePreparationPorts({
+        scope: { ...scope, rootRealPath: directory }, missions: store.missions,
+        deps: { now: () => 200, routeIntent: async () => null,
+          persistRuntimeSquad, getSquad: () => runtimeSquad,
+          resolveRuntime: () => runtime, discardRuntimeSquad: () => true },
+      });
+      let current = true;
+      const armed = preparation.arm(request, () => { if (!current) throw new Error('renderer workspace changed'); });
+      await entered;
+      current = false;
+      releaseProbe({ status: 0, stdout: 'a'.repeat(40), stderr: '' });
+      await expect(armed).rejects.toThrow('renderer workspace changed');
+      expect(store.current()).toBeNull();
+      expect(persistRuntimeSquad).not.toHaveBeenCalled();
+    } finally {
+      probe.mockRestore();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps Git worktree binding for a committed local repository without a GitHub remote', async () => {
+    const directory = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-offline-mission-')));
+    try {
+      const runGit = (...args: string[]) => execFileSync('git', ['-C', directory, ...args], { encoding: 'utf8' }).trim();
+      runGit('init', '-q');
+      fs.writeFileSync(path.join(directory, 'draft.txt'), 'committed locally');
+      runGit('add', 'draft.txt');
+      runGit('-c', 'user.name=Nexus Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgSign=false', 'commit', '-qm', 'local');
+      const store = createStoreHarness();
+      const preparation = createMissionEnginePreparationPorts({
+        scope: { ...scope, rootRealPath: directory }, missions: store.missions,
+        deps: { now: () => 200, routeIntent: async () => null,
+          persistRuntimeSquad: () => runtimeSquad, getSquad: () => runtimeSquad,
+          resolveRuntime: () => runtime, discardRuntimeSquad: () => true },
+      });
+      await preparation.arm(request);
+      expect(store.current()?.intentContract?.workspaceBinding?.spaceId).toMatch(/^space-/);
+      expect(runGit('remote')).toBe('');
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('prepares, fences, and starts a real persisted mission without placeholder ports', async () => {
     const store = createStoreHarness();
     const persistRuntimeSquad = vi.fn(() => runtimeSquad);

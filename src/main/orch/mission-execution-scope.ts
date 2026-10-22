@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import type { Mission } from '../../shared/orch-types';
 import type { MissionWorkspaceBinding } from '../../shared/mission-intent';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { preparePaneSpaceWorktree, resolvePaneSpaceWorktree, sharedPaneSpaceId } from '../pty/pane-space-worktree';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
+import { AsyncProcessGitRunner, GitCommandError } from '../runtime/git-command';
 
 type ExecutionMission = Pick<Mission, 'intentContract'>;
 
@@ -22,6 +25,27 @@ export function missionExecutionBaseSha(scope: ProjectExecutionScope, mission: E
 
 export function newMissionWorkspaceBinding(): MissionWorkspaceBinding {
   return { version: 1, spaceId: `space-${randomUUID()}` };
+}
+
+/** Choose before review/persistence: ordinary folders use the existing project scope.
+ * Never infer this choice while resolving an already isolated mission's worktree.
+ */
+export async function prepareNewMissionWorkspaceBinding(scope: ProjectExecutionScope): Promise<MissionWorkspaceBinding | undefined> {
+  try {
+    // A repository in a parent directory is not authority to isolate this project.
+    await fs.lstat(path.join(scope.rootRealPath, '.git'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+  try {
+    const head = await new AsyncProcessGitRunner().run(scope.rootRealPath,
+      ['rev-parse', '--verify', 'HEAD^{commit}'], { allowFailure: true, timeoutMs: 5_000 });
+    return head.status === 0 ? newMissionWorkspaceBinding() : undefined;
+  } catch (error) {
+    if (error instanceof GitCommandError && (error.cause as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return undefined;
+    throw error;
+  }
 }
 
 export function adoptedMissionWorkspaceBinding(scope: ProjectExecutionScope, execution: ProjectExecutionScope, paneId: string): MissionWorkspaceBinding {

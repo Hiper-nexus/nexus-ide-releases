@@ -688,6 +688,12 @@ saber isto antes de mexer:
   conserva a pasta do pane escolhido. `mission-execution-scope.ts` resolve
   a pasta física; bancos/eventos/hub MCP continuam no scope de coordenação.
   Retomada não recria worktree perdida; fechar aba não remove WIP/branch.
+- F-1629 (22/10): missão nova em pasta sem `.git`, sem primeiro commit ou sem
+  Git instalado usa a própria pasta do projeto. A escolha é Main-owned, feita
+  antes da review/persistência; não inicializa Git nem exige remoto/GitHub.
+  Não promete worktree nesse caso. Repositório local com HEAD mantém a aba
+  isolada, mesmo sem remoto. Missão já vinculada a worktree continua recusando
+  perda/adulteração dessa pasta; nunca deduza fallback para ela na retomada.
 - F-1006: `OwnedAgentSessionInfo.scope` é a EXECUÇÃO (worktree do writer/aba);
   quando difere, `coordinationScope` traz o checkout dos stores. Quadro de
   entregas, conclusão da missão e qualquer `getProjectDomainStores` de uma

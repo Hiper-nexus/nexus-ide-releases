@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { adoptedMissionWorkspaceBinding, newMissionWorkspaceBinding } from './mission-execution-scope';
+import { adoptedMissionWorkspaceBinding, prepareNewMissionWorkspaceBinding } from './mission-execution-scope';
 import { sameProjectExecutionScope } from './project-domain-store-registry';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -553,7 +553,10 @@ export function createMissionEnginePreparationPorts(input: {
       // The classifier may yield while the operator switches projects. No
       // attachment, squad or mission may be persisted under the old authority.
       assertCurrentScope?.();
-      let workspaceBinding = newMissionWorkspaceBinding();
+      let workspaceBinding = parsedRequest.adoptOrchestratorPaneId
+        ? undefined
+        : await prepareNewMissionWorkspaceBinding(scope);
+      assertCurrentScope?.();
       if (parsedRequest.adoptOrchestratorPaneId) {
         const { getPaneAuthzInfo } = await import('./pane-registry');
         assertCurrentScope?.();
