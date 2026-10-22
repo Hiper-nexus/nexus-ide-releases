@@ -360,3 +360,14 @@ describe('fields advertised by the tool schema are accepted', () => {
     })).toEqual({ pattern: '**/*.ts', maxFiles: 500, maxDirectories: 50, timeoutMs: 2_000 });
   });
 });
+
+describe('browser history through navigate', () => {
+  it('accepts exactly one of url or history', () => {
+    expect(validateToolArgs('nexus_browser_navigate', { paneId: 'b', history: 'back' }))
+      .toEqual({ paneId: 'b', history: 'back' });
+    expect(() => validateToolArgs('nexus_browser_navigate', { paneId: 'b' })).toThrow();
+    expect(() => validateToolArgs('nexus_browser_navigate', { paneId: 'b', url: 'https://a.test', history: 'reload' }))
+      .toThrow();
+    expect(() => validateToolArgs('nexus_browser_navigate', { paneId: 'b', history: 'home' })).toThrow();
+  });
+});

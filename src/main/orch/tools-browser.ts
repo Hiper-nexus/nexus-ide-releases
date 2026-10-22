@@ -10,6 +10,7 @@ import {
   extractBrowserFields,
   fillBrowserElement,
   findBrowserElements,
+  historyBrowserPane,
   hoverBrowserElement,
   inspectBrowserElement,
   loadBrowser,
@@ -252,25 +253,44 @@ const browserNavigateTool: McpToolDef = {
   name: 'nexus_browser_navigate',
   requiresConfirm: true,
   description:
-    'Navigate an owned browser pane to a confirmed URL. Redirects and DNS are ' +
-    'revalidated independently. Every result carries after/changed and the ' +
-    'errors observed since the previous action.',
+    'Navigate an owned browser pane to a confirmed URL — or walk its history ' +
+    'with `history: "back" | "forward" | "reload"` instead of `url`. Redirects ' +
+    'and DNS are revalidated independently. Every result carries after/changed ' +
+    'and the errors observed since the previous action.',
   inputSchema: {
     type: 'object',
     properties: {
       paneId: { type: 'string' },
       url: { type: 'string' },
+      history: {
+        type: 'string',
+        enum: ['back', 'forward', 'reload'],
+        description: 'Instead of url: go back, forward or reload the current page.',
+      },
       read: READ_ARG_PROP,
       judge: JUDGE_ARG_PROP,
       device: DEVICE_ARG_PROP,
     },
-    required: ['paneId', 'url'],
+    required: ['paneId'],
   },
   handler: async (args, ctx, invocation) => {
     const paneId = requireStr(args, 'paneId');
     authorizePaneRef(ctx, paneId, 'write');
+    const history = str(args, 'history');
+    if (history === 'back' || history === 'forward' || history === 'reload') {
+      assertMcpInvocationCurrent(invocation);
+      return historyBrowserPane(paneId, ctx.scope, history, {
+        read: inlineReadArg(args),
+        judge: args.judge !== false,
+        sessionId: ctx.sessionId,
+        missionId: ctx.missionId,
+      });
+    }
+    if (typeof args.url !== 'string' || !args.url) {
+      throw new Error('missing required argument: url or history');
+    }
     const device = str(args, 'device');
-    return loadBrowser(paneId, requireStr(args, 'url'), {
+    return loadBrowser(paneId, args.url, {
       scope: ctx.scope,
       privateAccessConfirmed: false,
       signal: invocation?.signal,

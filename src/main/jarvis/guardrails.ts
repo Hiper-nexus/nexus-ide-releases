@@ -319,7 +319,10 @@ export function confirmationReason(
     return `open browser target ${safeBrowserTarget(args.url)}`;
   }
   if (toolName === 'nexus_browser_navigate' || toolName === 'browser_navigate') {
-    return `navigate browser pane ${String(args.paneId ?? 'unknown')} to ${safeBrowserTarget(args.url)}`;
+    const pane = String(args.paneId ?? 'unknown');
+    if (args.history === 'back' || args.history === 'forward') return `go ${args.history} in browser pane ${pane}`;
+    if (args.history === 'reload') return `reload browser pane ${pane}`;
+    return `navigate browser pane ${pane} to ${safeBrowserTarget(args.url)}`;
   }
   if (toolName === 'nexus_browser_click' || toolName === 'browser_click') {
     return `click element ${String(args.ref ?? 'unknown')} in browser pane ${String(args.paneId ?? 'unknown')}`;

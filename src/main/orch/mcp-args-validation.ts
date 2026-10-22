@@ -403,12 +403,18 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
     z
       .object({
         paneId,
-        url: z.string().min(1).max(4096),
+        url: z.string().min(1).max(4096).optional(),
+        history: z.enum(['back', 'forward', 'reload']).optional(),
         read: browserInlineReadSchema,
         judge: browserJudgeArg,
         device: z.enum(['mobile', 'tablet', 'desktop']).optional(),
       })
-      .strict(),
+      .strict()
+      .superRefine((value, ctx) => {
+        if ((value.url === undefined) === (value.history === undefined)) {
+          ctx.addIssue({ code: 'custom', message: 'provide exactly one of url or history' });
+        }
+      }),
   ],
   ['browser_screenshot', z.object({ paneId }).strict()],
   [

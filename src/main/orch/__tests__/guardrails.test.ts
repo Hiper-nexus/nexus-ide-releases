@@ -255,6 +255,13 @@ describe('confirmationReason', () => {
     expect(reason).not.toContain('sensitive-user-input');
   });
 
+  it('names the history step of a navigate instead of an unknown URL', () => {
+    expect(confirmationReason('nexus_browser_navigate', { paneId: 'browser-1', history: 'back' }))
+      .toBe('go back in browser pane browser-1');
+    expect(confirmationReason('nexus_browser_navigate', { paneId: 'browser-1', history: 'reload' }))
+      .toBe('reload browser pane browser-1');
+  });
+
   it('shows a bounded preview directory in the confirmation', () => {
     const reason = confirmationReason('nexus_preview_start', {
       dir: 'dist\n\u202etest',

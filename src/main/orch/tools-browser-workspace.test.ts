@@ -54,6 +54,7 @@ const stubs = vi.hoisted(() => ({
   assertBrowserAtExactUrl: vi.fn(),
   analyzeBrowserResponsive: vi.fn(async () => ({ paneId: 'browser-1', breakpoints: [] as unknown[] })),
   pressBrowserKey: vi.fn(async () => ({ paneId: 'browser-1' })),
+  historyBrowserPane: vi.fn(async () => ({ paneId: 'browser-1', navigated: true })),
   resolveReviewAuthority: vi.fn(() => null as {
     reviewSessionId: string;
     reviewerSessionId: string;
@@ -94,6 +95,7 @@ vi.mock('../browser/browser-manager', () => ({
   scrollBrowserPane: vi.fn(),
   pressBrowserKey: stubs.pressBrowserKey,
   hoverBrowserElement: vi.fn(),
+  historyBrowserPane: stubs.historyBrowserPane,
 }));
 vi.mock('../perf/perf-ipc', () => ({ collectPerfSnapshot: vi.fn() }));
 vi.mock('./pane-registry', () => ({
@@ -334,6 +336,17 @@ describe('preview tool workspace confinement', () => {
       tool.handler({ dir: '/Users/example' }, context),
     ).rejects.toThrow(/escapes workspace/);
     expect(stubs.startPreview).not.toHaveBeenCalled();
+  });
+
+  it('navigate walks the history (back/forward/reload) instead of a url', async () => {
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_navigate')!;
+    expect(tool.inputSchema.required).toEqual(['paneId']);
+    await tool.handler({ paneId: 'browser-1', history: 'back' }, context);
+    expect(authorizePaneRef).toHaveBeenLastCalledWith(context, 'browser-1', 'write');
+    expect(stubs.historyBrowserPane).toHaveBeenCalledWith('browser-1', scope, 'back',
+      expect.objectContaining({ judge: true }));
+    expect(stubs.loadBrowser).not.toHaveBeenCalled();
+    await expect(tool.handler({ paneId: 'browser-1' }, context)).rejects.toThrow(/url or history/);
   });
 
   it('opens with the same read/judge/device options as navigate', async () => {
