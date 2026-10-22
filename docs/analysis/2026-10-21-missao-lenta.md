@@ -377,3 +377,28 @@ Diagnóstico completo, com arquivo e linha, em
 `docs/analysis/2026-10-21-missao-lenta.md`. O que ainda não mudou está listado
 lá: a cerimônia da missão continua escalando por um eixo só, então uma landing
 page e uma refatoração de pagamentos ainda pagam o mesmo preço.
+
+
+## Roteiro da medição que falta (pane só × missão, com LLM real)
+
+Não foi feita aqui: exige duas execuções com modelo real, de horas. Para o
+número sair limpo quando for feita:
+
+1. **Mesmo pedido, escrito uma vez.** Use o texto exato nos dois lados, sem
+   reescrever entre eles. O da landing page desta sessão serve.
+2. **Mesma pasta de partida**, limpa, e a mesma CLI/modelo nos dois lados —
+   senão você mede a diferença de modelo, não a do motor.
+3. **Lado A, pane só:** abra um pane, cole o pedido, cronometre do Enter até
+   o agente dizer que terminou. Não intervenha; intervenção vira variável.
+4. **Lado B, missão:** mesmo pedido pelo "+ Pane", deixando virar missão.
+   Cronometre do Enter até `done` verificado.
+5. **O que anotar além do relógio**, porque é onde mora a explicação:
+   quantas rodadas de worker houve, quantas devoluções (`rework`), quantas
+   vezes a suíte mecânica rodou, e quanto levou o CICLO do revisor (do spawn
+   ao veredito consumido) — este último é o número que falta para fechar a
+   causa 1 deste documento.
+6. **Repita cada lado pelo menos duas vezes.** A variação entre execuções de
+   LLM é grande; uma medição só não distingue motor de sorte.
+
+O `main.trace.ndjson` já grava `pane-spawn-timing` e `agent-pty-exit` com
+duração — dá para extrair 5 sem cronômetro na mão.
