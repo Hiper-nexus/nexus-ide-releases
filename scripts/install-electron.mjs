@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const EXPECTED_ELECTRON_VERSION = '43.7.4';
+const EXPECTED_ELECTRON_VERSION = '43.8.3';
 const ELECTRON_INSTALL_ENV = new Set([
   'CI',
   'COMSPEC',

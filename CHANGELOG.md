@@ -1,10 +1,10 @@
 # Changelog
 
-## 0.76.410 — O navegador age e o kit acerta o pacote
+## 0.76.411 — O navegador age e o kit acerta o pacote
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
 
-A 0.76.407 continua Latest (pacote macOS: DMG e ZIP arm64) na canônica e no espelho; esta release não toma essa marca e não recebe arquivos macOS. No espelho, a 0.76.408 continua a publicação Windows (Setup, nupkg e RELEASES); esta release não anexa arquivos Linux a ela nem mexe nesses arquivos. A 0.76.409 é o pacote Linux anterior.
+A 0.76.407 continua Latest (pacote macOS: DMG e ZIP arm64) na canônica e no espelho; esta release não toma essa marca e não recebe arquivos macOS. No espelho, a 0.76.408 continua a publicação Windows (Setup, nupkg e RELEASES); esta release não anexa arquivos Linux a ela nem mexe nesses arquivos. A 0.76.410 foi tagueada e não publicada: o portão de segurança recusou a árvore (DOMPurify 3.4.16 na produção; Electron 43.7.4 e ip-address 10.7.2 na ferramenta). A 0.76.409 é o pacote Linux publicado anterior.
 
 No desktop Linux, em relação à 0.76.409:
 
@@ -12,10 +12,15 @@ No desktop Linux, em relação à 0.76.409:
 - **O navegador do agente age de verdade.** `alert`, `confirm` e `prompt` não travam mais o pane. Clique, hover e tecla viram input real pelo Main. A captura devolve a imagem e aceita página inteira, referência e tema. Shadow DOM aberto, iframe da mesma origem e `nexus_browser_select` entram. Navegar anda no histórico. Download recusado aparece nos erros. A espera reage a mutação do DOM. Compra e exclusão param antes, pelo nome do alvo. A recusa de localhost e `file://` nomeia o caminho do preview. Leitura e busca veem os widgets ARIA.
 - **A entrega visual chega com a imagem verificada.** O juiz recebe essa imagem. O portão devolve uma vez antes de rebaixar a partial. A captura fica amarrada ao preview e ao candidato. Bug de UI relatado sem verbo de reparo exige captura. Diff sem teste impactado volta a fechar. Estouro de prazo da regressão na conclusão vira timeout, não reparo. A vaga exclusiva de build presa na fila passa a ser visível.
 - **Quem entrega bem é reusado, com prazo.** A guarda de despacho deixa o writer isolado fazer `git add` e `git commit`. O pool de worktrees segue a licença. O watchdog de início não fecha worker ocupado atrás da fila pesada. A fatia de CPU da tarefa periódica não conta espera de I/O. Projeto fora da tela devolve ao agente o navegador dele. Pulo local do Jev vira `kind: skip` e sai das consultas do painel.
+- **Três dependências saem do aviso.** DOMPurify sobe para 3.4.17 (o bypass de SAFE_FOR_TEMPLATES no shadow root). Electron sobe para 43.8.3 (pointer lock no frame errado e intermediários eMudhra; 43.7.6 só cobria o primeiro). ip-address sobe para 10.7.4 (tempo quadrático do identificador de zona). A qualificação Darwin das licenças do Electron permanece em 43.7.4: o próximo pacote macOS recusa até essa qualificação ser refeita. Este pacote Linux não mexe nisso.
 
 O arranque dos kits no Windows (F-431/432/433) viaja no mesmo código e não é o motivo deste pacote Linux.
 
 O resto do desktop é o da 0.76.409.
+
+## 0.76.410 — O navegador age e o kit acerta o pacote
+
+Tagueada e não publicada como pacote Linux. O portão de segurança recusou a árvore: uma vulnerabilidade na produção (DOMPurify 3.4.16) e, na ferramenta, Electron 43.7.4 e ip-address 10.7.2. A tag não se move. A 0.76.411 é o pacote Linux desta entrega.
 
 ## 0.76.409 — A missão deixa de refazer trabalho já feito
 
