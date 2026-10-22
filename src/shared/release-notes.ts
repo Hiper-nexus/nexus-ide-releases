@@ -12459,7 +12459,7 @@ export const RELEASE_076370: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076373_FULL: AppRelease = {
   version: '0.76.373',
   date: '2026-10-21',
   codename: 'Estúdio de vídeo com contador, estilos e ditado',
@@ -12474,4 +12474,32 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076373: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076373: AppRelease = RELEASE_076373_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.375',
+  date: '2026-10-21',
+  codename: 'Kits de UI: shadcn e BoardUI dentro do Nexus',
+  summary:
+    'Os dois kits de componentes moram dentro do Nexus: o shadcn/ui inteiro ' +
+    'pela CLI oficial e o BoardUI pela CLI dele mais as ferramentas do MCP. O ' +
+    'Jev escolhe o kit e o item na superfície que instala, a metade grátis ' +
+    'funciona sem chave nenhuma, e a chave do operador provisiona a licença da ' +
+    'máquina sem gastar assento. A 0.76.374 foi tagueada e não publicada.',
+  highlights: [
+    { title: 'Os dois kits de verdade', detail: 'shadcn/ui inteiro (init, add, apply, preset, view, search, build, docs, info, migrate) e BoardUI pela CLI mais as 13 ferramentas do MCP. Medido: a busca do shadcn responde JSON tipado e o catálogo do BoardUI publica 69 itens grátis.' },
+    { title: 'O Jev escolhe o kit e o item', detail: 'Na superfície que instala: se a tarefa pede componente, qual kit serve e qual item encaixa, com heurística offline embaixo. Medido com o Jev real: painel de receita → stat cards do BoardUI; tela de login → login block do shadcn; conserto no parser do cron → nenhum kit.' },
+    { title: 'A metade grátis sem chave', detail: 'shadcn inteiro e ~45 itens do BoardUI. Item Pro sem licença não instala em silêncio: cai no grátis equivalente e nomeia o que ficou de fora.' },
+    { title: 'Chave no painel, licença sem assento', detail: 'Ajustes → Kits de UI guarda a chave no cofre, lista registries e aceita registry privado com token. A chave do operador viaja no app e provisiona o arquivo de licença da máquina; chave própria digitada sempre vence.' },
+    { title: 'Receitas por papel', detail: 'Super admin, dashboard e afins resolvem contra o catálogo ao vivo. Papel sem item disponível volta como não resolvido, nunca preenchido com chute.' },
+  ],
+  fixes: [
+    { title: 'O registry é do Main', detail: 'A ponte genérica de configurações escrevia a lista de registries por fora da guarda do caminho dedicado, o que permitia reapontar um namespace autenticado para outra URL e entregar o token guardado àquele host.' },
+    { title: 'Um portão antes do contrato', detail: 'O contrato de autenticação só nasce com token digitado agora, com a URL idêntica à guardada, ou num namespace de preset apontado para o host do próprio preset.' },
+    { title: 'Remover registry espera o cofre', detail: 'Apagar o token podia ser recusado e a linha saía assim mesmo, deixando a credencial para trás. Agora a linha fica e o painel diz o motivo.' },
+    { title: 'O recibo de salvo é lido de volta', detail: 'As configurações podiam recusar a escrita em silêncio e o painel limpava o campo de chave. O Main confere a linha gravada antes de dizer que salvou e desfaz o token quando ela não aterrissa.' },
+    { title: 'Nome de cofre derivado e busca tipada', detail: 'A chave de cofre e a variável de ambiente de um registry são derivadas no Main, nunca aceitas de fora, e a busca do shadcn deixou de depender de raspagem de texto.' },
+  ],
+};
+
+export const RELEASE_076375: AppRelease = CURRENT_RELEASE;

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.76.375 — Kits de UI: shadcn e BoardUI dentro do Nexus
+
+Pacote macOS (DMG e ZIP arm64), assinado com Developer ID e notarizado.
+
+A 0.76.374 foi tagueada e não publicada. A 0.76.373 é o pacote Linux anterior. A 0.76.372, a 0.76.370 e a 0.76.368 no espelho público são publicações Windows e não recebem arquivos macOS. A 0.76.371 é o carimbo macOS anterior. A 0.76.365 no espelho continua Latest; esta release não toma essa marca. A 0.76.362 continua Latest na canônica.
+
+O Nexus entregava um contrato de design (DESIGN.md com tokens) e nenhum componente: o agente recebia a paleta e escrevia cada peça à mão. Agora os dois kits moram dentro dele.
+
+- **Os dois kits de verdade, não um atalho.** O shadcn/ui inteiro pela CLI oficial (init, add, apply, preset, view, search, build, docs, info, migrate) e o BoardUI pela CLI dele mais as 13 ferramentas do MCP — catálogo, fonte, exemplos, tema, regras e licença. Medido nesta release: a busca do shadcn responde em JSON tipado e o `boardui list` publica 69 itens grátis.
+- **O Jev escolhe o kit e o item.** Na superfície que instala, o Jev julga se a tarefa pede componente, qual kit serve e qual item encaixa, com a heurística de palavras-chave embaixo respondendo sempre offline e sem chave. Medido com o Jev real: "painel com a receita do mês e um gráfico" → BoardUI/stat cards; "tela de login com e-mail e senha" → shadcn/login block; "corrigir o parser de JSON do cron" → nenhum kit. O recibo diz quem decidiu e por quê.
+- **A metade grátis funciona sem chave nenhuma.** O shadcn inteiro e ~45 itens do BoardUI. Item Pro sem licença não instala nada em silêncio: cai no grátis equivalente e nomeia o que ficou de fora.
+- **A chave vive no painel, e a do operador viaja no app.** Ajustes → Kits de UI guarda a chave do BoardUI no cofre, lista os registries e aceita registry privado com token. A chave do operador vem embutida e provisiona o arquivo de licença da máquina sem gastar assento no fornecedor; chave própria digitada sempre vence a embutida.
+- **Receitas por papel, não por slug.** "Super admin", dashboard e afins resolvem contra o catálogo ao vivo: papel sem item disponível volta como não resolvido, nunca preenchido com chute.
+- **O agente não escolhe destino.** As ferramentas não têm campo de caminho: cada kit instala onde o projeto manda (os aliases do components.json, a source root do BoardUI), que é configuração do operador.
+
+Correções de credencial nesta release:
+
+- **O registry é do Main.** A ponte genérica de configurações escrevia a lista de registries, por fora de toda a guarda do caminho dedicado: uma tela comprometida reapontava um namespace já autenticado para outra URL e a instalação entregava o token guardado àquele host. A chave agora sai do patch do renderer antes da mescla.
+- **Um portão antes do contrato.** Contrato de autenticação é o que solta o token, então ele só nasce com token digitado agora, com a URL exatamente igual à guardada, ou num namespace de preset apontado para o host do próprio preset.
+- **Remover registry espera o cofre.** Apagar o token podia ser recusado (keychain trancado) e a linha saía mesmo assim, deixando a credencial para trás; agora a linha fica, e o painel diz o motivo.
+- **O recibo de "salvo" é lido de volta.** As configurações podiam recusar a escrita em silêncio e o painel limpava o campo de chave como se tivesse salvo. O Main confere a linha gravada antes de dizer que salvou, e desfaz o token quando ela não aterrissa.
+- **O nome de cofre e a variável de um registry são derivados no Main**, nunca aceitos de fora, e a busca do shadcn deixou de depender de raspagem de texto.
+
 ## 0.76.373 — Estúdio de vídeo com contador, estilos e ditado
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
