@@ -13,6 +13,7 @@ import {
   buildUiKitChildEnv,
   resolveNpxCommand,
   resolveUiKitNpxLaunch,
+  runUiKitCli,
   UiKitCliError,
   UI_KIT_MAX_ARGS,
   UI_KIT_PACKAGES,
@@ -466,6 +467,40 @@ describe('claimUiKitProjectWrite', () => {
     } finally {
       fs.rmSync(a, { recursive: true, force: true });
       fs.rmSync(b, { recursive: true, force: true });
+    }
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('runUiKitCli keeps output past 64 KiB', () => {
+  // Both vendor CLIs console.log their JSON and then process.exit(). On a
+  // pipe Node writes asynchronously and the exit drops what has not drained:
+  // `view dashboard-01` (77 KB) and a 200-item search arrived cut at exactly
+  // 65 536 bytes (measured 22/10/2026). The fake npx reproduces that exit.
+  it('returns the whole JSON a child printed right before exiting', async () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ui-kit-bigout-'));
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ui-kit-bigout-proj-'));
+    const previousPath = process.env.PATH;
+    try {
+      const npx = path.join(fixture, 'npx');
+      fs.writeFileSync(
+        npx,
+        '#!/usr/bin/env node\n' +
+          "const items = Array.from({ length: 3000 }, (_, i) => ({ name: 'item-' + i, pad: 'x'.repeat(40) }));\n" +
+          'console.log(JSON.stringify({ items }));\n' +
+          'process.exit(0);\n',
+        { mode: 0o755 },
+      );
+      process.env.PATH = `${fixture}${path.delimiter}${path.dirname(process.execPath)}${path.delimiter}${previousPath ?? ''}`;
+
+      const result = await runUiKitCli({ kit: 'shadcn', cwd: project, args: ['search', '@shadcn', '--json'] });
+
+      expect(result.code).toBe(0);
+      expect(Buffer.byteLength(result.stdout)).toBeGreaterThan(65_536);
+      expect(JSON.parse(result.stdout).items).toHaveLength(3000);
+    } finally {
+      process.env.PATH = previousPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+      fs.rmSync(project, { recursive: true, force: true });
     }
   });
 });

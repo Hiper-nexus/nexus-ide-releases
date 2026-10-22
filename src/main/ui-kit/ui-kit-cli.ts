@@ -49,6 +49,8 @@ export const UI_KIT_WRITE_TIMEOUT_MS = 300_000;
 export const UI_KIT_READ_MAX_OUTPUT_BYTES = 4_000_000;
 /** Install logs are chatty; capping them too low turns success into TIMEOUT. */
 export const UI_KIT_WRITE_MAX_OUTPUT_BYTES = 12_000_000;
+/** How often the captured output's size is checked against the cap. */
+const UI_KIT_OUTPUT_WATCH_MS = 250;
 export const UI_KIT_TERMINATION_GRACE_MS = 2_000;
 export const UI_KIT_MAX_ARGS = 64;
 export const UI_KIT_MAX_ARG_CHARS = 512;
@@ -631,15 +633,90 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
     const maxBytes = writes
       ? UI_KIT_WRITE_MAX_OUTPUT_BYTES
       : UI_KIT_READ_MAX_OUTPUT_BYTES;
+    // stdout goes to a private FILE, not a pipe. Both CLIs print their JSON
+    // with console.log and then call process.exit(): on a pipe Node writes
+    // asynchronously and exit drops whatever has not drained, so everything
+    // past 64 KiB was cut — `view dashboard-01` (77 KB) and a 200-item
+    // @shadcnuikit search came back as broken JSON, and the cache kept them
+    // (measured 22/10/2026). A write to a file is synchronous: the child
+    // cannot exit before it lands.
+    let capture: { dir: string; file: string; fd: number | null } | null = null;
+    try {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ui-kit-out-'));
+      const file = path.join(dir, 'stdout');
+      capture = { dir, file, fd: fs.openSync(file, 'wx', 0o600) };
+    } catch (error) {
+      if (scratchDir) {
+        try {
+          removeTreeSync(scratchDir);
+        } catch {
+          // Noise, not a failure.
+        }
+      }
+      reject(
+        new UiKitCliError(
+          'NO_SCRATCH_DIR',
+          'could not create a private file for the kit output: ' +
+            (error instanceof Error ? error.message : String(error)),
+        ),
+      );
+      return;
+    }
+
     const isWindows = process.platform === 'win32';
     const options: SpawnOptions = {
       cwd: spawnCwd,
       env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', capture.fd ?? 'pipe', 'pipe'],
       detached: !isWindows,
       shell: false,
       windowsHide: isWindows,
     };
+
+    function closeCaptureFd(): void {
+      if (capture?.fd === null || capture?.fd === undefined) return;
+      try {
+        fs.closeSync(capture.fd);
+      } catch {
+        // Already closed.
+      }
+      capture.fd = null;
+    }
+    function captureSize(): number {
+      if (!capture) return 0;
+      try {
+        return fs.statSync(capture.file).size;
+      } catch {
+        return 0;
+      }
+    }
+    function readCapture(): string {
+      if (!capture) return '';
+      try {
+        const size = Math.min(captureSize(), maxBytes);
+        const buffer = Buffer.alloc(size);
+        const fd = fs.openSync(capture.file, 'r');
+        try {
+          fs.readSync(fd, buffer, 0, size, 0);
+        } finally {
+          fs.closeSync(fd);
+        }
+        return buffer.toString('utf8');
+      } catch {
+        return '';
+      }
+    }
+    function dropCapture(): void {
+      closeCaptureFd();
+      if (!capture) return;
+      const target = capture.dir;
+      capture = null;
+      try {
+        removeTreeSync(target);
+      } catch {
+        // A leftover temp dir is noise, never a reason to fail the run.
+      }
+    }
 
     function dropScratch(): void {
       if (!scratchDir) return;
@@ -660,6 +737,7 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
         releaseWrite = claimUiKitProjectWrite(cwd);
       } catch (error) {
         dropScratch();
+        dropCapture();
         reject(error);
         return;
       }
@@ -676,6 +754,7 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
     } catch (error) {
       releaseWrite();
       dropScratch();
+      dropCapture();
       reject(
         error instanceof UiKitCliError
           ? error
@@ -688,7 +767,9 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
       return;
     }
 
-    let stdout = '';
+    // The child holds its own descriptor now; ours would keep the file open.
+    closeCaptureFd();
+
     let stderr = '';
     let bytes = 0;
     let settled = false;
@@ -701,11 +782,26 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
       );
     }, timeoutMs);
     timer.unref?.();
+    // The output cap still holds with a file: a runaway child is stopped by
+    // size, just not byte by byte.
+    const sizeWatch = setInterval(() => {
+      if (captureSize() + bytes > maxBytes) {
+        fail(
+          new UiKitCliError(
+            'OUTPUT_TOO_LARGE',
+            `${request.kit} output exceeded ${maxBytes} bytes`,
+          ),
+        );
+      }
+    }, UI_KIT_OUTPUT_WATCH_MS);
+    sizeWatch.unref?.();
 
     function cleanup(): void {
       clearTimeout(timer);
+      clearInterval(sizeWatch);
       request.signal?.removeEventListener('abort', onAbort);
       dropScratch();
+      dropCapture();
     }
     function fail(error: UiKitCliError): void {
       if (settled) return;
@@ -723,9 +819,9 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
     function onAbort(): void {
       fail(new UiKitCliError('ABORTED', 'UI-kit run aborted'));
     }
-    function accumulate(chunk: Buffer, isStdout: boolean): void {
+    function accumulate(chunk: Buffer): void {
       bytes += chunk.length;
-      if (bytes > maxBytes) {
+      if (bytes + captureSize() > maxBytes) {
         fail(
           new UiKitCliError(
             'OUTPUT_TOO_LARGE',
@@ -734,13 +830,11 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
         );
         return;
       }
-      if (isStdout) stdout += chunk.toString('utf8');
-      else stderr += chunk.toString('utf8');
+      stderr += chunk.toString('utf8');
     }
 
     request.signal?.addEventListener('abort', onAbort, { once: true });
-    child.stdout?.on('data', (chunk: Buffer) => accumulate(chunk, true));
-    child.stderr?.on('data', (chunk: Buffer) => accumulate(chunk, false));
+    child.stderr?.on('data', (chunk: Buffer) => accumulate(chunk));
     child.once('error', (error: Error) => {
       releaseWrite();
       if (settled) return;
@@ -758,6 +852,8 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
       releaseWrite();
       if (settled) return;
       settled = true;
+      // Read BEFORE cleanup removes the file.
+      const stdout = readCapture();
       cleanup();
       resolve({ stdout, stderr, code });
     });
