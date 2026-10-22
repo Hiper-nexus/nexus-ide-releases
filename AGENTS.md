@@ -3206,6 +3206,68 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
     recusada para escrita; a recusa diz a saída (tirar só o link e instalar,
     ou instalar no checkout principal). Materializar sozinho foi descartado.
 
+## Revisão de 22/10: navegador, portão visual e missão
+
+Achados de `docs/analysis/2026-10-22-revisao-kit-ui-jev-navegador-missao.md`; o
+que segue é contrato, não histórico.
+
+- **Navegador do agente.** Clique, hover e tecla vão por
+  `webContents.sendInputEvent` no Main (rolagem ao centro, hit-test e sonda de
+  evento confiável); sem prova em 300 ms cai na sequência sintética, que agora
+  manda pointer/mouse down/up antes do `click()`. O recibo diz
+  `input: native|synthetic` — menu Radix só abre com o nativo. `INTERACTIVE_SELECTOR`
+  cobre menuitem*/option/tab/switch/combobox/slider/treeitem/tabindex;
+  read/find/click/fill/wait/extract atravessam shadow DOM aberto e iframe
+  same-origin visível. `nexus_browser_select` e `SELECT_OPTION` no `browser_do`;
+  `nexus_browser_navigate({history})` faz voltar/avançar/recarregar. O settle
+  espera as requisições que a ação abriu + 300 ms de quietude (teto 1,5 s; 3 s
+  após navegação). Pane de agente nasce com `disableDialogs` (alert fecha,
+  confirm = Cancelar, prompt vazio); o conteúdo do diálogo ainda não é
+  relatado. `browser_do`: alvo com nome irreversível (comprar, pagar,
+  finalizar, excluir, enviar, publicar, checkout…) SEMPRE para em
+  `needs_confirmation`. Screenshot devolve bloco de imagem MCP (perfil pessoal
+  nunca envia pixels), `fullPage`, `ref` e tema. A recusa de `localhost` e
+  `file://` nomeia o caminho do preview do Nexus; a política não mudou.
+- **JSON compacto em TODA tool** (`mcp-protocol.ts`): o texto que a pessoa vê
+  no pane é uma linha. Teste de paridade schema × zod para todas as tools
+  (`mcp-args-validation-parity.test.ts`): propriedade anunciada e recusada pelo
+  `.strict()` reprova.
+- **Portão visual.** A captura só vale se a URL é um preview do Nexus rodando
+  na worktree do worker e se a árvore não mudou desde ela (migração
+  **057-visual-evidence-candidate**: `candidate_observed_at/base/fingerprint`);
+  edição depois da captura, rework incluído, pede captura nova. Entrega visual
+  sem captura volta UMA vez por worker e tarefa com o caminho (build →
+  `nexus_preview_start` → `nexus_browser_open` → `nexus_browser_responsive`) antes
+  de virar partial. Lane somente leitura não é cobrada (writer de F-1318 é). O
+  juiz recebe o caminho da imagem e a instrução de abri-la. Bug de UI relatado
+  sem verbo de reparo ("modal não fecha no mobile", erro de hidratação) exige
+  captura. Projeto fora da tela: só o navegador que o MESMO agente já abriu é
+  devolvido; criar navegador oculto ainda não existe.
+- **Conclusão sem teste aplicável fecha** (`civilian-auto-review.ts`):
+  `no-tests`/`clean` com índice completo, nada pulado e todo arquivo numa
+  família que o índice mapeia (TS/JS, estilo, texto, asset; Go/Rust com as
+  suítes nativas inteiras) é aprovação. Python, JSON e outras linguagens fora
+  do grafo seguem não verificados quando o projeto declara testes.
+- **Perfil de cerimônia por diff** (`src/shared/mission-ceremony-profile.ts`):
+  só tira typecheck e testes quando o candidato INTEIRO (mudados, apagados,
+  ilegíveis) é css/scss/less/md/rst/adoc/imagem/fonte; `classifyWorkKind` só
+  rotula (F-810), nunca subtrai. mdx, html, json, txt e config contam como
+  código.
+- **Prazo da regressão na conclusão**: 5 → 10 → 20 min por missão; estourar é
+  `defer` ("não couberam no prazo"), nunca pedido de reparo.
+- **Fila pesada visível**: build/install exclusivo segurando uma raiz por
+  10 min com fila grava `heavy-command-exclusive-held` e avisa o Maestro
+  (`[fila-pesada]`); a exclusividade (F-983) não muda.
+- **Watchdog de início**: worker com atividade de ferramenta ou na fila pesada
+  não é fechado por `brief-rejected`.
+- **Pool de worktrees**: `max(1, licenseMaxAgents − 2)`, teto 4, reposto até o
+  alvo; `pane-spawn-timing` traz `pooled`.
+- **Janela de reuso do helper** (Jev, F-197): `success`/ACK aceito deixa o helper
+  vivo e desarmado 3 min (`HELPER_REUSE_HOLD_MS`) para o `helperReuse`, depois
+  fecha (F-572). Sem janela em `autoCloseOnHandoff: true`, writer isolado e
+  licença com teto (Trial). Pulo local do diário do Jev é `kind: 'skip'` e não
+  conta como consulta.
+
 ## Conclusão de código e validadores Main (06/10)
 
 - Missão `standard`, inclusive sem squad/+Pane, pede verificação por `done`;
