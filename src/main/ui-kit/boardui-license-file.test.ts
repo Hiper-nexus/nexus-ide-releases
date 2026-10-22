@@ -143,7 +143,18 @@ describe('realBoardUiLicenseFileOps — the real config root', () => {
     expect(fs.existsSync(file)).toBe(true);
     // The key never lands world-readable.
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
-    expect(ops.read()).toEqual(OPERATOR);
+    expect(ops.read()).toEqual({ status: 'parsed', file: OPERATOR });
+  });
+
+  it('a missing file is absence, positively established — never confused with unreadable', () => {
+    expect(ops.read()).toEqual({ status: 'absent' });
+  });
+
+  it('a file the process cannot read is unreadable, not absent', () => {
+    // A directory where the file should be: readFileSync answers EISDIR, a
+    // non-ENOENT error — the same class as EACCES on a locked-down file.
+    fs.mkdirSync(boarduiLicenseFilePath(root), { recursive: true });
+    expect(ops.read()).toEqual({ status: 'unreadable' });
   });
 
   it('an empty bundle env writes under <HOME>/.config, like the child', () => {
@@ -156,15 +167,15 @@ describe('realBoardUiLicenseFileOps — the real config root', () => {
     expect(ops.remove()).toEqual({ ok: true });
     ops.write(OPERATOR);
     expect(ops.remove()).toEqual({ ok: true });
-    expect(ops.read()).toBeNull();
+    expect(ops.read()).toEqual({ status: 'absent' });
     expect(fs.existsSync(boarduiLicenseFilePath(root))).toBe(false);
     // The directory stays — it is the CLI's own home, not ours to prune.
     expect(fs.existsSync(path.join(root, 'boardui'))).toBe(true);
   });
 
-  it('an invalid file on disk reads as null, not as a licence', () => {
+  it('a corrupted file is present but not a licence — re-provisioning may heal it', () => {
     fs.mkdirSync(path.join(root, 'boardui'), { recursive: true });
     fs.writeFileSync(boarduiLicenseFilePath(root), 'corrupted');
-    expect(ops.read()).toBeNull();
+    expect(ops.read()).toEqual({ status: 'parsed', file: null });
   });
 });

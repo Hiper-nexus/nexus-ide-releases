@@ -95,6 +95,7 @@ function harness(
     vaultWritable?: boolean;
     licenseFile?: {
       content?: BoardUiLicenseFile | null;
+      unreadable?: boolean;
       failWrite?: boolean;
       failRemove?: boolean;
     };
@@ -136,7 +137,14 @@ function harness(
     registries: () => over.registries ?? [],
     cacheOptions: { rootDir: dir },
     boardUiLicenseFile: {
-      read: () => licenseFile.content,
+      // The tagged shape the real ops return: absent / unreadable / parsed
+      // (parsed with file null = corrupted, healable by re-provisioning).
+      read: () =>
+        over.licenseFile?.unreadable
+          ? { status: 'unreadable' }
+          : licenseFile.content
+            ? { status: 'parsed', file: licenseFile.content }
+            : { status: 'absent' },
       write: (payload) => {
         if (over.licenseFile?.failWrite) {
           return { ok: false, error: 'EACCES: the licence file could not be written' };
@@ -892,6 +900,26 @@ describe('the licence key bundled with Nexus', () => {
     expect(h.licenseFile.writes).toHaveLength(0);
     expect(h.licenseFile.content).toEqual(NATIVE_LICENSE);
     expect(h.vault.has(BOARDUI_LICENSE_SECRET)).toBe(false);
+  });
+
+  it('refuses to provision when the licence file exists but cannot be read — unreadable is not absent', async () => {
+    // Security review 21/10 (2nd finding): the read used to answer null for
+    // BOTH a missing file and an unreadable one, so "absence" was never
+    // positively established — and `writeFileAtomic` renames over the old
+    // file with only DIRECTORY write permission, destroying a licence we
+    // could not even read. Unreadable now refuses like a native file would.
+    const h = harness({
+      licenseFile: { unreadable: true },
+      mcp: (tool) => (tool === 'license_status' ? new Error('vendor unreachable') : { text: 'ok' }),
+    });
+
+    const result = await activateEffectiveBoardUiLicense({ cwd }, h.deps);
+
+    expect(result.ok).toBe(false);
+    expect(result.provisioned).toBeUndefined();
+    expect(result.detail).toMatch(/could not be read/);
+    expect(h.licenseFile.writes).toHaveLength(0);
+    expect(h.licenseFile.content).toBeNull();
   });
 
   it('re-provisions the operator payload idempotently — our own file is the only one ever rewritten', async () => {

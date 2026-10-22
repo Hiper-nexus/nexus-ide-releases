@@ -117,10 +117,30 @@ export function isProvisionedBoardUiLicense(
   );
 }
 
+/**
+ * What an honest read of the licence file can report. Security review 21/10:
+ * the old `read(): BoardUiLicenseFile | null` answered null for BOTH a
+ * missing file and an unreadable one (EACCES, EISDIR…), so "absence" was
+ * never positively established — and the atomic write renames over the old
+ * file with only DIRECTORY write permission, which would destroy a licence
+ * the process could not even read.
+ *
+ * - `absent`: ENOENT — the only positive proof a file is not there.
+ * - `unreadable`: a file IS there and its bytes could not be read. Callers
+ *   treat it like a native file: refuse to touch it.
+ * - `parsed`: the bytes read fine. `file: null` means corrupted/unparseable
+ *   content — the CLI reads no licence from it either, so re-provisioning
+ *   heals rather than destroys.
+ */
+export type BoardUiLicenseRead =
+  | { readonly status: 'absent' }
+  | { readonly status: 'unreadable' }
+  | { readonly status: 'parsed'; readonly file: BoardUiLicenseFile | null };
+
 /** Filesystem access to the licence file, injectable in tests. */
 export interface BoardUiLicenseFileOps {
-  /** The current licence file, or null when absent or unreadable. */
-  read(): BoardUiLicenseFile | null;
+  /** Absence, unreadability or the parsed licence — never a guess. */
+  read(): BoardUiLicenseRead;
   /** Write the payload atomically (tmp + rename, the repo's own pattern). */
   write(payload: BoardUiLicenseFile): { ok: boolean; error?: string };
   /** Remove the file only; the `boardui/` directory stays. */
@@ -138,11 +158,18 @@ export function realBoardUiLicenseFileOps(
   const file = boarduiLicenseFilePath(boarduiConfigRoot(env, platform));
   return {
     read: () => {
+      let raw: string;
       try {
-        return parseBoardUiLicenseFile(fs.readFileSync(file, 'utf8'));
-      } catch {
-        return null;
+        raw = fs.readFileSync(file, 'utf8');
+      } catch (error) {
+        // ENOENT is the ONLY proof of absence. Anything else (EACCES, EISDIR,
+        // EPERM, transient IO) means a file is THERE and unread — reporting it
+        // as absent is what lets a write destroy it.
+        return (error as NodeJS.ErrnoException).code === 'ENOENT'
+          ? { status: 'absent' }
+          : { status: 'unreadable' };
       }
+      return { status: 'parsed', file: parseBoardUiLicenseFile(raw) };
     },
     write: (payload) => {
       try {

@@ -843,10 +843,24 @@ async function ensureActiveBoardUiLicense(
   //
   // Reading the file is local: it cannot be `unknown`. Absence has to be
   // POSITIVELY established before anything is written, and a file that is not
-  // already our payload is left exactly as it is.
+  // already our payload is left exactly as it is. A file that exists but
+  // cannot be READ is not absence either — the atomic write renames over it
+  // with directory permission alone — so it refuses like a native file.
+  // Corrupted bytes are the one exception: the CLI reads no licence from
+  // them either, and provisioning heals instead of destroying.
   const ops = boardUiLicenseFileOps(deps);
   const existing = ops.read();
-  if (existing && !isProvisionedBoardUiLicense(existing, operatorBoardUiLicenseFile())) {
+  if (existing.status === 'unreadable') {
+    return {
+      ok: false,
+      stored: false,
+      detail:
+        'the BoardUI licence file on this machine could not be read; Nexus did not touch it. ' +
+        'Fix or remove it yourself if you want the operator licence provisioned here.',
+    };
+  }
+  const existingFile = existing.status === 'parsed' ? existing.file : null;
+  if (existingFile && !isProvisionedBoardUiLicense(existingFile, operatorBoardUiLicenseFile())) {
     return {
       ok: false,
       stored: false,
@@ -898,8 +912,22 @@ export async function deactivateBoardUiLicense(
 ): Promise<ActivateLicenseResult> {
   const { set } = vault(deps);
   const ops = boardUiLicenseFileOps(deps);
-  const file = ops.read();
+  const read = ops.read();
   invalidateBoardUiFreeList();
+  if (read.status === 'unreadable') {
+    // We cannot prove the file is ours, and deleting a NATIVE one locally
+    // would strand its paid seat while the vendor's own CLI — reading the
+    // same unreadable file — would only answer "no licence stored". Forget
+    // the key, leave the file, and say exactly that.
+    set(BOARDUI_LICENSE_SECRET, '');
+    return {
+      ok: true,
+      stored: false,
+      detail:
+        'the BoardUI licence file could not be read; it was left in place and the stored key was forgotten',
+    };
+  }
+  const file = read.status === 'parsed' ? read.file : null;
   if (isProvisionedBoardUiLicense(file, operatorBoardUiLicenseFile())) {
     const removed = ops.remove();
     set(BOARDUI_LICENSE_SECRET, '');
