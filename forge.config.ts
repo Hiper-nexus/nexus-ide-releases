@@ -55,6 +55,11 @@ const WINDOWS_SETUP_ICON = 'assets/icon.ico';
  */
 const WINDOWS_INSTALLER_LOADING_GIF = 'assets/installer-loading.gif';
 
+// electron-winstaller also consumes NuGet metadata beyond the maker's option types.
+const windowsSquirrelLegalMetadata = {
+  additionalFiles: [{ src: 'LICENSES.chromium.html', target: 'lib\\net45' }],
+};
+
 /**
  * URL pública do mesmo ícone, exigida pelo Squirrel para a entrada em "Adicionar
  * ou remover programas". Precisa ser um endereço estável e alcançável por quem
@@ -639,6 +644,7 @@ const config: ForgeConfig = {
     // futura nos defaults do Forge gere artefatos de outro SO no pacote.
     new MakerSquirrel({
       ...createWindowsInstallerBrandingConfig(),
+      ...windowsSquirrelLegalMetadata,
       ...(squirrelWindowsSignOptions
         ? {
             windowsSign:
