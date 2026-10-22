@@ -263,6 +263,7 @@ import {
   destroyBrowser,
   ensureBrowser,
   historyBrowserPane,
+  hoverBrowserElement,
   loadBrowser,
   lockBrowserToExactUrl,
   openCdpRelayForPane,
@@ -856,6 +857,105 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     expect(elapsed).toBeLessThan(2_500);
     destroyBrowser(PANE, scope);
   }, 10_000);
+
+  describe('real input through webContents.sendInputEvent', () => {
+    const element = { ref: 'e1', tag: 'button', role: 'button', name: 'Conta' };
+    const defaultAutomation = state.runAutomation.getMockImplementation()!;
+    function nativeAutomation(delivered: boolean, prepared: Record<string, unknown> = { token: 'i1', x: 140, y: 50, element }) {
+      state.runAutomation.mockImplementation(async (_pane: string, _wc: unknown, command: string): Promise<unknown> => {
+        if (command === 'input_prepare') return prepared;
+        if (command === 'input_confirm') return { delivered };
+        if (command === 'click') return { clicked: true, element };
+        if (command === 'press') return { pressed: true, key: 'Enter' };
+        if (command === 'hover') return { hovered: true, element };
+        throw new Error(`unexpected command ${command}`);
+      });
+    }
+    afterEach(() => {
+      delete (state.guest as { sendInputEvent?: unknown }).sendInputEvent;
+      delete (state.guest as { getZoomFactor?: unknown }).getZoomFactor;
+      state.runAutomation.mockImplementation(defaultAutomation);
+    });
+
+    it('clicks with a real mouse down/up at the element center (zoom applied) and no synthetic click', async () => {
+      await boot();
+      const sendInputEvent = vi.fn();
+      Object.assign(state.guest, { sendInputEvent, getZoomFactor: () => 1.5 });
+      nativeAutomation(true);
+      const result = await clickBrowserElement(PANE, scope, 'e1');
+      expect(sendInputEvent.mock.calls.map((call) => call[0])).toEqual([
+        { type: 'mouseMove', x: 210, y: 75 },
+        { type: 'mouseDown', x: 210, y: 75, button: 'left', clickCount: 1 },
+        { type: 'mouseUp', x: 210, y: 75, button: 'left', clickCount: 1 },
+      ]);
+      expect(result).toMatchObject({ clicked: true, input: 'native', element: { name: 'Conta' } });
+      expect(state.runAutomation.mock.calls.map((call) => call[2])).not.toContain('click');
+      destroyBrowser(PANE, scope);
+    });
+
+    it('falls back to the synthetic sequence when the page never saw a trusted event', async () => {
+      await boot();
+      Object.assign(state.guest, { sendInputEvent: vi.fn() });
+      nativeAutomation(false);
+      const result = await clickBrowserElement(PANE, scope, 'e1');
+      expect(result).toMatchObject({ clicked: true, input: 'synthetic' });
+      expect(state.runAutomation.mock.calls.map((call) => call[2])).toContain('click');
+      destroyBrowser(PANE, scope);
+    });
+
+    it('falls back without sending input when the element is covered', async () => {
+      await boot();
+      const sendInputEvent = vi.fn();
+      Object.assign(state.guest, { sendInputEvent });
+      nativeAutomation(true, { token: null, reason: 'occluded' });
+      const result = await clickBrowserElement(PANE, scope, 'e1');
+      expect(sendInputEvent).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ input: 'synthetic', nativeSkipped: 'occluded' });
+      destroyBrowser(PANE, scope);
+    });
+
+    it('presses Enter as keyDown + char "\\r" + keyUp so forms submit and fields receive text', async () => {
+      await boot();
+      const sendInputEvent = vi.fn();
+      Object.assign(state.guest, { sendInputEvent });
+      nativeAutomation(true, { token: 'i2' });
+      const result = await pressBrowserKey(PANE, scope, { key: 'Enter' });
+      expect(sendInputEvent.mock.calls.map((call) => call[0])).toEqual([
+        { type: 'keyDown', keyCode: 'Enter', modifiers: [] },
+        { type: 'char', keyCode: '\r', modifiers: [] },
+        { type: 'keyUp', keyCode: 'Enter', modifiers: [] },
+      ]);
+      expect(result).toMatchObject({ pressed: true, key: 'Enter', input: 'native' });
+      expect(state.runAutomation.mock.calls.map((call) => call[2])).not.toContain('press');
+
+      sendInputEvent.mockClear();
+      await pressBrowserKey(PANE, scope, { key: 'ArrowDown' });
+      expect(sendInputEvent.mock.calls.map((call) => call[0])).toEqual([
+        { type: 'keyDown', keyCode: 'Down', modifiers: [] },
+        { type: 'keyUp', keyCode: 'Down', modifiers: [] },
+      ]);
+
+      sendInputEvent.mockClear();
+      await pressBrowserKey(PANE, scope, { key: 'a', modifiers: ['Control'] });
+      // A shortcut never types its letter.
+      expect(sendInputEvent.mock.calls.map((call) => call[0])).toEqual([
+        { type: 'keyDown', keyCode: 'a', modifiers: ['control'] },
+        { type: 'keyUp', keyCode: 'a', modifiers: ['control'] },
+      ]);
+      destroyBrowser(PANE, scope);
+    });
+
+    it('hovers with a real mouse move so :hover and pointer handlers react', async () => {
+      await boot();
+      const sendInputEvent = vi.fn();
+      Object.assign(state.guest, { sendInputEvent });
+      nativeAutomation(true);
+      const result = await hoverBrowserElement(PANE, scope, 'e1');
+      expect(sendInputEvent.mock.calls.map((call) => call[0])).toEqual([{ type: 'mouseMove', x: 140, y: 50 }]);
+      expect(result).toMatchObject({ hovered: true, input: 'native' });
+      destroyBrowser(PANE, scope);
+    });
+  });
 
   it('goes back, forward and reloads through the action contract (after/changed/errors)', async () => {
     await boot();

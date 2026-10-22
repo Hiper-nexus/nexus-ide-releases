@@ -177,3 +177,24 @@ export const browserLayoutAuditSchema = z
     truncated: z.boolean(),
   })
   .strict();
+
+/** `input_prepare`: a point + delivery token, or why native input cannot be used. */
+export const browserInputPrepareSchema = z.union([
+  z
+    .object({
+      token: z.string().regex(/^i[1-9]\d{0,9}$/),
+      x: z.number().finite().min(0).max(100_000),
+      y: z.number().finite().min(0).max(100_000),
+      element: browserElementDescriptorSchema,
+    })
+    .strict(),
+  z.object({ token: z.string().regex(/^i[1-9]\d{0,9}$/) }).strict(),
+  z
+    .object({
+      token: z.null(),
+      reason: z.enum(['no-geometry', 'offscreen', 'occluded', 'no-target']),
+    })
+    .strict(),
+]);
+
+export const browserInputConfirmSchema = z.object({ delivered: z.boolean() }).strict();

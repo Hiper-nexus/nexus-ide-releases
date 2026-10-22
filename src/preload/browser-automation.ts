@@ -105,6 +105,10 @@ function finiteClampInt(
 const POLL_MS = 50;
 /** Slow tick for changes no mutation reports (layout-only, media queries). */
 const WAIT_FALLBACK_TICK_MS = 500;
+/** How long input_confirm waits for the trusted event of a native input. */
+const INPUT_CONFIRM_WAIT_MS = 300;
+/** An armed probe nobody confirmed is dropped after this. */
+const INPUT_PROBE_TTL_MS = 5_000;
 const ELEMENT_REF_PATTERN = /^e[1-9]\d{0,7}$/;
 const DESIGN_GENERATION_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -396,6 +400,8 @@ export interface BrowserAutomationOptions {
   evalInMainWorld?: MainWorldEvaluator;
   /** Test-only native-event oracle; production deliberately leaves this unset. */
   isTrustedDesignEvent?: (event: Event) => boolean;
+  /** Test-only oracle for the native input probe; production reads isTrusted. */
+  isTrustedInputEvent?: (event: Event) => boolean;
 }
 
 export function createBrowserAutomation(
@@ -848,17 +854,189 @@ export function createBrowserAutomation(
     return describe(element);
   }
 
-  function click(args: Record<string, unknown>): { clicked: true; element: BrowserElementDescriptor } {
-    const element = resolveRef(args.ref);
+  function clickableTarget(raw: unknown): HTMLElement {
+    const element = resolveRef(raw);
     if (!isElementVisible(win, element)) throw new Error('browser element is not visible');
     if (element.hasAttribute('disabled') || element.getAttribute('aria-disabled') === 'true') {
       throw new Error('browser element is disabled');
     }
     const clickable = element as HTMLElement;
     if (typeof clickable.click !== 'function') throw new Error('browser element is not clickable');
-    clickable.focus?.({ preventScroll: true });
+    return clickable;
+  }
+
+  /**
+   * Fallback when Main cannot deliver real input (no sendInputEvent, element
+   * covered, no geometry). `element.click()` alone skipped pointerdown and
+   * mousedown, and component kits open menus/selects on pointerdown (Radix),
+   * so the dropdown never opened. This replays the browser order: pointer
+   * down/up, the mouse compatibility events (suppressed when pointerdown
+   * cancels its default, as Chrome does), focus, then the activation click.
+   */
+  function click(args: Record<string, unknown>): { clicked: true; element: BrowserElementDescriptor } {
+    const clickable = clickableTarget(args.ref);
+    const elementWin = (clickable.ownerDocument.defaultView ?? win) as BrowserDomWindow;
+    const rect = clickable.getBoundingClientRect();
+    const base = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+      button: 0,
+      view: elementWin,
+    };
+    const PointerCtor = elementWin.PointerEvent ?? elementWin.MouseEvent;
+    const pointer = { ...base, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+    clickable.dispatchEvent(new PointerCtor('pointerover', pointer));
+    clickable.dispatchEvent(new PointerCtor('pointermove', pointer));
+    const pointerDownAllowed = clickable.dispatchEvent(
+      new PointerCtor('pointerdown', { ...pointer, buttons: 1 }),
+    );
+    let focusAllowed = true;
+    if (pointerDownAllowed) {
+      focusAllowed = clickable.dispatchEvent(
+        new elementWin.MouseEvent('mousedown', { ...base, buttons: 1, detail: 1 }),
+      );
+    }
+    if (focusAllowed) clickable.focus?.({ preventScroll: true });
+    clickable.dispatchEvent(new PointerCtor('pointerup', pointer));
+    if (pointerDownAllowed) {
+      clickable.dispatchEvent(new elementWin.MouseEvent('mouseup', { ...base, detail: 1 }));
+    }
+    if (!clickable.isConnected) {
+      // The page swapped the element on pointerdown (a menu re-render): the
+      // activation already happened through the down/up handlers.
+      return { clicked: true, element: describe(clickable) };
+    }
     clickable.click();
-    return { clicked: true, element: describe(element) };
+    return { clicked: true, element: describe(clickable) };
+  }
+
+  // Native input handshake. Main asks for a point and a probe, sends real
+  // input with webContents.sendInputEvent, then asks whether a trusted event
+  // reached this document; only if not does it fall back to the synthetic path.
+  interface InputProbe {
+    seen: boolean;
+    waiters: Array<() => void>;
+    dispose: () => void;
+  }
+  const inputProbes = new Map<string, InputProbe>();
+  let inputSequence = 0;
+  const isTrustedInput = (event: Event): boolean =>
+    options.isTrustedInputEvent ? options.isTrustedInputEvent(event) : event.isTrusted === true;
+
+  function armInputProbe(targetWin: Window, types: readonly string[]): string {
+    inputSequence += 1;
+    const token = `i${inputSequence}`;
+    const probe: InputProbe = { seen: false, waiters: [], dispose: () => {} };
+    const onEvent = (event: Event): void => {
+      if (!isTrustedInput(event) || probe.seen) return;
+      probe.seen = true;
+      for (const wake of probe.waiters.splice(0)) wake();
+    };
+    for (const type of types) targetWin.addEventListener(type, onEvent, { capture: true });
+    const expiry = win.setTimeout(() => probe.dispose(), INPUT_PROBE_TTL_MS);
+    probe.dispose = () => {
+      win.clearTimeout(expiry);
+      for (const type of types) targetWin.removeEventListener(type, onEvent, { capture: true });
+      inputProbes.delete(token);
+      for (const wake of probe.waiters.splice(0)) wake();
+    };
+    inputProbes.set(token, probe);
+    return token;
+  }
+
+  /** Point of `element` in top-level viewport CSS px, or why there is none. */
+  function nativePointFor(element: Element):
+    | { x: number; y: number }
+    | { reason: 'no-geometry' | 'offscreen' | 'occluded' } {
+    const rect = element.getBoundingClientRect();
+    if (!(rect.width >= 1 && rect.height >= 1)) return { reason: 'no-geometry' };
+    const ownWin = (element.ownerDocument.defaultView ?? win) as BrowserDomWindow;
+    let x = rect.left + rect.width / 2;
+    let y = rect.top + rect.height / 2;
+    if (x < 0 || y < 0 || x > ownWin.innerWidth || y > ownWin.innerHeight) return { reason: 'offscreen' };
+    const root = element.getRootNode() as Document | ShadowRoot;
+    const hitAt = (root as { elementFromPoint?: (x: number, y: number) => Element | null }).elementFromPoint;
+    if (typeof hitAt === 'function') {
+      const hit = hitAt.call(root, x, y);
+      if (hit && hit !== element && !element.contains(hit)) return { reason: 'occluded' };
+    }
+    // Same-origin frames: add each frame's content-box offset up to the top.
+    let frameWin: Window = ownWin;
+    while (frameWin !== win) {
+      const frame = frameWin.frameElement as HTMLElement | null;
+      if (!frame) return { reason: 'offscreen' };
+      const frameRect = frame.getBoundingClientRect();
+      const parentWin = (frame.ownerDocument.defaultView ?? win) as BrowserDomWindow;
+      let paddingLeft = 0;
+      let paddingTop = 0;
+      try {
+        const style = parentWin.getComputedStyle(frame);
+        paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
+        paddingTop = Number.parseFloat(style.paddingTop) || 0;
+      } catch {
+        // No computed style: border box only.
+      }
+      x += frameRect.left + frame.clientLeft + paddingLeft;
+      y += frameRect.top + frame.clientTop + paddingTop;
+      frameWin = parentWin;
+    }
+    return { x: Math.round(x), y: Math.round(y) };
+  }
+
+  function inputPrepare(args: Record<string, unknown>): Record<string, unknown> {
+    const kind = args.kind;
+    if (kind === 'key') {
+      const target = args.ref !== undefined && args.ref !== null
+        ? resolveRef(args.ref)
+        : (win.document.activeElement ?? win.document.body);
+      if (!target) return { token: null, reason: 'no-target' };
+      if (args.ref !== undefined && args.ref !== null && !isElementVisible(win, target)) {
+        throw new Error('browser element is not visible');
+      }
+      (target as HTMLElement).focus?.({ preventScroll: true });
+      const targetWin = target.ownerDocument.defaultView ?? win;
+      return { token: armInputProbe(targetWin, ['keydown']) };
+    }
+    if (kind !== 'click' && kind !== 'hover') throw new Error('invalid browser input kind');
+    const element = kind === 'click' ? clickableTarget(args.ref) : resolveRef(args.ref);
+    if (kind === 'hover' && !isElementVisible(win, element)) {
+      throw new Error('browser element is not visible');
+    }
+    const scroller = element as HTMLElement & {
+      scrollIntoView?: (options?: ScrollIntoViewOptions) => void;
+    };
+    if (typeof scroller.scrollIntoView === 'function') {
+      scroller.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' as ScrollBehavior });
+    }
+    const point = nativePointFor(element);
+    if ('reason' in point) return { token: null, reason: point.reason };
+    const targetWin = element.ownerDocument.defaultView ?? win;
+    const token = armInputProbe(
+      targetWin,
+      kind === 'click' ? ['pointerdown', 'mousedown'] : ['pointermove', 'mousemove', 'mouseover'],
+    );
+    return { token, x: point.x, y: point.y, element: describe(element) };
+  }
+
+  async function inputConfirm(args: Record<string, unknown>): Promise<{ delivered: boolean }> {
+    const token = typeof args.token === 'string' ? args.token : '';
+    const probe = inputProbes.get(token);
+    if (!probe) return { delivered: false };
+    if (!probe.seen) {
+      await new Promise<void>((resolve) => {
+        const timer = win.setTimeout(resolve, INPUT_CONFIRM_WAIT_MS);
+        probe.waiters.push(() => {
+          win.clearTimeout(timer);
+          resolve();
+        });
+      });
+    }
+    const delivered = probe.seen;
+    probe.dispose();
+    return { delivered };
   }
 
   function fill(args: Record<string, unknown>): {
@@ -1351,6 +1529,8 @@ export function createBrowserAutomation(
       if (command === 'inspect') return inspect(args);
       if (command === 'find') return find(args);
       if (command === 'click') return click(args);
+      if (command === 'input_prepare') return inputPrepare(args);
+      if (command === 'input_confirm') return inputConfirm(args);
       if (command === 'fill') return fill(args);
       if (command === 'wait') return wait(args);
       if (command === 'scroll') return scroll(args);

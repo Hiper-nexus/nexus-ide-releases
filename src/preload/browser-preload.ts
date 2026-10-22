@@ -18,6 +18,8 @@ const COMMANDS = new Set<BrowserAutomationCommand>([
   'inspect',
   'find',
   'click',
+  'input_prepare',
+  'input_confirm',
   'fill',
   'wait',
   'scroll',

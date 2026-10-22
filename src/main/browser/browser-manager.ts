@@ -90,6 +90,8 @@ import {
   browserFillResultSchema,
   browserFindResultSchema,
   browserHoverResultSchema,
+  browserInputConfirmSchema,
+  browserInputPrepareSchema,
   browserLayoutAuditSchema,
   browserPageReadResultSchema,
   browserPressResultSchema,
@@ -2629,10 +2631,121 @@ async function finalizeExtract(
 
 export type BrowserActionTarget = string | { text: string };
 
+/** How an action reached the page: real input events or the DOM fallback. */
+export type BrowserInputMode = 'native' | 'synthetic';
+
+type NativeSkipReason = 'no-geometry' | 'offscreen' | 'occluded' | 'no-target' | 'not-delivered';
+
+type NativeInputOutcome =
+  | { delivered: true; element?: BrowserElementDescriptor }
+  | { delivered: false; reason?: NativeSkipReason };
+
+function canSendNativeInput(wc: WebContents): boolean {
+  return typeof (wc as { sendInputEvent?: unknown }).sendInputEvent === 'function' && !wc.isDestroyed();
+}
+
+/**
+ * Real input (F: eventos sintéticos). The preload resolves the ref, scrolls it
+ * into view and arms a probe; Main sends the events through the same input
+ * pipeline as a person (isTrusted, :hover, focus, Enter submits, Tab moves);
+ * the preload then says whether a trusted event arrived. Only when it did not
+ * — hidden pane, covered element, no geometry — does the caller fall back to
+ * the synthetic DOM sequence, so an action is never delivered twice.
+ */
+async function deliverNativeInput(
+  paneId: string,
+  scope: ProjectExecutionScope,
+  entry: BrowserEntry,
+  prepareArgs: Record<string, unknown>,
+  send: (point: { x: number; y: number } | null) => void,
+): Promise<NativeInputOutcome> {
+  const wc = entry.view.webContents;
+  const prepared = browserInputPrepareSchema.parse(
+    await runBrowserAutomationForPane(paneId, scope, 'input_prepare', prepareArgs),
+  );
+  if (prepared.token === null) return { delivered: false, reason: prepared.reason };
+  const zoom = typeof wc.getZoomFactor === 'function' ? wc.getZoomFactor() || 1 : 1;
+  const point = 'x' in prepared
+    ? { x: Math.round(prepared.x * zoom), y: Math.round(prepared.y * zoom) }
+    : null;
+  const navSeq = entry.navSeq;
+  send(point);
+  let delivered: boolean;
+  try {
+    delivered = browserInputConfirmSchema.parse(
+      await runBrowserAutomationForPane(paneId, scope, 'input_confirm', { token: prepared.token }),
+    ).delivered;
+  } catch {
+    // The input navigated the page: the old document cannot answer, and the
+    // navigation itself is the proof that it was delivered.
+    delivered = entry.navSeq !== navSeq;
+  }
+  if (!delivered) return { delivered: false, reason: 'not-delivered' };
+  return { delivered: true, ...('element' in prepared ? { element: prepared.element } : {}) };
+}
+
+async function nativePointer(
+  paneId: string,
+  scope: ProjectExecutionScope,
+  entry: BrowserEntry,
+  ref: string,
+  kind: 'click' | 'hover',
+): Promise<NativeInputOutcome> {
+  const wc = entry.view.webContents;
+  if (!canSendNativeInput(wc)) return { delivered: false };
+  return deliverNativeInput(paneId, scope, entry, { ref, kind }, (point) => {
+    if (!point) return;
+    wc.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y });
+    if (kind !== 'click') return;
+    wc.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+    wc.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+  });
+}
+
+/** Electron accelerator key codes for the named keys `press` accepts. */
+const NATIVE_KEY_CODES: Readonly<Record<string, string>> = {
+  Enter: 'Enter', Tab: 'Tab', Escape: 'Escape', Backspace: 'Backspace', Delete: 'Delete',
+  Insert: 'Insert', Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
+  ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
+  ' ': 'Space', Space: 'Space', CapsLock: 'Capslock', NumLock: 'Numlock', ScrollLock: 'Scrolllock',
+  ...Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`F${index + 1}`, `F${index + 1}`])),
+};
+const NATIVE_MODIFIERS: Readonly<Record<string, 'shift' | 'control' | 'alt' | 'meta'>> = {
+  Shift: 'shift', Control: 'control', Alt: 'alt', Meta: 'meta',
+};
+
+/** keyDown (+ the char that types or submits) + keyUp, or null → synthetic. */
+function nativeKeyPlan(key: string, modifiers: readonly string[]): {
+  keyCode: string;
+  char?: string;
+  modifiers: Array<'shift' | 'control' | 'alt' | 'meta'>;
+} | null {
+  const mapped = modifiers.map((modifier) => NATIVE_MODIFIERS[modifier]);
+  if (mapped.some((modifier) => modifier === undefined)) return null;
+  const native = mapped as Array<'shift' | 'control' | 'alt' | 'meta'>;
+  const printable = key.length === 1 && /[\x20-\x7e]/.test(key);
+  const keyCode = NATIVE_KEY_CODES[key] ?? (printable ? key : undefined);
+  if (!keyCode) return null;
+  // A shortcut (Ctrl/Alt/Meta + key) never types its character.
+  const shortcut = native.some((modifier) => modifier !== 'shift');
+  const char = shortcut
+    ? undefined
+    : key === 'Enter'
+      ? '\r'
+      : key === 'Space' || key === ' '
+        ? ' '
+        : printable
+          ? key
+          : undefined;
+  return { keyCode, ...(char !== undefined ? { char } : {}), modifiers: native };
+}
+
 export interface BrowserClickResult {
   paneId: string;
   clicked: boolean;
   element?: BrowserElementDescriptor;
+  input?: BrowserInputMode;
+  nativeSkipped?: NativeSkipReason;
   resolvedBy?: 'ref' | 'text' | 'jev';
   confidence?: number;
   ambiguous?: boolean;
@@ -2677,16 +2790,23 @@ export async function clickBrowserElement(
     confidence = resolution.confidence;
   }
   const before = snapshotBrowserBefore(entry);
-  const result = browserClickResultSchema.parse(
-    await runBrowserAutomationForPane(paneId, scope, 'click', { ref }),
-  );
+  const native = await nativePointer(paneId, scope, entry, ref, 'click');
+  const element = native.delivered && native.element
+    ? native.element
+    : native.delivered
+      ? undefined
+      : browserClickResultSchema.parse(
+          await runBrowserAutomationForPane(paneId, scope, 'click', { ref }),
+        ).element;
   return attachAfterAndMaybePage(
     entry,
     before,
     {
       paneId,
       clicked: true as const,
-      element: result.element,
+      ...(element ? { element } : {}),
+      input: (native.delivered ? 'native' : 'synthetic') as BrowserInputMode,
+      ...(!native.delivered && native.reason ? { nativeSkipped: native.reason } : {}),
       resolvedBy,
       ...(confidence !== undefined ? { confidence } : {}),
     },
@@ -2903,6 +3023,7 @@ export async function pressBrowserKey(
   pressed: true;
   key: string;
   ref?: string;
+  input?: BrowserInputMode;
   after: BrowserAfterState;
   changed: BrowserChanged;
   errors: BrowserErrorReport;
@@ -2921,6 +3042,40 @@ export async function pressBrowserKey(
     }
   };
   assertCurrent();
+  const wc = entry.view.webContents;
+  const plan = (options.holdMs ?? 0) === 0 && canSendNativeInput(wc)
+    ? nativeKeyPlan(options.key, options.modifiers ?? [])
+    : null;
+  if (plan) {
+    const native = await deliverNativeInput(
+      paneId, scope, entry, { kind: 'key', ...(options.ref ? { ref: options.ref } : {}) },
+      () => {
+        assertCurrent();
+        wc.sendInputEvent({ type: 'keyDown', keyCode: plan.keyCode, modifiers: plan.modifiers });
+        if (plan.char !== undefined) {
+          wc.sendInputEvent({ type: 'char', keyCode: plan.char, modifiers: plan.modifiers });
+        }
+        wc.sendInputEvent({ type: 'keyUp', keyCode: plan.keyCode, modifiers: plan.modifiers });
+      },
+    );
+    if (native.delivered) {
+      assertCurrent();
+      const after = await attachAfterAndMaybePage(
+        entry,
+        before,
+        {
+          paneId,
+          pressed: true as const,
+          key: options.key,
+          ...(options.ref ? { ref: options.ref } : {}),
+          input: 'native' as BrowserInputMode,
+        },
+        options,
+      );
+      assertCurrent();
+      return after;
+    }
+  }
   const result = browserPressResultSchema.parse(
     await runBrowserAutomation(paneId, entry.view.webContents, 'press', {
       key: options.key,
@@ -2935,7 +3090,7 @@ export async function pressBrowserKey(
   const after = await attachAfterAndMaybePage(
     entry,
     before,
-    { paneId, ...result },
+    { paneId, ...result, input: 'synthetic' as BrowserInputMode },
     options,
   );
   assertCurrent();
@@ -2951,6 +3106,7 @@ export async function hoverBrowserElement(
   paneId: string;
   hovered: true;
   element: BrowserElementDescriptor;
+  input?: BrowserInputMode;
   after: BrowserAfterState;
   changed: BrowserChanged;
   errors: BrowserErrorReport;
@@ -2960,13 +3116,22 @@ export async function hoverBrowserElement(
 }> {
   const entry = withEntry(paneId, scope);
   const before = snapshotBrowserBefore(entry);
+  const native = await nativePointer(paneId, scope, entry, ref, 'hover');
+  if (native.delivered && native.element) {
+    return attachAfterAndMaybePage(
+      entry,
+      before,
+      { paneId, hovered: true as const, element: native.element, input: 'native' as BrowserInputMode },
+      options,
+    );
+  }
   const result = browserHoverResultSchema.parse(
     await runBrowserAutomationForPane(paneId, scope, 'hover', { ref }),
   );
   return attachAfterAndMaybePage(
     entry,
     before,
-    { paneId, ...result },
+    { paneId, ...result, input: 'synthetic' as BrowserInputMode },
     options,
   );
 }

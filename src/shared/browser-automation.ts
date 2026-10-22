@@ -14,6 +14,8 @@ export type BrowserAutomationCommand =
   | 'inspect'
   | 'find'
   | 'click'
+  | 'input_prepare'
+  | 'input_confirm'
   | 'fill'
   | 'wait'
   | 'scroll'

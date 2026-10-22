@@ -600,7 +600,10 @@ const browserClickTool: McpToolDef = {
     'plain `text` (accessible name, never a CSS selector or JavaScript). ' +
     'With text, a clear winner is clicked; when ambiguous the response ' +
     'carries `candidates` and nothing is clicked (Jev only breaks ties ' +
-    'with ≥ 0.7 confidence). The click requires user confirmation.',
+    'with ≥ 0.7 confidence). The click is a real mouse click at the element ' +
+    'center after scrolling it into view (`input: "native"`); a covered or ' +
+    'hidden element falls back to the dispatched pointer/mouse/click sequence ' +
+    '(`input: "synthetic"`). The click requires user confirmation.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -765,8 +768,10 @@ const browserPressTool: McpToolDef = {
     'Press a keyboard key on the focused element, or on a `ref` when given ' +
     '(the element is focused first). Accepts named keys (Enter, Tab, Escape, ' +
     'ArrowUp/Down/Left/Right, Backspace, Delete, F1-F12, ...) or a single ' +
-    'printable character. Modifiers: Shift, Control, Alt, Meta. ' +
-    'Optional holdMs holds the key for up to 1000 ms before release.',
+    'printable character. Modifiers: Shift, Control, Alt, Meta. Keys are real ' +
+    'key events (Enter submits a form, Tab moves focus, a character types) ' +
+    'unless the pane cannot take input. Optional holdMs holds the key for up ' +
+    'to 1000 ms before release (dispatched events).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -804,9 +809,10 @@ const browserPressTool: McpToolDef = {
 const browserHoverTool: McpToolDef = {
   name: 'nexus_browser_hover',
   description:
-    'Hover a visible element by opaque ref (dispatches the pointer + mouse ' +
-    'over/enter sequence and focuses it). Useful for triggering tooltips, ' +
-    'dropdown menus, and :hover-driven UI.',
+    'Hover a visible element by opaque ref: moves a real mouse pointer to its ' +
+    'center (falls back to dispatched pointer/mouse events when the pane cannot ' +
+    'take input; `input` says which). Useful for tooltips, dropdown menus and ' +
+    ':hover-driven UI.',
   inputSchema: {
     type: 'object',
     properties: {

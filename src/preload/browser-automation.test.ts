@@ -376,6 +376,85 @@ describe('isolated browser automation', () => {
     dom.window.close();
   });
 
+  it('synthetic click fires the pointer/mouse down-up sequence before click (Radix opens on pointerdown)', async () => {
+    const { dom, automation } = fixture();
+    const read = (await automation.run('read', {})) as { elements: Array<{ ref: string; name: string }> };
+    const button = read.elements.find((element) => element.name === 'Salvar')!;
+    const seen: string[] = [];
+    const el = dom.window.document.querySelector('#save')!;
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      el.addEventListener(type, (event) => {
+        seen.push(type);
+        if (type === 'pointerdown') expect((event as MouseEvent).button).toBe(0);
+      });
+    }
+    await automation.run('click', { ref: button.ref });
+    expect(seen).toEqual(['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']);
+  });
+
+  it('a pointerdown that cancels the default suppresses the mouse compatibility events, not the click', async () => {
+    const { dom, automation } = fixture();
+    const read = (await automation.run('read', {})) as { elements: Array<{ ref: string; name: string }> };
+    const button = read.elements.find((element) => element.name === 'Salvar')!;
+    const seen: string[] = [];
+    const el = dom.window.document.querySelector('#save')!;
+    el.addEventListener('pointerdown', (event) => event.preventDefault());
+    for (const type of ['mousedown', 'mouseup', 'click']) el.addEventListener(type, () => seen.push(type));
+    await automation.run('click', { ref: button.ref });
+    expect(seen).toEqual(['click']);
+  });
+
+  it('prepares a native click: scrolls into view, returns the center point and a delivery token', async () => {
+    const trusted = new WeakSet<Event>();
+    const { dom, automation } = (() => {
+      const base = fixture();
+      return {
+        dom: base.dom,
+        automation: createBrowserAutomation(base.dom.window as unknown as BrowserDomWindow, {
+          isTrustedInputEvent: (event) => trusted.has(event),
+        }),
+      };
+    })();
+    const read = (await automation.run('read', {})) as { elements: Array<{ ref: string; name: string }> };
+    const ref = read.elements.find((element) => element.name === 'Salvar')!.ref;
+    const el = dom.window.document.querySelector('#save') as HTMLElement;
+    let scrolled = false;
+    el.scrollIntoView = () => { scrolled = true; };
+    el.getBoundingClientRect = () => ({ left: 100, top: 40, width: 80, height: 20, right: 180, bottom: 60, x: 100, y: 40, toJSON: () => ({}) });
+    const prepared = (await automation.run('input_prepare', { ref, kind: 'click' })) as {
+      token: string; x: number; y: number; element: { name: string };
+    };
+    expect(scrolled).toBe(true);
+    expect(prepared).toMatchObject({ x: 140, y: 50, element: { name: 'Salvar' } });
+    expect(prepared.token).toMatch(/^i\d+$/);
+
+    // The trusted mousedown is what proves the native event reached the page.
+    const down = new dom.window.MouseEvent('mousedown', { bubbles: true });
+    trusted.add(down);
+    el.dispatchEvent(down);
+    await expect(automation.run('input_confirm', { token: prepared.token })).resolves.toEqual({ delivered: true });
+
+    const again = (await automation.run('input_prepare', { ref, kind: 'click' })) as { token: string };
+    el.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
+    await expect(automation.run('input_confirm', { token: again.token })).resolves.toEqual({ delivered: false });
+  });
+
+  it('does not offer a native point for a covered or zero-size element', async () => {
+    const { dom, automation } = fixture();
+    const read = (await automation.run('read', {})) as { elements: Array<{ ref: string; name: string }> };
+    const ref = read.elements.find((element) => element.name === 'Salvar')!.ref;
+    const el = dom.window.document.querySelector('#save') as HTMLElement;
+    el.getBoundingClientRect = () => ({ left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0, x: 0, y: 0, toJSON: () => ({}) });
+    await expect(automation.run('input_prepare', { ref, kind: 'click' }))
+      .resolves.toMatchObject({ token: null, reason: 'no-geometry' });
+    el.getBoundingClientRect = () => ({ left: 10, top: 10, width: 50, height: 20, right: 60, bottom: 30, x: 10, y: 10, toJSON: () => ({}) });
+    const overlay = dom.window.document.createElement('div');
+    dom.window.document.body.append(overlay);
+    (dom.window.document as unknown as { elementFromPoint: () => Element }).elementFromPoint = () => overlay;
+    await expect(automation.run('input_prepare', { ref, kind: 'click' }))
+      .resolves.toMatchObject({ token: null, reason: 'occluded' });
+  });
+
   it('hover dispatches the mouse over sequence on a previously read ref', async () => {
     const { dom, automation } = fixture();
     const read = (await automation.run('read', {})) as {
