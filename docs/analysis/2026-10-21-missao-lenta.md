@@ -74,6 +74,17 @@ prove aparência: as duas cobranças não podiam ser satisfeitas juntas.
 pelo Main conta como evidência. A rubrica passa a nomear a captura observada
 como prova válida de entrega visual.
 
+**O limite da dispensa, estreitado em duas rodadas de revisão:** a captura
+prova APARÊNCIA, nunca comportamento, então ela só desculpa a falta de
+verificação quando TUDO que o worker declarou é asset inerte — folha de
+estilo, bitmap, fonte. `.html` e `.svg` ficam de fora: os dois executam
+(JavaScript embutido, `<script>` dentro do SVG) e aqui só se conhece o NOME do
+arquivo declarado, nunca o conteúdo. Uma landing page de arquivo único, então,
+continua devendo prova de comportamento — e é o certo: o checkout com layout e
+lógica de envio no mesmo `.html` não passa pelo screenshot. Entrega sem
+arquivo declarado também não ganha a dispensa: não há como provar que é só
+aparência.
+
 ### 4. A doutrina só ensinava a devolver, e a prova não cabia na aparência (MEDIDO)
 
 Nas três portas (kickoff, instruções permanentes, lembrete de turno) a prova

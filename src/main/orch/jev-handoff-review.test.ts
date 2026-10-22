@@ -96,7 +96,7 @@ describe('evaluateHandoffEvidence', () => {
   it('has_verification baixo COM captura visual verificada de entrega de aparência → sem sinal', () => {
     const signals = evaluateHandoffEvidence(
       result({ has_verification: 0.1 }).answers,
-      { ...facts, hasVisualEvidence: true, declaredFiles: ['landing/estilo.css', 'landing/hero.svg'] },
+      { ...facts, hasVisualEvidence: true, declaredFiles: ['landing/estilo.css', 'landing/hero.webp'] },
     );
     expect(signals.some((s) => s.includes('verificação'))).toBe(false);
   });
@@ -117,7 +117,7 @@ describe('evaluateHandoffEvidence', () => {
   it('entrega só de aparência: a captura é a prova e não há devolução', () => {
     const signals = evaluateHandoffEvidence(
       result({ has_verification: 0.1 }).answers,
-      { ...facts, hasVisualEvidence: true, declaredFiles: ['site/estilo.css', 'site/logo.svg'] },
+      { ...facts, hasVisualEvidence: true, declaredFiles: ['site/estilo.css', 'site/logo.png'] },
     );
     expect(signals.some((s) => s.includes('evidência de verificação'))).toBe(false);
   });
@@ -129,6 +129,17 @@ describe('evaluateHandoffEvidence', () => {
     const signals = evaluateHandoffEvidence(
       result({ has_verification: 0.1 }).answers,
       { ...facts, hasVisualEvidence: true, declaredFiles: ['site/checkout.html'] },
+    );
+    expect(signals.some((s) => s.includes('evidência de verificação'))).toBe(true);
+  });
+
+  // F-1635 (2ª rodada do Codex no PR 159): SVG aceita `<script>` e manipulador
+  // de evento, e aqui só se conhece o NOME do arquivo — o ícone inerte e o SVG
+  // que executa chegam iguais. Mesma regra do `.html`.
+  it('svg não é só-aparência: o nome do arquivo não prova que ele não executa', () => {
+    const signals = evaluateHandoffEvidence(
+      result({ has_verification: 0.1 }).answers,
+      { ...facts, hasVisualEvidence: true, declaredFiles: ['site/estilo.css', 'site/widget.svg'] },
     );
     expect(signals.some((s) => s.includes('evidência de verificação'))).toBe(true);
   });
