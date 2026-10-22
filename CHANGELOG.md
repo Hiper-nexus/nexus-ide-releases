@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.412 — Projetos locais e escolha de conta
+
+Candidata Windows em preparação; publicação depende das verificações e da assinatura YubiKey.
+
+- F-1630: a origem automática da conta Claude sobrevive ao layout salvo. Ao iniciar uma conversa nova em um pane automático solto, o Main volta a aplicar a regra de folga, inclusive para uma conta com 99% semanal e outra disponível. Retomadas de conversa, contas explicitamente escolhidas e autoridade de missão são preservadas. Vínculos antigos sem origem continuam vinculados.
+- F-1629: missões podem começar na pasta local sem Git, sem primeiro commit ou sem Git instalado. O Nexus não inicializa repositório por conta própria; projetos com HEAD continuam isolados por worktree.
+- Inclui F-431/F-432/F-433: início dos kits por Node nativo no Windows, falhas de escrita MCP contidas e JSON inválido tratado.
+- Inclui F-434: preservação dos avisos Chromium no instalador Squirrel.
+
 ## 0.76.411 — Kits e avisos Chromium no Windows
 
 Candidata Windows local sobre a 0.76.409, com as correções dos kits da candidata

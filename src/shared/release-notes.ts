@@ -12724,7 +12724,7 @@ export const RELEASE_076410: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076411: AppRelease = {
   ...RELEASE_076410,
   version: '0.76.411',
   codename: 'Kits e avisos Chromium no Windows',
@@ -12735,4 +12735,22 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076411: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  ...RELEASE_076411,
+  version: '0.76.412',
+  codename: 'Projetos locais e escolha de conta',
+  summary:
+    'Missões podem começar em projetos locais sem Git ou primeiro commit. ' +
+    'A escolha automática de conta Claude permanece automática ao salvar o pane: ' +
+    'uma conversa nova volta à regra de folga. Inclui correções dos kits e do instalador Windows.',
+  highlights: [
+    { title: 'Comece antes do Git', detail: 'Projetos sem repositório, sem primeiro commit ou sem Git instalado iniciam missões na própria pasta. Repositórios com commit continuam usando isolamento.' },
+    ...RELEASE_076411.highlights,
+  ],
+  fixes: [
+    { title: 'Conta automática continua automática', detail: 'Novos panes Claude guardam a origem da escolha. Ao iniciar outra conversa, o Main pode escolher uma conta com folga. Retomadas, contas explícitas e vínculos antigos preservam a identidade.' },
+    ...RELEASE_076411.fixes,
+  ],
+};
+
+export const RELEASE_076412: AppRelease = CURRENT_RELEASE;
