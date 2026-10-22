@@ -109,6 +109,28 @@ describe('orchestrator doctrine', () => {
     expect(Buffer.byteLength(text, 'utf8')).toBeLessThan(2048);
     expect(text).toContain('ESTEIRA');
   });
+
+  // F-1633: a doutrina ensinava a DEVOLVER trabalho (`verdict:"rework"`) e
+  // nunca a ACEITAR. Sem o aceite o laço só tinha a saída que custa outra
+  // rodada do worker, e `autoCloseOnHandoff` já havia fechado o pane — a nota
+  // caía num pane novo, que recomeçava do zero. E a prova exigida era sempre
+  // "rode o teste": numa entrega de aparência não existe esse teste, então o
+  // Maestro caía em "não verificado" e devolvia de novo.
+  it('ensina a aceitar a entrega, não só a devolver', () => {
+    const text = buildOrchestratorDoctrine(null, mission());
+    expect(text).toContain('accepted');
+    expect(text).toMatch(/"não verificado"/);
+  });
+
+  it('pede a prova que cabe ao trabalho: captura do navegador para aparência', () => {
+    const text = buildOrchestratorDoctrine(null, mission());
+    expect(text).toMatch(/navegador/i);
+  });
+
+  it('a doutrina permanente também ensina o aceite e a prova visual', () => {
+    expect(MAESTRO_STANDING_DOCTRINE).toContain('accepted');
+    expect(MAESTRO_STANDING_DOCTRINE).toMatch(/navegador/i);
+  });
 });
 
 
@@ -349,11 +371,18 @@ describe('doutrina permanente do Maestro (F-701)', () => {
     // Nas três portas por onde a doutrina chega: kickoff, instruções permanentes e lembrete de turno.
     const base = buildOrchestratorDoctrine(null, mission());
     expect(base).toMatch(/VERIFIQUE: handoff é alegação, não prova/);
-    expect(base).toMatch(/leia o diff e rode o teste que prova a correção/);
+    expect(base).toMatch(/leia o diff e exija a prova que cabe/);
     expect(base).toMatch(/"não verificado"/);
     expect(MAESTRO_STANDING_DOCTRINE).toMatch(/Verifique: handoff é alegação, não prova/);
-    expect(MAESTRO_STANDING_DOCTRINE).toMatch(/leia o diff e rode o teste que prova a correção/);
+    expect(MAESTRO_STANDING_DOCTRINE).toMatch(/leia o diff e exija a prova que cabe/);
     expect(MAESTRO_STANDING_DOCTRINE).toMatch(/"não verificado"/);
+    // F-1633: a prova é a que cabe ao trabalho. "rode o teste" fixo levava a
+    // entrega de aparência a "não verificado" e a mais uma devolução: não
+    // existe teste de unidade que prove aparência.
+    for (const text of [base, MAESTRO_STANDING_DOCTRINE]) {
+      expect(text).toMatch(/teste para comportamento/);
+      expect(text).toMatch(/captura do navegador para aparência/);
+    }
   });
 
   it('F-782: a recusa do Maestro tem gesto próprio no ACK (o Nexus aprende com ela)', () => {
