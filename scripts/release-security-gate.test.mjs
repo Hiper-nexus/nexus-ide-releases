@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   assertReleaseSecurityManifest,
+  AUDIT_ATTEMPTS,
   buildReleaseSecurityArtifacts,
   buildReleaseSecurityArtifactsWithPinnedNpm,
   buildFinalizedReleaseSecurityFields,
@@ -124,6 +125,7 @@ describe('manual release security artifacts', () => {
       root,
       outDir: path.join(root, 'artifacts'),
       runCommand,
+      sleep: () => {},
       commitSha: 'a'.repeat(40),
       ...securityAuthority,
       runtime: { node: 'v22.23.1', npm: '12.0.0' },
@@ -213,6 +215,7 @@ describe('manual release security artifacts', () => {
       root,
       outDir: path.join(root, 'artifacts'),
       runCommand,
+      sleep: () => {},
       commitSha: 'a'.repeat(40),
       ...securityAuthority,
       runtime: { node: 'v22.23.1', npm: '12.0.0' },
@@ -230,6 +233,85 @@ describe('manual release security artifacts', () => {
     );
     expect(stored.nexusProductionAuditSubstitution?.reason).toMatch(/ÁRVORE COMPLETA/);
     expect(stored.nexusProductionAuditSubstitution?.registryDetail).toMatch(/400 Bad Request/);
+  });
+
+  it('asks again when the registry answers no report at all', () => {
+    // Measured on 21–22/10: npm's audit endpoints answer 400 INTERMITTENTLY —
+    // two candidates died on it and a probe minutes later got a normal report
+    // from the same lockfile. Dying on one flaky request is not strictness.
+    const root = tempRoot();
+    const clean = JSON.stringify({
+      auditReportVersion: 2,
+      vulnerabilities: {},
+      metadata: {
+        vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 },
+      },
+    });
+    let auditCalls = 0;
+    const runCommand = vi.fn((args) => {
+      if (args[0] === 'audit') {
+        auditCalls += 1;
+        // The first call of each audit fails; the retry answers.
+        return auditCalls % 2 === 1
+          ? { status: 1, stdout: '{"error":{"code":"E400"}}', stderr: 'npm error audit' }
+          : { status: 0, stdout: clean, stderr: '' };
+      }
+      return {
+        status: 0,
+        stdout: JSON.stringify({ bomFormat: 'CycloneDX', specVersion: '1.5', version: 1, components: [] }),
+        stderr: '',
+      };
+    });
+
+    const result = buildReleaseSecurityArtifacts({
+      root,
+      outDir: path.join(root, 'artifacts'),
+      runCommand,
+      sleep: () => {},
+      commitSha: 'a'.repeat(40),
+      ...securityAuthority,
+      runtime: { node: 'v22.23.1', npm: '12.0.0' },
+      now: () => new Date('2026-10-22T00:00:00.000Z'),
+    });
+
+    // The report that ARRIVED is the one that counts: no substitution needed.
+    expect(result.manifest.audit).toMatchObject({
+      productionVulnerabilities: 0,
+      productionAuditSource: 'production-tree',
+      buildToolchainVulnerabilities: 0,
+    });
+    expect(auditCalls).toBe(4);
+  });
+
+  it('gives up after the bounded number of attempts', () => {
+    const root = tempRoot();
+    let auditCalls = 0;
+    const runCommand = vi.fn((args) => {
+      if (args[0] === 'audit') {
+        auditCalls += 1;
+        return { status: 1, stdout: '{"error":{"code":"E400"}}', stderr: 'npm error audit' };
+      }
+      return {
+        status: 0,
+        stdout: JSON.stringify({ bomFormat: 'CycloneDX', specVersion: '1.5', version: 1, components: [] }),
+        stderr: '',
+      };
+    });
+
+    expect(() =>
+      buildReleaseSecurityArtifacts({
+        root,
+        outDir: path.join(root, 'artifacts'),
+        runCommand,
+        sleep: () => {},
+        commitSha: 'a'.repeat(40),
+        ...securityAuthority,
+        runtime: { node: 'v22.23.1', npm: '12.0.0' },
+        now: () => new Date('2026-10-22T00:00:00.000Z'),
+      }),
+    ).toThrow(/build toolchain/);
+    // Three attempts for production, three for the toolchain — and no more.
+    expect(auditCalls).toBe(AUDIT_ATTEMPTS * 2);
   });
 
   it('treats ANY non-report payload as the endpoint failing', () => {
@@ -270,6 +352,7 @@ describe('manual release security artifacts', () => {
       root,
       outDir: path.join(root, 'artifacts'),
       runCommand,
+      sleep: () => {},
       commitSha: 'a'.repeat(40),
       ...securityAuthority,
       runtime: { node: 'v22.23.1', npm: '12.0.0' },
@@ -323,6 +406,7 @@ describe('manual release security artifacts', () => {
         root,
         outDir: path.join(root, 'artifacts'),
         runCommand,
+        sleep: () => {},
         commitSha: 'a'.repeat(40),
         ...securityAuthority,
         runtime: { node: 'v22.23.1', npm: '12.0.0' },
@@ -357,6 +441,7 @@ describe('manual release security artifacts', () => {
         root,
         outDir: path.join(root, 'artifacts'),
         runCommand,
+        sleep: () => {},
         commitSha: 'a'.repeat(40),
         ...securityAuthority,
       }),
@@ -372,6 +457,7 @@ describe('manual release security artifacts', () => {
         root,
         outDir: path.join(root, 'artifacts'),
         runCommand,
+        sleep: () => {},
         commitSha: 'a'.repeat(40),
         ...securityAuthority,
       }),
@@ -410,6 +496,7 @@ describe('manual release security artifacts', () => {
       root,
       outDir: path.join(root, 'artifacts'),
       runCommand,
+      sleep: () => {},
       commitSha: 'a'.repeat(40),
       ...securityAuthority,
     })).toThrow(/build toolchain.*1 vulnerabilidade/i);
