@@ -185,6 +185,26 @@ export const SUCCESS_ACK_IDLE_CLOSE_MS = 3 * 60_000;
 export const SUCCESS_ACK_DELIVERY_CEILING_MS = 10 * 60_000;
 
 /**
+ * F-1636 (2ª revisão do Codex no PR 159): a janela de aceite é AMOSTRADA, não
+ * medida uma vez no fim. Com uma sonda só, o Maestro que verifica durante
+ * 2m59s de uma janela de 3 min e fica ocioso em 2m59 tinha **1 segundo** para
+ * devolver `rework` — o contrário do que a janela promete. A cada volta desta
+ * a transição ocupado → ocioso recomeça a janela inteira, que é o instante em
+ * que ele de fato pode olhar a entrega.
+ */
+export const CONSUMER_BUSY_POLL_MS = 5_000;
+/**
+ * F-1636: teto TOTAL da espera armada por aceite, contado do armar.
+ *
+ * Reiniciar a janela a cada volta ocupada não pode ser sem fim: um Maestro
+ * ocupado uma hora seguraria um pane de ~1 GB por uma hora (F-572), e worker
+ * de missão é excluído da limpeza do guardião. Estourado o teto, o pane fecha:
+ * a entrega é durável no ledger e o `rework` ainda alcança o writer por
+ * `resume` ou por brief novo na mesma worktree (F-1409).
+ */
+export const SUCCESS_ACK_TOTAL_CEILING_MS = 10 * 60_000;
+
+/**
  * F-1409/M3: enquanto a entrega está `queued` (Maestro em turno longo), o
  * prazo não corre — o Maestro ainda não leu e pode pedir rework. Verifica a
  * chegada a cada minuto; o prazo começa na primeira verificação entregue.
@@ -370,23 +390,69 @@ export function scheduleAutoCloseAfterHandoff(
         }
       };
       let windowMark: number | null = null;
+      let windowEndsAt = 0;
+      let sawConsumerBusy = false;
+      const ackCeilingAt = awaitAck ? Date.now() + SUCCESS_ACK_TOTAL_CEILING_MS : null;
+      const pastAckCeiling = (): boolean => ackCeilingAt !== null && Date.now() >= ackCeilingAt;
+      /**
+       * `null` = não há sonda (caminho não-success de sempre). Sonda que lança
+       * conta como OCUPADO: indisponibilidade não autoriza fechar o pane no
+       * meio de uma verificação.
+       */
+      const consumerBusyNow = (): boolean | null => {
+        if (!nonSuccess.isDeliveryConsumerBusy) return null;
+        try {
+          return nonSuccess.isDeliveryConsumerBusy() === true;
+        } catch {
+          return true;
+        }
+      };
       const startIdleWindow = (): void => {
         windowMark = markOf();
-        pending.timer = setTimeout(onIdle, idleMs);
+        sawConsumerBusy = false;
+        windowEndsAt = Date.now() + idleMs;
+        scheduleTick();
+      };
+      const scheduleTick = (): void => {
+        const remaining = Math.max(windowEndsAt - Date.now(), 0);
+        // Sem sonda, um timer só — o caminho não-success não muda de forma.
+        if (!nonSuccess.isDeliveryConsumerBusy) {
+          pending.timer = setTimeout(onIdle, remaining);
+          return;
+        }
+        pending.timer = setTimeout(onTick, Math.min(CONSUMER_BUSY_POLL_MS, remaining));
+      };
+      const onTick = (): void => {
+        if (pendingNonSuccessBySession.get(sessionId) !== pending) return;
+        // Teto conferido AQUI, não só na borda da janela: medido na borda, um
+        // Maestro sempre ocupado só fechava no fim da janela seguinte — até
+        // 3 min depois do teto. Teto é teto, com a folga de uma amostragem.
+        if (pastAckCeiling()) {
+          onIdle();
+          return;
+        }
+        const busy = consumerBusyNow();
+        if (busy === true) sawConsumerBusy = true;
+        else if (busy === false && sawConsumerBusy && !pastAckCeiling()) {
+          // F-1636: ele acabou de ficar ocioso — a janela inteira começa AGORA.
+          startIdleWindow();
+          return;
+        }
+        if (Date.now() >= windowEndsAt) {
+          onIdle();
+          return;
+        }
+        scheduleTick();
       };
       const onIdle = (): void => {
         if (pendingNonSuccessBySession.get(sessionId) !== pending) return;
         const mark = markOf();
         const producedOutput = mark !== null && windowMark !== null && mark !== windowMark;
-        let consumerBusy = false;
-        try {
-          consumerBusy = nonSuccess.isDeliveryConsumerBusy?.() === true;
-        } catch {
-          // Sonda indisponível não autoriza fechar o pane no meio de uma
-          // verificação: trata como ocupado e tenta de novo na próxima volta.
-          consumerBusy = true;
-        }
-        if (producedOutput || consumerBusy || nonSuccess.isBusy?.(sessionId)) {
+        const consumerBusy = consumerBusyNow() === true;
+        if (
+          (producedOutput || consumerBusy || nonSuccess.isBusy?.(sessionId)) &&
+          !pastAckCeiling()
+        ) {
           startIdleWindow();
           return;
         }

@@ -12,6 +12,8 @@ import {
   NON_SUCCESS_IDLE_CLOSE_MS,
   SUCCESS_ACK_DELIVERY_CEILING_MS,
   SUCCESS_ACK_IDLE_CLOSE_MS,
+  SUCCESS_ACK_TOTAL_CEILING_MS,
+  CONSUMER_BUSY_POLL_MS,
   selectScopedPaneCloseTargets,
   scheduleAutoCloseAfterHandoff,
   shouldArmAutoCloseOnHandoff,
@@ -492,6 +494,52 @@ describe("F-1409: entrega não-success fecha no ACK ou na rede de segurança", (
       isDelivered: () => false,
     });
     await vi.advanceTimersByTimeAsync(SUCCESS_ACK_DELIVERY_CEILING_MS + SUCCESS_ACK_IDLE_CLOSE_MS + 1_000);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
+  // F-1636 (2ª revisão do Codex no PR 159): a janela era medida UMA vez, no
+  // fim. O Maestro que verifica durante quase toda ela e fica ocioso no último
+  // segundo recebia 1 segundo para devolver `rework` — o contrário do que a
+  // janela promete, e o worker morno fechava justamente quando ele ia olhar.
+  it("Maestro que fica ocioso no fim da janela recebe a janela INTEIRA", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    let busy = true;
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "hoff-ack",
+      awaitAckOnSuccess: true,
+      isDeliveryConsumerBusy: () => busy,
+    });
+    // Ocupado até 1 s antes do fim da janela.
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_IDLE_CLOSE_MS - 1_000);
+    expect(close).not.toHaveBeenCalled();
+    busy = false;
+    // A amostragem vê a transição e recomeça a janela inteira.
+    await vi.advanceTimersByTimeAsync(CONSUMER_BUSY_POLL_MS + 1_000);
+    expect(close, "fechou logo depois de o Maestro ficar ocioso").not.toHaveBeenCalled();
+    // Uma janela inteira a partir da transição, e só então fecha.
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_IDLE_CLOSE_MS - CONSUMER_BUSY_POLL_MS);
+    expect(close).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(CONSUMER_BUSY_POLL_MS + 1_000);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
+  // F-1636: reiniciar a janela a cada volta ocupada não pode ser sem fim — um
+  // Maestro ocupado uma hora seguraria um pane de ~1 GB uma hora (F-572), e
+  // worker de missão é excluído da limpeza do guardião.
+  it("Maestro ocupado para sempre não segura o worker: o teto total fecha", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "hoff-ack",
+      awaitAckOnSuccess: true,
+      isDeliveryConsumerBusy: () => true,
+    });
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_TOTAL_CEILING_MS - 1_000);
+    expect(close, "fechou antes do teto total").not.toHaveBeenCalled();
+    // Fecha no teto, com a folga de UMA amostragem — não no fim da janela
+    // seguinte, que chegaria até 3 min depois dele.
+    await vi.advanceTimersByTimeAsync(CONSUMER_BUSY_POLL_MS + 2_000);
     expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
   });
 
