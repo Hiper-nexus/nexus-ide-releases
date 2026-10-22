@@ -5,6 +5,7 @@ import {
 } from '../../shared/mission-intent';
 import { isVisualAssetText } from '../../shared/ui-work-signal';
 import { isUiMissionText } from '../../shared/mission-work-kind';
+import { isReverseEngineeringTask } from '../../shared/reverse-engineering-intent';
 import { listInstalledCatalogItems } from './catalog-installed';
 
 /**
@@ -23,6 +24,7 @@ export const NEXUS_GUIDED_SKILL_ORDER = [
   'archify',
   'superpowers',
   'nexus-visual-media',
+  'rea',
   'oc-pilot',
   'oc-builder',
   'oc-scout',
@@ -51,6 +53,7 @@ export const BUNDLED_GUIDED_SKILLS = [
   'archify',
   'superpowers',
   'nexus-visual-media',
+  'rea',
   'oc-pilot',
   'oc-builder',
   'oc-scout',
@@ -245,6 +248,10 @@ function policyForAgent(input: {
   }
 
   if (securityWork) requested.add('bridgesecurity');
+
+  // REA also guides planning/review; the skill does not confer execution
+  // authority or imply that a reverse-engineering runtime is installed.
+  if (isReverseEngineeringTask(missionSignal)) requested.add('rea');
 
   const visualMission = isVisualAssetText(missionSignal);
   const visualGenerationOwner =

@@ -116,6 +116,7 @@ vi.mock('../observability/main-trace', () => ({
 }));
 
 import { paneSpawnTool, setOperatorRouteResolver, setOperatorTabMissionProvider } from './tools-panes';
+import { classifyTaskWithSkillForRouting } from './jev-task-routing';
 import {
   forgetAccountChoiceReceipt,
   recordAccountChoiceReceipt,
@@ -648,6 +649,22 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     ).rejects.toBeTruthy();
     expect(resolver).not.toHaveBeenCalled();
     expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
+  });
+
+  it('delivers the real deterministic REA pick to the operator child prompt without a key', async () => {
+    setOperatorRouteResolver(async (task, ctx) => {
+      const batch = await classifyTaskWithSkillForRouting(task, {
+        allowedSkills: ctx.allowedSkills ?? null,
+        deps: { enabled: () => true, hasKey: () => false },
+      });
+      return { adapterId: 'codex', skillSuggestion: batch.kind === 'skipped' ? null : batch.skillSuggestion };
+    });
+    const result = await paneSpawnTool.handler({ task: 'Analise este aplicativo por engenharia reversa' }, userPane());
+    expect(harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0]).toMatchObject({
+      adapterId: 'codex',
+      prompt: 'Analise este aplicativo por engenharia reversa\n\nSkill sugerida pelo Nexus: rea — leia a SKILL.md dela antes de começar.',
+    });
+    expect(result).toMatchObject({ route: { skill: { name: 'rea', pkg: 'rea', confidence: 1 } } });
   });
 
   it('auto-route com skill ≥ 0.7 acrescenta a dica ao prompt e expõe route.skill', async () => {

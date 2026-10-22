@@ -196,3 +196,6 @@ scripts/codesign-retry-bin/
 /mcp-needs-auth-cache.json
 /mk-eph.mts
 /settings.json
+
+# Per-plan local agent briefs, review packages and progress ledgers.
+/.superpowers/sdd/

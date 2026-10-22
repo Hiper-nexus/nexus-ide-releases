@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -76,6 +77,42 @@ afterEach(() => {
 });
 
 describe('ensureSkillsForCli', () => {
+  it('delivers an executable REA helper that reports a missing runtime without starting installation', async () => {
+    const home = tmpRoot();
+    const target = path.join(tmpRoot(), 'session-skills');
+    ensureSkillsForCli('codex', { home, sourceDirs: [], allowedSkills: ['rea'], targetDirs: [target], includeCliTarget: false });
+    const helper = path.join(target, 'rea', 'scripts', 'rea-static.mjs');
+    expect(fs.existsSync(helper)).toBe(true);
+    const workspace = tmpRoot();
+    const result = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+      execFile(process.execPath, [helper, 'status', '--workspace', workspace, '--runtime', path.join(workspace, 'missing-runtime')],
+        { windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024 },
+        (error, stdout, stderr) => resolve({ code: typeof error?.code === 'number' ? error.code : error ? -1 : 0, stdout, stderr }));
+    });
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, code: 'runtime_missing', version: '6.7.0' });
+    expect(result.stderr).toBe('');
+    expect(fs.readdirSync(workspace)).toEqual([]);
+  });
+
+  it.each(['codex', 'claude', 'grok'])('materializes REA for %s without installing a global MCP server', (cli) => {
+    const home = tmpRoot();
+    const target = path.join(tmpRoot(), 'session-skills');
+    ensureSkillsForCli(cli, {
+      home,
+      sourceDirs: [],
+      allowedSkills: ['rea'],
+      targetDirs: [target],
+      includeCliTarget: false,
+    });
+    const body = fs.readFileSync(path.join(target, 'rea', 'SKILL.md'), 'utf8');
+    const frontmatter = parseYaml(body.split('---')[1]) as { name: string; description: string };
+    expect(frontmatter.name).toBe('rea');
+    expect(frontmatter.description.length).toBeGreaterThan(20);
+    expect(fs.existsSync(path.join(home, '.mcp.json'))).toBe(false);
+    expect(fs.existsSync(path.join(home, '.codex', 'config.toml'))).toBe(false);
+  });
+
   it('mirrors granted skills to the native MiMo config namespace', () => {
     const home = tmpRoot();
     writeSkill(path.join(home, '.agents', 'skills'), 'mimo-test-grant');

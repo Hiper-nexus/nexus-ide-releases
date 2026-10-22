@@ -51,6 +51,34 @@ function answer(
   };
 }
 
+describe('deterministic REA in batch routing', () => {
+  it.each(['disabled', 'no-key', 'network', 'throws', 'invalid-answer', 'classified'] as const)('retains REA when classification is %s', async (mode) => {
+    const judge = vi.fn<JudgeMock>(async () => {
+      if (mode === 'throws') throw new Error('offline');
+      if (mode === 'network') return null;
+      const result = answer(mode === 'invalid-answer' ? 'unknown' : 'hard', 0.9, 'general', 0.9);
+      result.answers.skill = { type: 'choice', choice: 'ponytail', confidence: 0.99, probabilities: {} };
+      return result;
+    });
+    const result = await classifyTaskWithSkillForRouting('Reverse engineer this binary.', {
+      allowedSkills: null,
+      deps: { judge, enabled: () => mode !== 'disabled', hasKey: () => mode !== 'no-key' },
+    });
+    expect(result).toMatchObject({
+      kind: mode === 'classified' ? 'classified' : 'unavailable',
+      skillSuggestion: { name: 'rea', pkg: 'rea', confidence: 1 },
+    });
+    if (mode === 'classified') expect(result).toMatchObject({ classification: { tier: 'hard' } });
+  });
+
+  it.each([{ allowedSkills: [] }, { allowedSkills: ['ponytail'] }])('never widens explicit grants $allowedSkills', async ({ allowedSkills }) => {
+    const result = await classifyTaskWithSkillForRouting('Decompile this library.', {
+      allowedSkills, deps: { enabled: () => false },
+    });
+    expect(result).toMatchObject({ kind: 'unavailable', skillSuggestion: null });
+  });
+});
+
 describe('classifyTaskWithJev', () => {
   it('returns the typed classification and records one decision', async () => {
     const judge = vi.fn<JudgeMock>(async () => answer('hard', 0.8, 'bug', 0.7, 0.4));

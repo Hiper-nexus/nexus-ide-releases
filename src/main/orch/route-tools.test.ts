@@ -123,6 +123,21 @@ afterEach(() => {
 });
 
 describe('nexus_route_task wiring', () => {
+  it('delivers deterministic REA through the real batch catalog without a key or an explicit skill name', async () => {
+    mocks.listProviderSettings.mockReturnValue([
+      { adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth', models: ['gpt-5.6-luna'] },
+    ]);
+    const actual = await vi.importActual<typeof import('./jev-task-routing')>('./jev-task-routing');
+    mocks.classifyTaskWithSkillForRouting.mockImplementation((task) => actual.classifyTaskWithSkillForRouting(task, {
+      allowedSkills: null, deps: { enabled: () => true, hasKey: () => false },
+    }));
+    const decision = await tool('nexus_route_task').handler({ task: 'Faça engenharia reversa deste executável.' }, context());
+    expect(decision).toMatchObject({
+      adapterId: 'codex', jevUnavailable: 'no-key',
+      skillSuggestion: { name: 'rea', pkg: 'rea', confidence: 1 },
+    });
+  });
+
   it('F-1316: classifica brief absoluto do prompt sem persistir seu conteúdo', async () => {
     const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'routing-brief-')));
     const brief = path.join(dir, 'critical.md');

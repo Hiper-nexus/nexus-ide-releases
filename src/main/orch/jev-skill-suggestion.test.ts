@@ -48,6 +48,48 @@ function jevResult(answers: JevResult['answers']): JevResult {
 
 const on = { enabled: () => true, hasKey: () => true };
 
+describe('deterministic REA suggestion', () => {
+  it.each([
+    'Analise este aplicativo por engenharia reversa',
+    'Neste projeto, faça engenharia reversa do binário',
+    'Faça engenharia reversa sem executar o arquivo',
+  ])('delivers REA for a natural request with no decision key: %s', async (task) => {
+    expect(await suggestSkillForTask(task, {
+      allowedSkills: ['rea'], deps: { enabled: () => true, hasKey: () => false },
+    })).toEqual({ name: 'rea', pkg: 'rea', confidence: 1 });
+  });
+
+  it.each(['disabled', 'no-key', 'failure', 'other-skill'] as const)('selects eligible REA independently of the judge (%s)', async (mode) => {
+    const judge = vi.fn(async () => mode === 'failure' ? null : jevResult({
+      skill: { type: 'choice', choice: 'ponytail', confidence: 0.99, probabilities: {} },
+    }));
+    expect(await suggestSkillForTask('Faça engenharia reversa deste executável.', {
+      allowedSkills: null, adapterId: 'codex',
+      deps: { judge, record: () => 'test', enabled: () => mode !== 'disabled', hasKey: () => mode !== 'no-key' },
+    })).toEqual({ name: 'rea', pkg: 'rea', confidence: 1 });
+    expect(judge).not.toHaveBeenCalled();
+  });
+
+  it('preserves explicit grants, unsupported CLI and cancellation', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const deps = { enabled: () => false, hasKey: () => false };
+    for (const extra of [
+      { allowedSkills: [] },
+      { allowedSkills: ['ponytail'] },
+      { adapterId: 'muse' },
+      { signal: controller.signal },
+    ]) {
+      expect(await suggestSkillForTask('Decompile this binary.', {
+        allowedSkills: null, deps, ...extra,
+      })).toBeNull();
+    }
+    expect(await suggestSkillForTask('Use REA to inspect this binary.', {
+      allowedSkills: ['rea'], deps,
+    })).toEqual({ name: 'rea', pkg: 'rea', confidence: 1 });
+  });
+});
+
 describe('skills do projeto no catálogo do Jev (F-753)', () => {
   // 02/10: as 46 skills bmad do projeto só chegavam a um agente arrastadas
   // à mão pelo painel; o Jev escolhia só entre as que vêm com o Nexus.

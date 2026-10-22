@@ -25,6 +25,24 @@ const classified = (over: Record<string, unknown> = {}): ReturnType<NonNullable<
 const deps = (classify: Classify) => ({ classify, projectRoot: () => undefined });
 
 describe('proposePaneRoute', () => {
+  test.each(['disabled', 'no-key'] as const)('proposes REA from the real catalog without a decision engine (%s)', async (mode) => {
+    const result = await proposePaneRoute({ request: 'Faça engenharia reversa deste executável.', adapterId: 'codex' }, {
+      projectRoot: () => undefined,
+      routingDeps: { enabled: () => mode !== 'disabled', hasKey: () => false },
+    });
+    expect(result).toMatchObject({ ok: true, proposal: { skill: 'rea', source: 'heuristic' } });
+    if (result.ok) {
+      expect(result.proposal.effort).toBeUndefined();
+      expect(result.proposal.confidence?.tier).toBeUndefined();
+    }
+  });
+
+  test('never proposes a bundled skill to an unsupported CLI, even with a classification', async () => {
+    const result = await proposePaneRoute({ request: 'Decompile this binary.', adapterId: 'muse' },
+      deps(() => classified({ skillSuggestion: { name: 'rea', pkg: 'rea', confidence: 1 } })));
+    expect(result.ok && result.proposal.skill).toBeUndefined();
+  });
+
   test('preenche o esforço que o pane aberto na mão nunca teve', async () => {
     const result = await proposePaneRoute({ request: 'auditar o login' }, deps(() => classified()));
     expect(result.ok).toBe(true);

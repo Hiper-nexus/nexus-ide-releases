@@ -5,8 +5,9 @@ import { decisionResultUsage } from '../decision-models/decision-usage';
  * SKILL.md dos manifests + skills inline geradas pelo skill-mirror) e UMA
  * pergunta `choice` deixa o Jev escolher no máximo UMA skill útil para a
  * tarefa — `none` quando nenhuma for claramente útil. O Jev nunca instala
- * nem executa skill; quem age é o código chamador. FAIL-OPEN: superfície
- * desligada, sem chave, erro ou baixa confiança → null.
+ * nem executa skill; quem age é o código chamador. REA tem seleção local
+ * determinística dentro do catálogo elegível. Para as demais sugestões,
+ * superfície desligada, sem chave, erro ou baixa confiança → null.
  */
 import path from 'node:path';
 import {
@@ -33,6 +34,7 @@ import { tryResolveSubdirUnderRoot } from '../security/scoped-workspace-fs';
 import { suggestMissionLaneFromGoal } from '../../shared/mission-intent';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { adapterSchema } from '../../shared/adapter-types';
+import { isReverseEngineeringTask } from '../../shared/reverse-engineering-intent';
 
 /**
  * Piso ÚNICO de confiança para uma sugestão de skill ser aplicada. F-1306:
@@ -281,6 +283,20 @@ export interface SkillSuggestionPick {
 }
 
 /**
+ * Deterministic intent still selects ONLY from the caller's eligible catalog.
+ * Confidence 1 makes the rule actionable for existing consumers; it is not a
+ * claim that an external analysis runtime exists or that execution is allowed.
+ */
+export function deterministicSkillForTask(
+  task: string,
+  catalog: readonly BundledSkillCatalogEntry[],
+): SkillSuggestionPick | null {
+  if (!isReverseEngineeringTask(task)) return null;
+  const rea = catalog.find((entry) => entry.name === 'rea' && entry.pkg === 'rea');
+  return rea ? { name: rea.name, pkg: rea.pkg, confidence: 1 } : null;
+}
+
+/**
  * Catálogo das skills bundled filtrado pelos grants do chamador.
  * Grants são por PACOTE no skill-mirror (ex.: `superpowers`) enquanto as
  * entradas do catálogo são sub-skills (`brainstorming`): vale pkg OU name.
@@ -511,7 +527,7 @@ export async function suggestSkillForTask(
   const hasKey = opts.deps?.hasKey ?? (() => hasDecisionCredential('taskRouting'));
   const judgeFn = opts.deps?.judge ?? judge;
   const record = opts.deps?.record ?? recordJevDecision;
-  if (!task.trim() || !enabled() || !hasKey()) return null;
+  if (!task.trim() || opts.signal?.aborted) return null;
 
   // F-1307 (refina F-772 G7a): pane sem superfície de skill bundled (muse,
   // minimax-code…) não lê uma SKILL.md da HOME, mas a skill de PROJETO (um
@@ -526,6 +542,9 @@ export async function suggestSkillForTask(
   const catalog = bundledSurface
     ? skillCatalogForTaskRole(task, allowedSkillCatalog(opts.allowedSkills))
     : [];
+  const deterministic = deterministicSkillForTask(task, catalog);
+  if (deterministic) return deterministic;
+  if (!enabled() || !hasKey()) return null;
   const projectCatalog = allowedProjectSkillCatalog(
     opts.allowedSkills,
     opts.projectRoot,
@@ -546,7 +565,7 @@ export async function suggestSkillForTask(
       sessionId: opts.sessionId,
       missionId: opts.missionId,
     });
-    if (!result) return null;
+    if (!result || opts.signal?.aborted) return null;
     const picked = parseSkillSuggestions(result.answers, catalog, projectCatalog);
     if (!picked) return null;
     record({
