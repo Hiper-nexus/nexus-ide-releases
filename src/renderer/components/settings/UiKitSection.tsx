@@ -325,7 +325,7 @@ export function UiKitSection() {
           <p className="settings-list__detail">
             Superfícies de agente e dashboards: composers de chat, stat cards,
             gráficos e templates inteiros.{' '}
-            {status
+            {typeof status?.freeItemCount === 'number'
               ? `${status.freeItemCount} itens funcionam sem chave nenhuma. Os itens Pro (templates e componentes mais ricos) precisam da sua licença.`
               : 'A metade grátis funciona sem chave nenhuma.'}
           </p>
