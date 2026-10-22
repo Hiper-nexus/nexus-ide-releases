@@ -10,6 +10,7 @@ import {
   assertRegistryUrl,
   buildRegistryEnv,
   mergeRegistriesIntoComponentsJson,
+  hostOfRegistryUrl,
   isRegistrySecretKey,
   normalizeConfiguredRegistries,
   persistableRegistry,
@@ -335,6 +336,71 @@ describe('the saved env name is the one the runner accepts', () => {
         }).auth?.envVar,
       ).toBe('ACME_REGISTRY_TOKEN');
     }
+  });
+});
+
+describe('a host change is a credential boundary, checked first', () => {
+  const stored = PRIVATE.auth;
+  const elsewhere = 'https://elsewhere.test/r/{name}.json';
+
+  it('beats a DECLARED contract: the caller cannot talk past it', () => {
+    // My first version checked the host after `declared`, and `declared`
+    // comes from the caller — so naming a contract plus a new host walked
+    // straight through to the old host's token.
+    expect(
+      resolveRegistryAuthContract({
+        namespace: '@acme',
+        declared: stored,
+        stored,
+        storedUrl: PRIVATE.url,
+        url: elsewhere,
+        hasToken: false,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('beats the known-registry branch too', () => {
+    expect(
+      resolveRegistryAuthContract({
+        namespace: '@shadcnuikit',
+        storedUrl: 'https://shadcnuikit.com/r/{name}.json',
+        url: elsewhere,
+        hasToken: false,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('lets a token entered for the new host through', () => {
+    expect(
+      resolveRegistryAuthContract({
+        namespace: '@acme',
+        stored,
+        storedUrl: PRIVATE.url,
+        url: elsewhere,
+        hasToken: true,
+      })?.envVar,
+    ).toBe('ACME_REGISTRY_TOKEN');
+  });
+
+  it('still refuses to carry the stored contract to another PATH on the same host', () => {
+    expect(
+      resolveRegistryAuthContract({
+        namespace: '@acme',
+        stored,
+        storedUrl: PRIVATE.url,
+        url: 'https://registry.acme.test/other/{name}.json',
+        hasToken: false,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('compares hosts, not strings', () => {
+    expect(hostOfRegistryUrl('https://Registry.Acme.TEST/r/{name}.json')).toBe(
+      'registry.acme.test',
+    );
+    // An unparseable value can only equal itself — "unknown shape" must not
+    // accidentally match a real host.
+    expect(hostOfRegistryUrl('not a url')).toBe('not a url');
   });
 });
 

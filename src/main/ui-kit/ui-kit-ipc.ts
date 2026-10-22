@@ -511,9 +511,19 @@ export function registerUiKitIpc(): void {
         replaceOrchSettings({
           uiKitRegistries: next.map(persistableRegistry),
         } as never);
-        return await buildStatus();
-      } catch {
-        return await buildStatus();
+        // The receipt, issued only here — after the write actually happened.
+        return { ...(await buildStatus()), registrySaved: registry.namespace };
+      } catch (error) {
+        // An exception in validation or persistence returns the PREVIOUS list,
+        // which still contains the namespace being edited. Without a reason
+        // the panel would read that as success and clear the operator's input.
+        return {
+          ...(await buildStatus()),
+          registryError:
+            error instanceof Error
+              ? error.message.slice(0, 200)
+              : 'the registry could not be saved',
+        };
       }
     },
   );

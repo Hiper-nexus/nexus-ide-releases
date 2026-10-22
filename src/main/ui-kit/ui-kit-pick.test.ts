@@ -348,3 +348,39 @@ describe('pickUiKit — Jev on top, fail-open underneath', () => {
     expect(result.kit).toBe('shadcn');
   });
 });
+
+describe('the heuristic answers a generic task', () => {
+  it('takes the best-ranked candidate when the task names nothing', () => {
+    // "build a dashboard" names no item, so `matchIn` found nothing and the
+    // no-Jev path returned `item: null` — which made
+    // `nexus_ui_kit_add { task }` install nothing at all with good candidates
+    // in hand. The caller ranks before handing them over, so the first of the
+    // chosen kit is the ranked best guess.
+    const result = pickUiKitByHeuristic({
+      task: 'build a dashboard for the admin area',
+      candidates: [STAT_CARDS, DATA_TABLE, BUTTON],
+    });
+
+    expect(result.needsKit).toBe(true);
+    expect(result.item).not.toBeNull();
+    expect(result.item?.kit).toBe('boardui');
+    expect(result.item?.slug).toBe('stat-cards');
+    expect(result.reason).toMatch(/names an item/);
+  });
+
+  it('still prefers an item the task NAMES over the ranked first', () => {
+    const result = pickUiKitByHeuristic({
+      task: 'add a data table to the report page',
+      candidates: [STAT_CARDS, DATA_TABLE, BUTTON],
+    });
+
+    expect(result.item?.slug).toBe('data-table');
+    expect(result.reason).not.toMatch(/names an item/);
+  });
+
+  it('answers nothing when there is nothing to answer with', () => {
+    const result = pickUiKitByHeuristic({ task: 'build a dashboard', candidates: [] });
+
+    expect(result.item).toBeNull();
+  });
+});

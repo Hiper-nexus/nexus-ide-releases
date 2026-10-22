@@ -183,15 +183,12 @@ export function UiKitSection() {
         ...(registryToken.trim() ? { token: registryToken.trim() } : {}),
       });
       setStatus(next);
-      // `registryError` FIRST. Re-saving an ALREADY-configured namespace
-      // returns that namespace in the list whether or not the new token was
-      // stored, so presence alone cannot mean success — it cleared the
-      // credential the operator had just typed and never showed the failure.
-      // (This guard was lost once in a rewrite; the `else` branch below reads
-      // the same field, which is why counting occurrences did not catch it.)
-      const saved =
-        !next.registryError &&
-        next.registries.some((entry) => entry.namespace === namespace);
+      // THE RECEIPT, not the list. Presence of the namespace was never a
+      // success signal: an exception in validation or persistence returns the
+      // previous list with that namespace still in it, and a namespace whose
+      // shape ships with Nexus is in the effective list even when nothing was
+      // written. Main now says outright what it saved.
+      const saved = !next.registryError && next.registrySaved === namespace;
       if (saved) {
         setRegistryNamespace('');
         setRegistryUrl('');

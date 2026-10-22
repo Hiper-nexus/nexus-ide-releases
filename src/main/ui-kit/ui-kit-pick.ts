@@ -176,6 +176,17 @@ export function pickUiKitByHeuristic(
     );
   };
 
+  // The task NAMING an item is the strongest evidence, so it is tried first.
+  // But `matchIn` needs a whole label or slug phrase to appear in the text,
+  // and a generic request ("build a dashboard") names nothing — which made
+  // the no-Jev path answer `item: null` and `nexus_ui_kit_add { task }`
+  // install nothing at all, with perfectly good candidates in hand. The
+  // caller ranks candidates by relevance before handing them over, so the
+  // FIRST candidate of the chosen kit is the ranked best guess, not an
+  // arbitrary one.
+  const firstIn = (target: UiKitId): UiKitCandidate | null =>
+    request.candidates.find((entry) => entry.kit === target) ?? null;
+
   let best = matchIn(kit);
   if (!best) {
     // The lean was a tie-break between keyword counts; a kit that has an item
@@ -190,6 +201,8 @@ export function pickUiKitByHeuristic(
     }
   }
 
+  const named = best !== null;
+  if (!best) best = firstIn(kit);
   return applyProGate(
     {
       needsKit: true,
@@ -197,10 +210,13 @@ export function pickUiKitByHeuristic(
       item: best,
       source: 'heuristic',
       needsLicense: false,
-      reason:
-        boardHits > shadcnHits
+      reason: named
+        ? boardHits > shadcnHits
           ? 'the task leans agentic/dashboard, which is BoardUI territory'
-          : 'the broad primitive and block surface is shadcn',
+          : 'the broad primitive and block surface is shadcn'
+        : // Said plainly: nothing in the task named an item, so this is the
+          // best-ranked candidate of the kit the task leans towards.
+          `nothing in the task names an item; took the best-ranked ${kit} candidate`,
     },
     request,
   );

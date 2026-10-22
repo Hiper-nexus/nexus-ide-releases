@@ -13,6 +13,7 @@ import {
   type ShadcnTemplate,
 } from '../ui-kit/shadcn-source';
 import { BOARDUI_MCP_TOOLS } from '../ui-kit/boardui-source';
+import { chunkShadcnSearchRegistries } from '../ui-kit/shadcn-source';
 import {
   findUiKitRecipe,
   resolveUiKitRecipe,
@@ -696,10 +697,19 @@ function buildRunCommand(args: Record<string, unknown>): ShadcnCommand {
             : // The default covers the effective list: an agent searching
               // "everything" also sees namespaces a bundled operator token
               // exists for, not just what this machine's settings declare.
+              //
+              // Capped to what the CLI accepts in ONE search. `liveCandidates`
+              // runs a batch per chunk; this surface takes a single command,
+              // so with 16 registries configured it used to be refused before
+              // spawning. The first chunk carries `@shadcn` and the earliest
+              // configured namespaces; an agent that needs a later one names
+              // it in `registries`.
               [
-                ...shadcnSearchNamespaces(
-                  withOperatorRegistries(configuredRegistries()),
-                ),
+                ...(chunkShadcnSearchRegistries(
+                  shadcnSearchNamespaces(
+                    withOperatorRegistries(configuredRegistries()),
+                  ),
+                )[0] ?? []),
               ],
         ...(str(args, 'query') ? { query: requireStr(args, 'query') } : {}),
         ...(num(args, 'limit') !== undefined ? { limit: num(args, 'limit') } : {}),

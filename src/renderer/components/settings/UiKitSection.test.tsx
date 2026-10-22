@@ -410,6 +410,96 @@ it('refuses to install from the list of a kit already left behind', async () => 
   }
 });
 
+async function fillRegistryAndSave(host: HTMLElement) {
+  await act(async () =>
+    typeInto(
+      host.querySelector<HTMLInputElement>('input[aria-label="Namespace do registry"]')!,
+      '@acme',
+    ),
+  );
+  await act(async () =>
+    typeInto(
+      host.querySelector<HTMLInputElement>('input[aria-label="URL do registry"]')!,
+      'https://registry.acme.test/r/{name}.json',
+    ),
+  );
+  await act(async () =>
+    typeInto(
+      host.querySelector<HTMLInputElement>('input[aria-label="Token do registry"]')!,
+      'tok-typed-by-hand',
+    ),
+  );
+  await act(async () =>
+    [...host.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Adicionar')!
+      .click(),
+  );
+}
+
+it('keeps the inputs when the namespace is merely PRESENT, with no receipt', async () => {
+  // Presence was never success: a validation or persistence exception returns
+  // the previous list with that namespace still in it, and a namespace whose
+  // shape ships with Nexus is in the effective list even when nothing was
+  // written. Clearing on presence threw away the token just typed.
+  api({
+    registry: vi.fn().mockResolvedValue(
+      status({
+        registries: [
+          {
+            namespace: '@acme',
+            url: 'https://registry.acme.test/r/{name}.json',
+            requiresToken: true,
+            tokenStored: false,
+          },
+        ],
+      }),
+    ),
+  });
+  const { host, root } = await mount();
+  try {
+    await fillRegistryAndSave(host);
+
+    expect(
+      host.querySelector<HTMLInputElement>('input[aria-label="Token do registry"]')?.value,
+    ).toBe('tok-typed-by-hand');
+    expect(
+      host.querySelector<HTMLInputElement>('input[aria-label="URL do registry"]')?.value,
+    ).not.toBe('');
+    expect(host.querySelector('[role="alert"]')).not.toBeNull();
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it('clears the inputs only when Main says what it saved', async () => {
+  api({
+    registry: vi.fn().mockResolvedValue(
+      status({
+        registrySaved: '@acme',
+        registries: [
+          {
+            namespace: '@acme',
+            url: 'https://registry.acme.test/r/{name}.json',
+            requiresToken: true,
+            tokenStored: true,
+          },
+        ],
+      }),
+    ),
+  });
+  const { host, root } = await mount();
+  try {
+    await fillRegistryAndSave(host);
+
+    expect(
+      host.querySelector<HTMLInputElement>('input[aria-label="Token do registry"]')?.value,
+    ).toBe('');
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
 it('says the free half needs no key before it mentions a licence', async () => {
   api();
   const { host, root } = await mount();

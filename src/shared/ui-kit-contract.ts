@@ -199,6 +199,15 @@ export interface UiKitStatusView {
    * can name the real cause instead of blaming the URL.
    */
   readonly registryError?: string;
+  /**
+   * The namespace that was just SAVED, set only where the write actually
+   * happened. The panel used to read "this namespace is in the list" as
+   * success, which is wrong twice over: an exception in validation or
+   * persistence returns the previous list (same namespace still there), and a
+   * namespace whose shape ships with Nexus appears in the effective list even
+   * when no settings row was written. Presence is not a receipt.
+   */
+  readonly registrySaved?: string;
 }
 
 export interface UiKitCatalogView {

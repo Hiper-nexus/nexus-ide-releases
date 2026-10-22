@@ -336,6 +336,21 @@ export function buildRegistryEnv(
   return { env, missing };
 }
 
+/**
+ * The host a registry URL points at, for comparing two of them.
+ *
+ * An unparseable URL answers the raw string: it can then only equal an
+ * identical string, which keeps "unknown shape" on the safe side of the
+ * comparison instead of accidentally matching a real host.
+ */
+export function hostOfRegistryUrl(url: string): string {
+  try {
+    return new URL(url).host.toLowerCase();
+  } catch {
+    return url.trim().toLowerCase();
+  }
+}
+
 /** The variable this registry's token travels in. Name only, never a value. */
 export function derivedRegistryEnvVar(namespace: string): string {
   return `${namespace
@@ -370,13 +385,24 @@ export function resolveRegistryAuthContract(input: {
   readonly storedUrl?: string | undefined;
   readonly hasToken: boolean;
 }): UiKitRegistryAuth | undefined {
+  // A HOST CHANGE IS A CREDENTIAL BOUNDARY, and it is checked FIRST.
+  //
+  // My previous version put this after `declared` and before the
+  // known-registry branch, which left two ways around it: `declared` comes
+  // from the caller, and a known namespace derived a contract anyway. Either
+  // one re-pointed at a new host would have let the next install release the
+  // token stored for the OLD host. Nothing is deleted from the vault to
+  // achieve this (the operator asked that their credentials not be removed):
+  // with no contract, `resolveRegistryToken` is never consulted, so the
+  // stored token is unreachable rather than gone.
+  const hostChanged =
+    input.storedUrl !== undefined &&
+    input.url !== undefined &&
+    hostOfRegistryUrl(input.storedUrl) !== hostOfRegistryUrl(input.url);
+  if (hostChanged && !input.hasToken) return undefined;
   if (input.declared) return input.declared;
-  // Only while the HOST is the same one the token was stored for. Preserving
-  // the contract by namespace alone meant re-saving `@acme` with a different
-  // URL and no token kept both the auth and the old token under the same
-  // derived vault key — and the next install released that token to the NEW
-  // host. The caller clears the stored credential on this transition, so
-  // there is nothing stale left to leak.
+  // Beyond the host check, the stored contract also needs the same URL: a
+  // different path on the same host is still a different registry.
   if (input.stored && input.storedUrl !== undefined && input.storedUrl === input.url) {
     return input.stored;
   }
