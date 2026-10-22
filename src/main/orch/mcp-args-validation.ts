@@ -266,6 +266,10 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
     z.object({
       pattern: z.string().min(1).max(512),
       maxResults: positiveInt.max(1000).optional(),
+      // Hard ceilings mirror tools-files.ts (HARD_SEARCH_*).
+      maxFiles: positiveInt.max(100_000).optional(),
+      maxDirectories: positiveInt.max(20_000).optional(),
+      timeoutMs: positiveInt.max(10_000).optional(),
     }).strict(),
   ],
   ['git_status', z.object({ cwd: optionalPathText }).strict()],
@@ -386,6 +390,8 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
       .object({
         url: z.string().min(1).max(4096),
         title: z.string().min(1).max(512).optional(),
+        // Only an automated design-review pane names its main-provisioned pane.
+        paneId: paneId.optional(),
       })
       .strict(),
   ],
@@ -420,6 +426,7 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
         maxElements: positiveInt.max(200).optional(),
         format: z.enum(['json', 'compact']).optional(),
         judge: browserJudgeArg,
+        focus: z.string().max(500).optional(),
       })
       .strict(),
   ],
@@ -431,6 +438,7 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
         text: z.string().min(1).max(200).optional(),
         role: z.string().min(1).max(64).optional(),
         limit: z.number().int().min(1).max(25).optional(),
+        judge: browserJudgeArg,
       })
       .strict(),
   ],
@@ -470,6 +478,7 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
         paneId,
         key: z.string().min(1).max(32),
         ref: browserRef.optional(),
+        holdMs: z.number().int().min(0).max(1_000).optional(),
         modifiers: z
           .array(z.enum(['Shift', 'Control', 'Alt', 'Meta']))
           .max(4)
@@ -531,6 +540,18 @@ function assertSerializedSize(args: Record<string, unknown>): void {
   if (Buffer.byteLength(serialized, 'utf8') > MAX_MCP_PAYLOAD_BYTES) {
     throw new Error(`tool arguments exceed ${MAX_MCP_PAYLOAD_BYTES} bytes`);
   }
+}
+
+/**
+ * Top-level keys the strict validator of `toolName` accepts, or null when the
+ * tool has no validator. Used by the parity test against each tool's
+ * advertised inputSchema.
+ */
+export function validatedToolArgKeys(toolName: string): string[] | null {
+  const schema = schemas.get(canonicalToolName(toolName));
+  if (!schema) return null;
+  const shape = (schema as unknown as { shape?: Record<string, unknown> }).shape;
+  return shape ? Object.keys(shape) : null;
 }
 
 export function validateToolArgs(

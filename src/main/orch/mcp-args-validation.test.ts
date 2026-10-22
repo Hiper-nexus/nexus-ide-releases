@@ -342,3 +342,21 @@ describe('F-1302: pane_spawn expect contract depth', () => {
     );
   });
 });
+
+describe('fields advertised by the tool schema are accepted', () => {
+  it('accepts focus, paneId, judge, holdMs and the file_search budgets', () => {
+    expect(validateToolArgs('nexus_browser_read', { paneId: 'b', focus: 'qual o preço?' }))
+      .toEqual({ paneId: 'b', focus: 'qual o preço?' });
+    expect(validateToolArgs('nexus_browser_open', { url: 'https://a.test', paneId: 'b' }))
+      .toEqual({ url: 'https://a.test', paneId: 'b' });
+    expect(validateToolArgs('nexus_browser_find', { paneId: 'b', text: 'Salvar', judge: false }))
+      .toEqual({ paneId: 'b', text: 'Salvar', judge: false });
+    expect(validateToolArgs('nexus_browser_press', { paneId: 'b', key: 'ArrowUp', holdMs: 80 }))
+      .toEqual({ paneId: 'b', key: 'ArrowUp', holdMs: 80 });
+    expect(() => validateToolArgs('nexus_browser_press', { paneId: 'b', key: 'a', holdMs: 1_001 }))
+      .toThrow();
+    expect(validateToolArgs('nexus_file_search', {
+      pattern: '**/*.ts', maxFiles: 500, maxDirectories: 50, timeoutMs: 2_000,
+    })).toEqual({ pattern: '**/*.ts', maxFiles: 500, maxDirectories: 50, timeoutMs: 2_000 });
+  });
+});
