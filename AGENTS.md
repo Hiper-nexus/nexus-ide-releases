@@ -3161,6 +3161,51 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
   editado em disco volta como ausente). Conteúdo licenciado fica na máquina que
   licenciou: nunca no repo nem no pacote.
 
+- **Revisão de 22/10 (o que mudou e não pode voltar).** Medido com o fornecedor
+  e o Jev reais (`docs/analysis/2026-10-22-revisao-kit-ui-jev-navegador-missao.md`):
+  - **A busca roda POR REGISTRY, nunca num `--limit` compartilhado**
+    (`liveCandidates`): o CLI responde em ordem de registry e corta no limite,
+    então os 471 do `@shadcn` ocupavam os 200 lugares e os 1 228 do
+    `@shadcnuikit` sumiam. Com tarefa, os primeiros registries também são
+    buscados POR ela (`searchTermsForTask`: no máximo 2 palavras de catálogo,
+    nunca o texto). Cache de 5 min; falha não é cacheada. Registry que
+    respondeu (diretório público) não é "inalcançável"; item de registry de
+    terceiro tem tier `unknown`, não "grátis".
+  - **O stdout do processo do kit vai para ARQUIVO, não pipe**
+    (`runUiKitCli`): os CLIs fazem `console.log` + `process.exit()` e o pipe
+    cortava em 65 536 bytes — `view dashboard-01` (77 KB) e buscas grandes
+    voltavam como JSON quebrado e o cache os guardava. Não volte ao pipe.
+  - **Uma escrita de kit por projeto** (`claimUiKitProjectWrite`, CLI e MCP):
+    o cliente MCP corta em 120 s, o install de 300 s continua, e o retry abria
+    um segundo `npm install` na mesma árvore. O segundo recebe `PROJECT_BUSY`.
+  - **"Instalado" só quando algo foi escrito** (`parseInstallFiles`): exit 0
+    com tudo pulado ("Skipped", "Done. 0 files written.") virava
+    "Instalado". O recibo traz `files`, `alreadyPresent`, `refusal`, `warning`.
+  - **Recusa antes de gastar**: sem `components.json` o shadcn para num prompt
+    que ignora `--yes` (300 s de timeout) → `components_json_missing` na hora;
+    `init` do agente sempre com `--defaults` sem preset; projeto Vue, Svelte,
+    Angular, Solid ou Expo → `framework_unsupported` (`uiKitProjectFit`;
+    Tailwind v3 é só AVISO e só no BoardUI: o CLI do shadcn adapta).
+  - **Monorepo por nome, nunca por caminho**: `workspace` escolhe um pacote da
+    lista que o Main lê (`listUiKitWorkspaces`: `workspaces` do package.json e
+    pnpm-workspace.yaml, contidos no projeto); o resto é recusado.
+  - **A escolha (`pickUiKit`)**: palavra inteira, sem acento e no singular
+    (`foldWord`) — "ui" dentro de "build" e "form" dentro de "transform" liam
+    como UI; palavra genérica (página, tela, app) não pontua ("página de
+    preços" instalava `pagination`); `kitDecidedBy`/`itemDecidedBy` no recibo,
+    e com o kit aceito pelo Jev e o item abaixo de 0,7 entra o item de maior
+    afinidade DAQUELE kit. `uiKitPick` está em
+    `CALIBRATED_THRESHOLD_SURFACES` (limiares medidos só no Jev).
+  - **Descoberta pelo `nexus_ui_kit_add({task})`**, a única porta onde o Jev
+    decide (`UI_KIT_TOOL_LINE`, na carta, no brief sem Design Pro e nas
+    `instructions` do MCP dos panes sem `/hook/delegate`). O catálogo só lista.
+  - **Classe de efeito**: add/recipe/run/boardui são `execution-effect`, como
+    `file_write` (passam pelo portão de estágio). Telemetria do fornecedor
+    desligada no filho (`DO_NOT_TRACK=1`, `BOARDUI_TELEMETRY_DISABLED=1`).
+  - **Worktree com `node_modules` em link** (Linux/Windows, F-1535) segue
+    recusada para escrita; a recusa diz a saída (tirar só o link e instalar,
+    ou instalar no checkout principal). Materializar sozinho foi descartado.
+
 ## Conclusão de código e validadores Main (06/10)
 
 - Missão `standard`, inclusive sem squad/+Pane, pede verificação por `done`;
