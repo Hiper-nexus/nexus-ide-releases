@@ -496,6 +496,24 @@ ambiente, nenhum PR entra pela proteção da main. As releases 0.76.374 a
 commits FORA da main — ou seja, quem decide o embarque é o
 `release:candidate` local, não este CI.
 
+**Os DOIS portões vermelhos são da main, provado por subconjunto (22/10).**
+O Auto-fix acusou `check` e `build`; o `build` são dois workflows com o mesmo
+nome de check, e o **macOS ARM64 preview PASSOU** nesta branch — quem falha é o
+Linux x64 preview, no passo "Verify source without release or tag credentials",
+que roda a suíte e quebra no mesmo `worktree-runtime-registry` do F-908.
+Comparando arquivo a arquivo contra a main:
+
+| portão | esta branch | main | só nesta branch |
+|---|---|---|---|
+| `check` (CI, ubuntu) | 11 falhas / 5 arquivos | 12 / 6 | **nada** |
+| `build` (Linux x64 preview) | 14 falhas / 7 arquivos | 20 / 12 | **nada** |
+| `build` (macOS ARM64 preview) | **passa** | — | — |
+
+Nos dois casos o conjunto desta branch é subconjunto ESTRITO do da main (ela
+tem 5 arquivos a mais no Linux: `claude-config-snapshot`, `memory-links`,
+`limit-detector`, `pty-tap-text-budget`, `mimo-worker-reader` — tetos de tempo e
+ambiente). Nenhuma das 49 mudanças acrescentou falha a portão nenhum.
+
 **Subconjunto provado no head final (22/10, run `39730603408` contra
 `39714368151`).** Com as 47 mudanças desta branch, o `check` falha com **11
 testes em 5 arquivos**; a main, **12 em 6**. Comparando arquivo a arquivo e
