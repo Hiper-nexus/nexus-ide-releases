@@ -193,12 +193,26 @@ function runAudit(runCommand, args, label) {
  * registry's own error (`message` plus the `uri` it posted to) and no
  * `metadata`.
  */
-function auditEndpointAnswered(audit) {
-  if (!audit || typeof audit !== 'object') return true;
-  if (audit.metadata !== undefined) return true;
-  const message = typeof audit.message === 'string' ? audit.message : '';
-  const uri = typeof audit.uri === 'string' ? audit.uri : '';
-  return !(/\/-\/npm\/v1\/security\/audits/u.test(uri) || /audit/iu.test(message));
+function auditEndpointFailed(audit, result) {
+  // TWO conditions, because "no report" and "a report I cannot verify" must
+  // stay different things.
+  //
+  // (1) No `metadata` — every npm audit report carries it. (2) Evidence that
+  // something ERRORED: a non-zero exit, or the registry/endpoint named in the
+  // payload or on stderr. npm words that envelope differently per build (the
+  // pinned npm this gate bootstraps answered a shape my first predicate read
+  // as a report, so the gate failed again), hence the broad match on the
+  // second condition and the narrow invariant on the first.
+  //
+  // A malformed report with a clean exit and no error said anywhere stays a
+  // HARD failure: that is the "unverifiable file" this gate refuses to
+  // publish, and it has its own test.
+  if (!audit || typeof audit !== 'object' || audit.metadata !== undefined) return false;
+  if ((result?.status ?? 0) !== 0) return true;
+  const said = `${typeof audit.message === 'string' ? audit.message : ''} ${
+    typeof audit.uri === 'string' ? audit.uri : ''
+  } ${String(result?.stderr ?? '')}`;
+  return /audit|registry|endpoint/iu.test(said);
 }
 
 /**
@@ -213,8 +227,18 @@ function auditEndpointAnswered(audit) {
 function auditProductionTree(runCommand, args, label) {
   const result = runCommand(args);
   const audit = parseJson(result.stdout, `audit ${label}`);
-  if (!auditEndpointAnswered(audit)) {
-    return { endpointUnavailable: true, detail: String(audit.message ?? '').slice(0, 300) };
+  if (auditEndpointFailed(audit, result)) {
+    // Keep what the registry actually said, whatever its shape: it is the
+    // only diagnosis of why the production report is unavailable.
+    const detail =
+      typeof audit?.message === 'string' && audit.message.length > 0
+        ? audit.message
+        : JSON.stringify(audit ?? null);
+    return {
+      endpointUnavailable: true,
+      detail: detail.slice(0, 600),
+      stderr: String(result.stderr ?? '').trim().slice(0, 600),
+    };
   }
   const total = vulnerabilityTotal(audit);
   if (result.status !== 0 || total !== 0) {
@@ -318,6 +342,7 @@ export function buildReleaseSecurityArtifacts(options = {}) {
               'o endpoint de audit por árvore de produção respondeu erro; ' +
               'este relatório é o da ÁRVORE COMPLETA, superconjunto da de produção',
             registryDetail: productionAttempt.detail,
+            registryStderr: productionAttempt.stderr,
           },
         },
         total: toolchainAudit.total,

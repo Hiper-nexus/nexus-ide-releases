@@ -232,6 +232,59 @@ describe('manual release security artifacts', () => {
     expect(stored.nexusProductionAuditSubstitution?.registryDetail).toMatch(/400 Bad Request/);
   });
 
+  it('treats ANY non-report payload as the endpoint failing', () => {
+    // npm words its error envelope differently per build: the pinned npm this
+    // gate bootstraps answered a shape that a message/uri-sniffing predicate
+    // read as a report, and the gate failed with "relatório inválido" again.
+    const root = tempRoot();
+    const clean = JSON.stringify({
+      auditReportVersion: 2,
+      vulnerabilities: {},
+      metadata: {
+        vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 },
+      },
+    });
+    const runCommand = vi.fn((args) => {
+      if (args[0] === 'audit') {
+        // Only the production-only call fails: a non-zero exit on the FULL
+        // audit is its own hard failure, and conflating the two is how this
+        // test first lied to me.
+        return args.includes('--omit=dev')
+          ? {
+              status: 1,
+              stdout: JSON.stringify({
+                error: { code: 'E400', summary: 'audit endpoint returned an error' },
+              }),
+              stderr: 'npm error audit endpoint returned an error',
+            }
+          : { status: 0, stdout: clean, stderr: '' };
+      }
+      return {
+        status: 0,
+        stdout: JSON.stringify({ bomFormat: 'CycloneDX', specVersion: '1.5', version: 1, components: [] }),
+        stderr: '',
+      };
+    });
+
+    const result = buildReleaseSecurityArtifacts({
+      root,
+      outDir: path.join(root, 'artifacts'),
+      runCommand,
+      commitSha: 'a'.repeat(40),
+      ...securityAuthority,
+      runtime: { node: 'v22.23.1', npm: '12.0.0' },
+      now: () => new Date('2026-10-22T00:00:00.000Z'),
+    });
+
+    expect(result.manifest.audit.productionAuditSource).toBe('full-tree-superset');
+    const stored = JSON.parse(
+      fs.readFileSync(path.join(root, 'artifacts', 'audit-production.json'), 'utf8'),
+    );
+    // The envelope is kept whole, because it is the only diagnosis.
+    expect(stored.nexusProductionAuditSubstitution?.registryDetail).toMatch(/E400/);
+    expect(stored.nexusProductionAuditSubstitution?.registryStderr).toMatch(/audit endpoint/);
+  });
+
   it('still blocks when the endpoint is retired AND the full tree is dirty', () => {
     const root = tempRoot();
     const endpointError = JSON.stringify({
