@@ -16,6 +16,7 @@ import {
   type CandidateQualityDeclaredLimit,
 } from '../context/candidate-quality-scanner';
 import type { MechanicalCheckResult, MechanicalFinding } from '../context/mechanical-sensors';
+import { ceremonyProfileNote, isNonExecutableDiffPath, missionCeremonyProfile } from '../../shared/mission-ceremony-profile';
 import type { ReviewCategory, ReviewFindingInput } from '../context/review-council';
 import type { McpToolInvocation } from './mcp-protocol';
 import { deliverAgentPrompt } from './tool-util';
@@ -93,6 +94,12 @@ export interface CivilianAutoReviewInput {
   readonly scope: ProjectExecutionScope;
   /** Arquivos entregues pela missão (produto), já filtrados de lixo. */
   readonly productFiles: readonly string[];
+  /**
+   * Main-proved COMPLETE candidate (changed, deleted, unread and absent
+   * paths). Only strict completion uses it, to drop checks the diff cannot
+   * affect; absent means the full ceremony runs.
+   */
+  readonly candidatePaths?: readonly string[];
   /** Sessão do Maestro vivo da missão, se existir. */
   readonly liveOrchestratorSessionId?: string | null;
   /** Main-owned lifetime only; not a provider/renderer argument. */
@@ -327,8 +334,6 @@ function regressionSummary(result: RegressionGateResult | null): string {
 const IMPACT_MAPPED_SOURCE_RE = /\.[cm]?[jt]sx?$/iu;
 /** Go/Rust: mapped only when the gate ran the full native suites (it names the native runner). */
 const NATIVE_SUITE_FILE_RE = /(?:\.(?:go|rs)|(?:^|\/)(?:go\.(?:mod|sum|work)|Cargo\.(?:toml|lock)))$/iu;
-/** Styles, prose and static assets: nothing a test imports executes them. */
-const NON_EXECUTABLE_FILE_RE = /\.(?:css|scss|sass|less|styl|md|mdx|rst|txt|adoc|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf|eot)$/iu;
 
 /**
  * AGENTS.md: proven absence of an applicable test is not an obligation to
@@ -348,7 +353,7 @@ function regressionProvesNoApplicableTests(
   if (!projectDeclaresTests) return true;
   const nativeSuitesRan = regression.runner === 'go' || regression.runner === 'cargo';
   return [...regression.changedFiles, ...declaredFiles].every(file => IMPACT_MAPPED_SOURCE_RE.test(file) ||
-    NON_EXECUTABLE_FILE_RE.test(file) || nativeSuitesRan && NATIVE_SUITE_FILE_RE.test(file));
+    isNonExecutableDiffPath(file) || nativeSuitesRan && NATIVE_SUITE_FILE_RE.test(file));
 }
 
 function sensorSummaries(
@@ -437,11 +442,18 @@ export async function enforceCivilianAutoReview(
   // dependências + cobertura de testes quando o projeto permite. Não dependem
   // de scripts no alvo; falha de infraestrutura é indisponível, não bloqueio.
   const sensors = await import('../context/mechanical-sensors');
-  const requirements = await wait(sensors.mechanicalProjectRequirements(root, changedFiles));
   const strictCompletion = input.completionBaseSha !== undefined;
+  // Subtraction needs the COMPLETE candidate; only strict completion has one.
+  const requirements = await wait(sensors.mechanicalProjectRequirements(root, changedFiles,
+    strictCompletion ? input.candidatePaths : undefined));
+  const ceremony = missionCeremonyProfile(input.mission.intentContract?.goal || input.mission.description || input.mission.title,
+    requirements.diffClass);
   const ownedChecks = strictCompletion ? createCompletionCheckExecutors({ scope: input.scope, executionScope,
     missionId: input.mission.id, signal: input.lifetime?.signal, assertCurrent }) : null;
-  const typecheck = launch(() => dependencies.typecheck ? dependencies.typecheck(root) : ownedChecks ? ownedChecks.typecheck(root) : sensors.runTypecheckSensor(root, { signal: input.lifetime?.signal }));
+  const typecheck = ceremony.dropped.includes('typecheck')
+    ? Promise.resolve<MechanicalCheckResult>({ kind: 'typecheck', status: 'unavailable', findings: [],
+      summary: 'Typecheck dispensado: o diff só tem estilos, texto ou assets estáticos.' })
+    : launch(() => dependencies.typecheck ? dependencies.typecheck(root) : ownedChecks ? ownedChecks.typecheck(root) : sensors.runTypecheckSensor(root, { signal: input.lifetime?.signal }));
   const audit = () => launch(() => (dependencies.audit ?? ownedChecks?.audit ?? sensors.runDependencyAuditSensor)(root));
   // One project permit: do not spend the shorter audit deadline waiting for
   // this same completion's compiler on every retry.
@@ -528,7 +540,7 @@ export async function enforceCivilianAutoReview(
     const outcome: CivilianAutoReviewOutcome = {
       kind: 'approved',
       evidenceId: `nexus-auto-review:${analysis.analysisHash}`,
-      note: [civilianAutoReviewEvidenceNote(analysis), sensorSummaries(mechanical), regressionSummary(regression),
+      note: [civilianAutoReviewEvidenceNote(analysis), ceremonyProfileNote(ceremony), sensorSummaries(mechanical), regressionSummary(regression),
         !observedHead ? 'Arquivos atuais analisados sem comparação com histórico Git.' : '',
       ].filter(Boolean).join('\n'),
       verification: {

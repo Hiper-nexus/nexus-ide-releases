@@ -82,6 +82,13 @@ const record = (verdict: 'approve' | 'reject' = 'approve') => recordMissionCodeC
 { verdict, summary: 'Current review', findings: verdict === 'reject' ? ['F-42 src/app.ts:7 condição errada'] : [] });
 
 describe('Main code completion production ports', () => {
+  it('hands the mechanical checks the complete candidate, deletions included, for the ceremony profile', async () => {
+    state.candidate = { ...state.candidate!, changedPaths: ['src/theme.css', 'src/legacy.ts'], deletedPaths: ['src/legacy.ts'], coveredPaths: ['src/theme.css'] };
+    await run();
+    expect(state.checks).toHaveBeenCalledWith(expect.objectContaining({ productFiles: ['src/theme.css'],
+      candidatePaths: expect.arrayContaining(['src/theme.css', 'src/legacy.ts']) }));
+  });
+
   it('routes a frontier read-only reviewer in the correct execution scope and persists Main evidence', async () => {
     expect((await run()).kind).toBe('waiting');
     expect(state.select).toHaveBeenCalledWith(expect.any(String), expect.any(Object), expect.objectContaining({ requireReadOnlyEnforceable: true, excludeAdapterIds: ['no-mcp'] }));

@@ -735,6 +735,58 @@ describe('strict completion applicability from project declarations', () => {
     });
   });
 
+  describe('ceremony profile: a non-executable complete diff drops the typecheck', () => {
+    const withTypedProject = async (run: (root: string) => Promise<void>) => {
+      const root = realpathSync(mkdtempSync(join(tmpdir(), 'nexus-ceremony-')));
+      try {
+        writeFileSync(join(root, 'tsconfig.json'), '{}');
+        writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { typecheck: 'tsc --noEmit' }, devDependencies: { typescript: '^6.0.0' } }));
+        await run(root);
+      } finally { rmSync(root, { recursive: true, force: true }); }
+    };
+    const styleMission = missionFixture({ id: 'mission-ceremony', intentContract: { goal: 'Ajustar a cor do botão primário na tela de login' } as Mission['intentContract'] });
+
+    it('does not run the compiler and reports it not applicable, naming the profile', async () => {
+      await withTypedProject(async root => {
+        __resetCivilianAutoReviewForTests();
+        const typecheck = vi.fn(healthySensors.typecheck);
+        const result = await enforceCivilianAutoReview({ mission: styleMission, scope: { ...scope, rootRealPath: root },
+          productFiles: ['src/theme.css'], candidatePaths: ['src/theme.css', 'public/logo.svg'], completionBaseSha: BASE_SHA, liveOrchestratorSessionId: 'maestro' },
+        { ...deps().dependencies, typecheck });
+        expect(typecheck).not.toHaveBeenCalled();
+        if (result.kind !== 'approved') throw new Error(`expected approval, got ${result.kind}`);
+        expect(result.verification?.checks.find(check => check.kind === 'typecheck')?.status).toBe('not-applicable');
+        expect(result.note).toMatch(/Perfil de cerimônia: trabalho visual.*typecheck dispensado/u);
+      });
+    });
+
+    it.each([
+      ['a deleted module outside the read set', ['src/theme.css', 'src/legacy.tsx']],
+      ['no complete diff from the caller', undefined],
+    ])('%s keeps the compiler run', async (_label, candidatePaths) => {
+      await withTypedProject(async root => {
+        __resetCivilianAutoReviewForTests();
+        const typecheck = vi.fn(healthySensors.typecheck);
+        const result = await enforceCivilianAutoReview({ mission: styleMission, scope: { ...scope, rootRealPath: root },
+          productFiles: ['src/theme.css'], ...(candidatePaths ? { candidatePaths } : {}), completionBaseSha: BASE_SHA },
+        { ...deps().dependencies, typecheck });
+        expect(typecheck).toHaveBeenCalledOnce();
+        if (result.kind !== 'approved') throw new Error(`expected approval, got ${result.kind}`);
+        expect(result.note).not.toContain('Perfil de cerimônia');
+      });
+    });
+
+    it('legacy (non-strict) callers never subtract', async () => {
+      await withTypedProject(async root => {
+        __resetCivilianAutoReviewForTests();
+        const typecheck = vi.fn(healthySensors.typecheck);
+        await enforceCivilianAutoReview({ mission: styleMission, scope: { ...scope, rootRealPath: root },
+          productFiles: ['src/theme.css'], candidatePaths: ['src/theme.css'] }, { ...deps().dependencies, typecheck });
+        expect(typecheck).toHaveBeenCalledOnce();
+      });
+    });
+  });
+
   it('preserves preexisting exemptions but does not claim their failed executions passed', async () => {
     const result = await enforceCivilianAutoReview({ mission: missionFixture(), scope, productFiles: ['app.ts'], completionBaseSha: BASE_SHA }, {
       ...deps().dependencies, regressionGate: async () => regressionResult({ preexistingFailures: [{ file: 'src/app.test.ts', message: 'already fails at base' }] }),

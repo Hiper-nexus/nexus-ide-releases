@@ -502,3 +502,43 @@ it('Cargo source without test declarations does not invent a regression suite', 
     expect((await mechanicalProjectRequirements(root)).tests).toBe(false);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+describe('mechanicalProjectRequirements subtracts by the complete candidate diff', () => {
+  const withTypedTestedProject = async (run: (root: string) => Promise<void>) => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus diff subtraction ')));
+    try {
+      fs.writeFileSync(path.join(root, 'tsconfig.json'), '{}');
+      fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ scripts: { typecheck: 'tsc --noEmit', test: 'vitest run' },
+        devDependencies: { typescript: '^6.0.0', vitest: '^5.0.0' } }));
+      await run(root);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  };
+
+  it('a diff of only styles, prose and assets cannot affect the compiler', async () => {
+    const { mechanicalProjectRequirements } = await import('./mechanical-sensors');
+    await withTypedTestedProject(async root => {
+      const requirements = await mechanicalProjectRequirements(root, ['src/theme.css'], ['src/theme.css', 'README.md', 'public/logo.svg']);
+      expect(requirements).toMatchObject({ typecheck: false, tests: false, diffClass: 'non-executable' });
+      expect(requirements.audit).toBe(true); // Dependency audit stays a project property.
+    });
+  });
+
+  it.each([
+    ['an edited TS file', ['src/theme.css', 'src/theme.ts']],
+    ['a deleted module the read set no longer lists', ['src/theme.css', 'src/legacy.tsx']],
+    ['an empty diff', []],
+  ])('%s keeps every project requirement', async (_label, diff) => {
+    const { mechanicalProjectRequirements } = await import('./mechanical-sensors');
+    await withTypedTestedProject(async root => {
+      expect(await mechanicalProjectRequirements(root, ['src/theme.css'], diff))
+        .toMatchObject({ typecheck: true, tests: true, audit: true, diffClass: 'code' });
+    });
+  });
+
+  it('without a complete diff nothing is subtracted (legacy callers)', async () => {
+    const { mechanicalProjectRequirements } = await import('./mechanical-sensors');
+    await withTypedTestedProject(async root => {
+      expect(await mechanicalProjectRequirements(root, ['src/theme.css'])).toMatchObject({ typecheck: true, tests: true, diffClass: 'code' });
+    });
+  });
+});

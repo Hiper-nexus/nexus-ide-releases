@@ -1,6 +1,7 @@
 import fsp from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { compareAppVersions, isValidAppVersion } from '../../shared/app-version';
+import { classifyCeremonyDiff } from '../../shared/mission-ceremony-profile';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { isAdvisoryNpmSelectorSafe, readAdvisoryNpmMetadata, type AdvisoryRegistryAuthority } from './sensor-broker';
@@ -93,8 +94,19 @@ function truncate(text: string, max = 240): string {
 /* Typecheck — tsc --noEmit quando existe tsconfig.json                */
 /* ------------------------------------------------------------------ */
 
-/** Applicability comes from project declarations, never tool/lock availability. */
-export async function mechanicalProjectRequirements(root: string, files: readonly string[] = []) {
+/**
+ * Applicability comes from project declarations, never tool/lock availability.
+ *
+ * `completeDiff` is the subtractive path: the Main-proved COMPLETE candidate
+ * (changed, deleted, unread and absent paths). When every path is a style,
+ * prose or static asset, the diff cannot change what the compiler reads or
+ * what a test imports, so typecheck and the test-applicability claim drop out.
+ * `files` alone (a read set, possibly truncated, without deletions) never
+ * subtracts. Dependency audit stays a project property.
+ */
+export async function mechanicalProjectRequirements(root: string, files: readonly string[] = [],
+  completeDiff?: readonly string[]) {
+  const diffClass = classifyCeremonyDiff(completeDiff);
   const present = existsSync(join(root, 'package.json'));
   let pkg: Record<string, unknown> | null = null;
   try { pkg = dependencyRecord(await readFreshnessJson(join(root, 'package.json'))); } catch { /* unavailable declaration remains required below */ }
@@ -113,21 +125,24 @@ export async function mechanicalProjectRequirements(root: string, files: readonl
     try { declaredNativeTests ||= declaration.test(await readMechanicalText(join(root, file))); }
     catch { declaredNativeTests = true; /* unreadable declaration cannot prove no tests */ }
   }
-  if (!declaredNativeTests && (entries.includes('go.mod') || entries.includes('Cargo.toml'))) {
+  // The bounded native walk only answers `tests`, which a non-executable diff drops anyway.
+  if (diffClass === 'code' && !declaredNativeTests && (entries.includes('go.mod') || entries.includes('Cargo.toml'))) {
     declaredNativeTests = await hasNativeTestsOrUnknown(root, entries.includes('go.mod'), entries.includes('Cargo.toml'));
   }
+  const diffCanAffectCode = diffClass === 'code';
   return {
-    typecheck: entries.some(name => /^tsconfig(?:[.-].*)?\.json$/i.test(name)) ||
+    diffClass,
+    typecheck: diffCanAffectCode && (entries.some(name => /^tsconfig(?:[.-].*)?\.json$/i.test(name)) ||
       files.some(file => /\.[cm]?tsx?$/i.test(file)) ||
       dependencies.some(value => 'typescript' in value || 'vue-tsc' in value) ||
       Object.entries(scripts).some(([name, command]) => /^(?:type[-_:]?check|check[-_:]?types)(?:$|:)/i.test(name) ||
-        typeof command === 'string' && /(?:^|\s)(?:tsc|vue-tsc)(?:\s|$)/.test(command)) || present && !pkg,
+        typeof command === 'string' && /(?:^|\s)(?:tsc|vue-tsc)(?:\s|$)/.test(command)) || present && !pkg),
     audit: ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'bun.lock'].some(file => existsSync(join(root, file))) ||
       dependencies.some(value => Object.keys(value).length > 0) || Boolean(pkg?.workspaces) || present && !pkg,
-    tests: declaredNativeTests || entries.some(file => /^(?:pytest\.ini|conftest\.py|(?:vitest|jest|playwright)\.config\.[cm]?[jt]s)$/.test(file)) ||
+    tests: diffCanAffectCode && (declaredNativeTests || entries.some(file => /^(?:pytest\.ini|conftest\.py|(?:vitest|jest|playwright)\.config\.[cm]?[jt]s)$/.test(file)) ||
       [...entries, ...files].some(file => /(?:^|\/)(?:test_[^/]+\.py|[^/]+_test\.(?:py|go)|[^/]+\.(?:test|spec)\.[cm]?[jt]sx?)$/.test(file)) ||
       Object.keys(scripts).some(name => /^(?:test|e2e)(?:$|:)/i.test(name)) ||
-      dependencies.some(value => ['vitest', 'jest', '@playwright/test', 'mocha'].some(name => name in value)) || present && !pkg,
+      dependencies.some(value => ['vitest', 'jest', '@playwright/test', 'mocha'].some(name => name in value)) || present && !pkg),
   };
 }
 
