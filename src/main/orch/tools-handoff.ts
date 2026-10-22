@@ -47,6 +47,7 @@ import {
   scheduleAutoCloseAfterHandoff,
   assertAutoCloseReportPreserved,
   closeAfterNonSuccessHandoffAck,
+  missionWriterAwaitsHandoffAck,
 } from "./pane-close-scopes";
 import { findPane, listPaneSnapshots, readSessionOutput, requestPaneClose } from "./pane-registry";
 import {
@@ -861,13 +862,8 @@ const handoffSubmitTool: McpToolDef = {
         isDelivered: (id) => suite.handoffs.get(id)?.deliveryState !== "queued",
         // F-1634: o `success` do writer de missão também espera o veredito.
         // Fechar no submit apagava o contexto antes dele, e o `rework` caía
-        // numa encarnação nova que refazia o trabalho do zero. Revisor
-        // read-only fica fora: a entrega dele é consumida pelo motor da
-        // conclusão, não por um ACK, e não existe rework de leitura.
-        awaitAckOnSuccess:
-          ctx.missionId !== undefined &&
-          ctx.role === "worker" &&
-          ctx.readOnly !== true,
+        // numa encarnação nova que refazia o trabalho do zero.
+        awaitAckOnSuccess: missionWriterAwaitsHandoffAck(ctx),
       },
     );
     return {

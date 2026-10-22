@@ -7,6 +7,7 @@ import {
   armedAutoClosePaneId,
   closeAfterNonSuccessHandoffAck,
   disarmAutoCloseOnHandoff,
+  missionWriterAwaitsHandoffAck,
   NON_SUCCESS_IDLE_CLOSE_MS,
   SUCCESS_ACK_DELIVERY_CEILING_MS,
   SUCCESS_ACK_IDLE_CLOSE_MS,
@@ -315,6 +316,36 @@ describe("braço de autoClose por pane (spawn com ACK pendente)", () => {
     expect(armedAutoClosePaneId("sess-a")).toBe("pane-a");
     disarmAutoCloseOnHandoff("sess-a");
     expect(armedAutoClosePaneId("sess-a")).toBeNull();
+  });
+});
+
+// F-1634 (revisão do Codex no PR 159): quem pode receber rework é quem
+// ESCREVE. O rótulo `readOnly` é consultivo fora do Hardened (F-1157) e
+// `isolatedWriter: true` explícito vence esse rótulo (F-1318): o "leitor" que
+// pediu worktree é writer. Ler só o rótulo tirava o writer isolado da espera
+// pelo aceite, e o rework dele voltava a cair em resume/pane novo.
+describe("missionWriterAwaitsHandoffAck", () => {
+  const worker = { missionId: "m1", role: "worker" as const };
+
+  it("writer comum de missão espera o aceite", () => {
+    expect(missionWriterAwaitsHandoffAck(worker)).toBe(true);
+  });
+
+  it("writer isolado rotulado readOnly continua writer (F-1318)", () => {
+    expect(missionWriterAwaitsHandoffAck({ ...worker, readOnly: true, isolatedWriter: true })).toBe(true);
+  });
+
+  it("revisor somente leitura não espera: não existe rework de leitura", () => {
+    expect(missionWriterAwaitsHandoffAck({ ...worker, readOnly: true })).toBe(false);
+  });
+
+  it("lane confinada pelo Hardened nunca escreve, nem pedindo worktree (F-1157)", () => {
+    expect(missionWriterAwaitsHandoffAck({ ...worker, readOnlyEnforced: true, isolatedWriter: true })).toBe(false);
+  });
+
+  it("fora de missão e fora do papel de worker não espera (não há ACK)", () => {
+    expect(missionWriterAwaitsHandoffAck({ role: "worker" })).toBe(false);
+    expect(missionWriterAwaitsHandoffAck({ missionId: "m1", role: "orchestrator" })).toBe(false);
   });
 });
 

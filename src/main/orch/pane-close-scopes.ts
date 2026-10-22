@@ -263,6 +263,34 @@ export interface NonSuccessCloseOptions {
  * success fecha já. Com `nonSuccess` (worker de missão), partial/failed/blocked
  * ficam abertos até o ACK do Maestro ou a rede de segurança (F-1409).
  */
+/**
+ * F-1634: esta entrega `success` fica aberta esperando o veredito do Maestro?
+ *
+ * Quem pode receber rework é quem ESCREVE, e o rótulo não basta para saber
+ * isso. `readOnly` é consultivo fora do Hardened (F-1157), e `isolatedWriter`
+ * explícito VENCE esse rótulo (F-1318): o "leitor" que pediu worktree é writer
+ * e nasce `isolated_worktree`. Lendo só o rótulo, o writer isolado ficava fora
+ * da espera e o rework dele voltava a cair em resume/pane novo — justamente o
+ * que esta mudança existe para evitar (revisão do Codex no PR 159).
+ *
+ * Fica fora: a lane que o Hardened confina (nunca escreve por caminho
+ * nenhum), o revisor somente leitura (entrega consumida pelo motor da
+ * conclusão, e não existe rework de leitura) e qualquer entrega sem missão,
+ * que não tem ACK.
+ */
+export function missionWriterAwaitsHandoffAck(input: {
+  readonly missionId?: string;
+  readonly role?: string;
+  readonly readOnly?: boolean;
+  readonly readOnlyEnforced?: boolean;
+  readonly isolatedWriter?: boolean;
+}): boolean {
+  if (input.missionId === undefined || input.role !== "worker") return false;
+  if (input.readOnlyEnforced === true) return false;
+  if (input.isolatedWriter === true) return true;
+  return input.readOnly !== true;
+}
+
 export function scheduleAutoCloseAfterHandoff(
   sessionId: string | undefined,
   status: string,
