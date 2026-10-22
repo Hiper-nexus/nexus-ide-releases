@@ -12477,7 +12477,7 @@ export const RELEASE_076373_FULL: AppRelease = {
 export const RELEASE_076373: AppRelease = RELEASE_076373_FULL;
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.381',
+  version: '0.76.385',
   date: '2026-10-21',
   codename: 'Kits de UI: shadcn e BoardUI dentro do Nexus',
   summary:
@@ -12485,8 +12485,9 @@ export const CURRENT_RELEASE: AppRelease = {
     'pela CLI oficial e o BoardUI pela CLI dele mais as ferramentas do MCP. O ' +
     'Jev escolhe o kit e o item na superfície que instala, a metade grátis ' +
     'funciona sem chave nenhuma, e a chave do operador provisiona a licença da ' +
-    'máquina sem gastar assento. Da 0.76.374 à 0.76.380, cada candidata foi ' +
-    'tagueada e não publicada: a revisão achou defeito real depois de cada tag.',
+    'máquina sem gastar assento. Da 0.76.374 à 0.76.381, cada candidata foi ' +
+    'tagueada e não publicada: a revisão achou defeito real depois de cada ' +
+    'tag, e as duas últimas caíram num erro intermitente do registry do npm.',
   highlights: [
     { title: 'Os dois kits de verdade', detail: 'shadcn/ui inteiro (init, add, apply, preset, view, search, build, docs, info, migrate) e BoardUI pela CLI mais as 13 ferramentas do MCP. Medido: a busca do shadcn responde JSON tipado e o catálogo do BoardUI publica 69 itens grátis.' },
     { title: 'O Jev escolhe o kit e o item', detail: 'Na superfície que instala: se a tarefa pede componente, qual kit serve e qual item encaixa, com heurística offline embaixo. Medido com o Jev real: painel de receita → stat cards do BoardUI; tela de login → login block do shadcn; conserto no parser do cron → nenhum kit.' },
@@ -12510,7 +12511,7 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Falha de instalação mostra a saída', detail: 'Conflito de dependência e erro de rede deixam o diagnóstico na saída da ferramenta, que o painel escondia.' },
     { title: 'Motivo do cofre preservado', detail: 'A razão de uma chave de licença recusada não é mais apagada pelo recarregamento imediato do estado, nem ao guardar nem ao ativar.' },
     { title: 'Caminho novo em registry conhecido pede token novo', detail: 'A credencial foi autorizada para a URL digitada, não para o host inteiro — o fornecedor pode servir conteúdo de outra pessoa em outro caminho.' },
-    { title: 'O portão da release não depende de endpoint aposentado', detail: 'O relatório por árvore de produção vinha de um endpoint do npm que foi aposentado e passou a responder erro, travando qualquer release; agora o relatório completo entra no lugar, registrado no recibo.' },
+    { title: 'O portão da release não cai por erro do registry', detail: 'O relatório por árvore de produção vem de um endpoint do npm que responde erro de forma intermitente; agora, só com prova de erro, o relatório completo entra no lugar, registrado no recibo.' },
     { title: 'Toolchain de build sem vulnerabilidade aberta', detail: 'O vitest subiu para 5.0.5 por dois avisos publicados contra o @vitest/mocker. É dependência de desenvolvimento, mas o portão da release recusa qualquer vulnerabilidade na ferramenta que constrói o pacote.' },
     { title: 'O "nenhum kit serve" do Jev é respeitado', detail: 'O juiz decidia que nenhum kit atende e um componente era instalado de todo jeito; agora zera kit e item, com o motivo dito.' },
     { title: 'Offline só quando o cache guardou', detail: 'O download anotava sucesso por não ter dado erro: com disco somente leitura ou limite de tamanho, o item era anunciado como disponível e não estava.' },
@@ -12520,4 +12521,4 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076381: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076385: AppRelease = CURRENT_RELEASE;
