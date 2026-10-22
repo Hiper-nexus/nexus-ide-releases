@@ -463,6 +463,37 @@ export function resolveNpxCommand(
   return UI_KIT_WINDOWS_NPX_CANDIDATES[0];
 }
 
+/** Windows batch launchers cannot be spawned with shell:false (EINVAL).
+ * Run npm's fixed JS entrypoint with a real Node executable instead. Never
+ * interpolate project paths or kit arguments into cmd.exe source.
+ */
+export function resolveUiKitNpxLaunch(
+  options: ResolveNpxCommandOptions = {},
+): { command: string; argsPrefix: string[] } {
+  const command = resolveNpxCommand(options);
+  if ((options.platform ?? process.platform) !== 'win32' || /\.exe$/iu.test(command)) {
+    return { command, argsPrefix: [] };
+  }
+  const exists = options.exists ?? ((file: string) => {
+    try { return fs.statSync(file).isFile(); } catch { return false; }
+  });
+  // Both npm's global prefix and a local node_modules/.bin installation.
+  const dir = path.win32.dirname(command);
+  const entry = [
+    path.win32.join(dir, 'node_modules', 'npm', 'bin', 'npx-cli.js'),
+    path.win32.resolve(dir, '..', 'npm', 'bin', 'npx-cli.js'),
+  ].find(exists);
+  const node = [dir, ...(options.pathString ?? process.env.PATH ?? '').split(';')]
+    .filter(candidate => path.win32.isAbsolute(candidate))
+    .map(candidate => path.win32.join(candidate, 'node.exe')).find(exists);
+  if (!path.win32.isAbsolute(command) || !entry || !node) {
+    throw new UiKitCliError('SPAWN_FAILED',
+      'UI-kit needs node.exe and npm/bin/npx-cli.js on the Windows Node installation.',
+      'Install Node with npm and expose its directory on PATH.');
+  }
+  return { command: node, argsPrefix: [entry] };
+}
+
 /**
  * ESRCH means the group is already gone, which is the outcome teardown wanted.
  * Warning about it turned a clean exit into a scary log line.
@@ -580,9 +611,10 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
 
     let child: ReturnType<typeof spawn>;
     try {
+      const launch = resolveUiKitNpxLaunch();
       child = spawn(
-        resolveNpxCommand(),
-        ['-y', UI_KIT_PACKAGES[request.kit], ...args],
+        launch.command,
+        [...launch.argsPrefix, '-y', UI_KIT_PACKAGES[request.kit], ...args],
         options,
       );
     } catch (error) {
