@@ -196,8 +196,14 @@ export async function liveCandidates(
   let bestEffort = false;
   let failure: string | undefined;
   let unmapped: readonly string[] | undefined;
-  results.forEach((result) => {
+  // A namespace whose search ANSWERED was reached — through the shadcn public
+  // directory when the project does not declare it (@shadcnuikit, measured).
+  // Telling the operator "the search cannot reach it" beside its 1 228 items
+  // was false; only a namespace that returned nothing is unreachable here.
+  const answered = new Set<string>();
+  results.forEach((result, index) => {
     const parsed = parseShadcnSearch(result.stdout);
+    if (parsed.candidates.length > 0) answered.add(plan[index]?.namespace ?? '');
     found.push(...parsed.candidates);
     raws.push(result.stdout);
     // Any scraped run makes the whole answer best-effort: one typed run does
@@ -212,6 +218,7 @@ export async function liveCandidates(
       unmapped = [...new Set([...(unmapped ?? []), ...result.unmappedRegistries])];
     }
   });
+  unmapped = unmapped?.filter((namespace) => !answered.has(namespace));
   const answer: LiveCatalogResult = {
     candidates: union(dedupe(found), cachedCandidates(kit, deps.cacheOptions)).filter(
       (entry) => matchesQuery(entry, needle),

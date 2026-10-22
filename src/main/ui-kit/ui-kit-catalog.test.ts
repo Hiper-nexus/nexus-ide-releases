@@ -173,6 +173,31 @@ describe('a configured registry the project does not declare', () => {
     expect(result.unmappedRegistries).toEqual(['@acme', '@shadcnuikit']);
   });
 
+  it('does not call a registry unreachable when its search answered', async () => {
+    // @shadcnuikit resolves through the shadcn public directory with no
+    // declaration at all (measured: 1 228 items) — the panel said "a busca
+    // não alcança esse registry" right above them.
+    const h = harness((request) => {
+      const namespace = request.args.slice(1).find((arg) => arg.startsWith('@'));
+      return {
+        stdout: JSON.stringify({
+          items: namespace === '@shadcnuikit' ? [{ name: 'pricing1', registry: '@shadcnuikit' }] : [],
+        }),
+      };
+    });
+
+    const result = await liveCandidates('shadcn', cwd, undefined, {
+      ...h.deps,
+      registries: () => [PRIVATE],
+    });
+
+    expect(result.unmappedRegistries).toEqual(['@acme']);
+    // And its pricing is the vendor's, not "free".
+    expect(result.candidates.find((entry) => entry.slug === '@shadcnuikit/pricing1')?.tier).toBe(
+      'unknown',
+    );
+  });
+
   it('says nothing about it once the project declares it', async () => {
     fs.writeFileSync(
       path.join(cwd, 'components.json'),

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { handleTrusted } from '../security/trusted-ipc';
 import { activeWorkspaceRoot } from '../orch/workspace-path';
 import { getOrchSettings, replaceOrchSettings } from '../persistence/settings-store';
@@ -153,29 +154,7 @@ async function buildStatus(): Promise<UiKitStatusView> {
   const registries = withOperatorRegistries(rawRegistries);
   const vault = secrets();
 
-  let license: UiKitLicenseView = emptyLicense();
-  if (cwd) {
-    // The bundled licence first: a fresh machine used to show the green "chave
-    // do Nexus" chip next to a licence that was not on disk yet.
-    provisionBundledBoardUiLicense(serviceDeps());
-    const status = await boardUiLicenseStatus({ cwd }, serviceDeps());
-    license = {
-      state: status.state,
-      stored: status.stored,
-      masked: status.masked,
-      operatorKey: status.operatorKey,
-      ...(status.detail ? { detail: status.detail.slice(0, 200) } : {}),
-    };
-  } else {
-    const stored = vault.getSecret(BOARDUI_LICENSE_SECRET);
-    license = {
-      state: 'unknown',
-      stored: Boolean(stored),
-      masked: null,
-      operatorKey: !stored && hasOperatorBoardUiLicenseKey(),
-      detail: 'Open a project to check the licence.',
-    };
-  }
+  const license = await licenseViewFor(cwd);
 
   const cache = Object.fromEntries(
     UI_KIT_IDS.map((kit) => [kit, uiKitCacheUsage(kit)]),
@@ -183,6 +162,7 @@ async function buildStatus(): Promise<UiKitStatusView> {
 
   return {
     workspaceOpen: Boolean(cwd),
+    ...(cwd ? { workspaceName: path.basename(cwd) } : {}),
     license,
     registries: registries.map((registry) => {
       // DERIVED at the point of use: the row's own `secretKey` (settings can
@@ -378,7 +358,7 @@ export function registerUiKitIpc(): void {
             proLicensed,
           });
           if (dryRun === true || resolved.install.length === 0) {
-            return installViewFromPlan(resolved);
+            return { ...installViewFromPlan(resolved), ...(dryRun === true ? { preview: true } : {}) };
           }
           const run = await installItems(
             { kit, items: resolved.install, cwd },
@@ -393,9 +373,12 @@ export function registerUiKitIpc(): void {
 
         const named = items ?? [];
         if (dryRun === true) {
-          return installViewFromItemPlan(
-            await planInstallItems({ kit, items: named, cwd }, serviceDeps()),
-          );
+          return {
+            ...installViewFromItemPlan(
+              await planInstallItems({ kit, items: named, cwd }, serviceDeps()),
+            ),
+            preview: true,
+          };
         }
         const run = await installItems({ kit, items: named, cwd }, serviceDeps());
         return installViewFromRun(run, { requested: named, kit });
@@ -734,6 +717,36 @@ export function registerUiKitIpc(): void {
 }
 
 async function buildLicenseView(cwd: string | null): Promise<UiKitLicenseView> {
+  // After an action the vendor's fresh answer is the point: never the cache.
+  forgetLicenseView();
+  return await licenseViewFor(cwd);
+}
+
+/** Ten minutes: the panel asked the vendor on EVERY open. */
+const LICENSE_VIEW_TTL_MS = 10 * 60_000;
+/** Offline, `npx boardui mcp` took ~72 s before the panel could render. */
+const LICENSE_STATUS_TIMEOUT_MS = 8_000;
+let licenseViewCache: { readonly cwd: string; readonly at: number; readonly view: UiKitLicenseView } | null =
+  null;
+
+function forgetLicenseView(): void {
+  licenseViewCache = null;
+}
+
+/**
+ * The licence as the panel shows it, fast.
+ *
+ * The bundled licence is put in place first, locally. When the file on disk is
+ * ours the vendor has nothing to add, so the answer is immediate — asking it
+ * cost 3 s warm, 7 s cold and ~72 s offline on every panel open (review
+ * 22/10). Only a machine with its own key or its own licence file asks the
+ * vendor, cached for ten minutes and cut at eight seconds.
+ */
+async function licenseViewFor(cwd: string | null): Promise<UiKitLicenseView> {
+  const provision = provisionBundledBoardUiLicense(serviceDeps());
+  if (provision.status === 'written' || provision.status === 'present') {
+    return { state: 'active', stored: false, masked: null, operatorKey: true, source: 'nexus-file' };
+  }
   if (!cwd) {
     const stored = secrets().getSecret(BOARDUI_LICENSE_SECRET);
     return {
@@ -741,15 +754,38 @@ async function buildLicenseView(cwd: string | null): Promise<UiKitLicenseView> {
       stored: Boolean(stored),
       masked: null,
       operatorKey: !stored && hasOperatorBoardUiLicenseKey(),
-      detail: 'Open a project to check the licence.',
     };
   }
-  const status = await boardUiLicenseStatus({ cwd }, serviceDeps());
-  return {
+  const now = Date.now();
+  if (licenseViewCache && licenseViewCache.cwd === cwd && now - licenseViewCache.at < LICENSE_VIEW_TTL_MS) {
+    return licenseViewCache.view;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), LICENSE_STATUS_TIMEOUT_MS);
+    timer.unref?.();
+  });
+  const status = await Promise.race([boardUiLicenseStatus({ cwd }, serviceDeps()), timedOut]);
+  if (timer) clearTimeout(timer);
+  if (!status) {
+    const stored = secrets().getSecret(BOARDUI_LICENSE_SECRET);
+    return {
+      state: 'unknown',
+      stored: Boolean(stored),
+      masked: null,
+      operatorKey: !stored && hasOperatorBoardUiLicenseKey(),
+      source: 'vendor',
+    };
+  }
+  const view: UiKitLicenseView = {
     state: status.state,
     stored: status.stored,
     masked: status.masked,
     operatorKey: status.operatorKey,
+    source: 'vendor',
     ...(status.detail ? { detail: status.detail.slice(0, 200) } : {}),
   };
+  // An unreachable vendor is not worth remembering: the next open tries again.
+  if (view.state !== 'unknown') licenseViewCache = { cwd, at: now, view };
+  return view;
 }

@@ -1178,7 +1178,9 @@ function candidateFromJsonItem(entry: unknown): UiKitCandidate | null {
     slug: namespaced ? `${registry}/${name}` : name,
     label: name,
     category: categoryFromType(row.type),
-    tier: 'free',
+    // A third-party registry's pricing is its own: calling every item 'free'
+    // painted "grátis" on paid @shadcnuikit blocks. Nexus does not know.
+    tier: namespaced ? 'unknown' : 'free',
   };
 }
 

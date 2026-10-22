@@ -506,9 +506,10 @@ it('says the free half needs no key before it mentions a licence', async () => {
   try {
     expect(host.textContent).toContain('shadcn/ui');
     expect(host.textContent).toContain('sem chave');
-    // The counts are what tell the operator the feature is not gated.
-    expect(host.textContent).toContain('45 itens funcionam sem chave nenhuma');
-    expect(host.textContent).toContain('precisam da sua licença');
+    // The counts are what tell the operator the feature is not gated — and
+    // the Pro half ships unlocked with the Nexus licence.
+    expect(host.textContent).toMatch(/\d+ itens grátis e \d+ Pro/);
+    expect(host.textContent).toContain('liberados pela licença que vem com o Nexus');
   } finally {
     act(() => root.unmount());
   }
@@ -722,6 +723,12 @@ it('says why a registry would not go away', async () => {
     );
     expect(remove).toBeDefined();
     await act(async () => remove!.click());
+    // A stored token is not coming back from a click: the panel asks first.
+    const confirm = [...host.querySelectorAll('button')].find((button) =>
+      button.textContent?.startsWith('Confirmar: remover o registry'),
+    );
+    expect(confirm).toBeDefined();
+    await act(async () => confirm!.click());
 
     expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/cofre trancado/);
   } finally {
@@ -1013,6 +1020,70 @@ it('names the missing shadcn setup instead of a bare failure', async () => {
     await act(async () => install!.click());
 
     expect(host.textContent).toContain('ainda não tem components.json');
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it('says in Portuguese where the Pro licence comes from, with the vendor text tucked away', async () => {
+  api({
+    status: vi.fn().mockResolvedValue(
+      status({
+        license: {
+          state: 'active',
+          stored: false,
+          masked: null,
+          operatorKey: true,
+          source: 'nexus-file',
+          detail: 'Pro license valid and active: 4889…636E',
+        },
+      }),
+    ),
+  });
+  const { host, root } = await mount();
+  try {
+    expect(host.textContent).toContain('Pro liberado neste PC pela licença que vem com o Nexus.');
+    const details = host.querySelector('details');
+    expect(details?.textContent).toContain('Resposta do fornecedor');
+    expect(details?.textContent).toContain('Pro license valid and active');
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it('asks before removing the licence', async () => {
+  const uiKit = api({
+    status: vi.fn().mockResolvedValue(
+      status({ license: { state: 'active', stored: true, masked: '••••9999' } }),
+    ),
+  });
+  const { host, root } = await mount();
+  try {
+    const remove = [...host.querySelectorAll('button')].find((button) => button.textContent === 'Remover');
+    await act(async () => remove!.click());
+    expect(uiKit.license).not.toHaveBeenCalled();
+
+    const confirm = [...host.querySelectorAll('button')].find((button) =>
+      button.textContent?.startsWith('Confirmar:'),
+    );
+    await act(async () => confirm!.click());
+    expect(uiKit.license).toHaveBeenCalledWith({ action: 'remove' });
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it('previews a recipe without installing it', async () => {
+  const uiKit = api({
+    install: vi.fn().mockResolvedValue({ ok: true, installed: ['sidebar', 'chart-area'], preview: true }),
+  });
+  const { host, root } = await mount();
+  try {
+    const preview = [...host.querySelectorAll('button')].find((button) => button.textContent === 'Prévia');
+    await act(async () => preview!.click());
+
+    expect(uiKit.install).toHaveBeenCalledWith({ kit: 'shadcn', recipe: 'super-admin', dryRun: true });
+    expect(host.textContent).toContain('Prévia: instalaria sidebar, chart-area');
   } finally {
     act(() => root.unmount());
   }

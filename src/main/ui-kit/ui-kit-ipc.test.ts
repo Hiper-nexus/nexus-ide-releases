@@ -51,6 +51,9 @@ const license = vi.hoisted(() => ({
     () => Promise<{ ok: boolean; stored: boolean; detail?: string }>
   >(async () => ({ ok: true, stored: false })),
   status: vi.fn(async () => ({ state: 'active' as const, stored: true, masked: '••••9999' })),
+  // Boot and every status read provision the bundled licence: never the real
+  // config root of whoever runs this suite.
+  provision: vi.fn(() => ({ status: 'skipped' as const, reason: 'own-key' as const })),
 }));
 vi.mock('./ui-kit-service', async (importOriginal) => {
   const real = (await importOriginal()) as Record<string, unknown>;
@@ -58,6 +61,7 @@ vi.mock('./ui-kit-service', async (importOriginal) => {
     ...real,
     deactivateBoardUiLicense: license.deactivate,
     boardUiLicenseStatus: license.status,
+    provisionBundledBoardUiLicense: license.provision,
   };
 });
 vi.mock('../persistence/settings-store', () => ({
@@ -343,5 +347,41 @@ describe('a licence removal that failed is not reported as removed', () => {
 
     expect(view.state).toBe('absent');
     expect(view.stored).toBe(false);
+  });
+});
+
+describe('the panel status is fast on the bundled licence', () => {
+  async function statusHandler() {
+    const ipc = await import('./ui-kit-ipc');
+    ipc.setUiKitVaultProvider(() => fakeVault);
+    (await import('./ui-kit-cache')).setUiKitCacheRootResolver(() => cacheRoot);
+    ipc.registerUiKitIpc();
+    return handlers.get(UI_KIT_CHANNELS.status)!;
+  }
+
+  it('answers active from the licence file the Nexus put here, without asking the vendor', async () => {
+    // Review 22/10: buildStatus waited on `npx boardui mcp` on every open —
+    // 2.9 s warm, 6.7 s cold, ~72 s offline.
+    license.provision.mockReturnValue({ status: 'present' } as never);
+    license.status.mockClear();
+    workspace.root = cacheRoot;
+
+    const status = await (await statusHandler())();
+
+    expect(status.license).toMatchObject({ state: 'active', operatorKey: true, source: 'nexus-file' });
+    expect(license.status).not.toHaveBeenCalled();
+    expect(status.workspaceName).toBe(path.basename(cacheRoot));
+  });
+
+  it('asks the vendor for a machine with its own key, once per ten minutes', async () => {
+    license.provision.mockReturnValue({ status: 'skipped', reason: 'own-key' } as never);
+    license.status.mockClear();
+    workspace.root = cacheRoot;
+    const handler = await statusHandler();
+
+    await handler();
+    await handler();
+
+    expect(license.status).toHaveBeenCalledTimes(1);
   });
 });

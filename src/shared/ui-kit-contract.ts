@@ -181,6 +181,12 @@ export interface UiKitLicenseView {
    * say "sem chave".
    */
   readonly operatorKey?: boolean;
+  /**
+   * Where the answer came from: the licence file the Nexus put on this machine
+   * (`nexus-file`, no vendor call) or the vendor's own `license_status`.
+   */
+  readonly source?: 'nexus-file' | 'vendor';
+  /** The vendor's own words, for the panel's details — never the headline. */
   readonly detail?: string;
 }
 
@@ -197,6 +203,8 @@ export interface UiKitKnownRegistryView {
 export interface UiKitStatusView {
   /** Absent when no project is open: nothing can be installed. */
   readonly workspaceOpen: boolean;
+  /** The open project's folder name, so the panel says WHERE it installs. */
+  readonly workspaceName?: string;
   readonly license: UiKitLicenseView;
   readonly registries: readonly UiKitRegistryView[];
   /** Vendors whose registry shape ships with Nexus; the token never does. */
@@ -260,6 +268,8 @@ export interface UiKitInstallView {
   readonly refusal?: UiKitRefusalCode;
   /** Something that may break after a successful install, said in advance. */
   readonly warning?: string;
+  /** A dry run: `installed` lists what WOULD be installed. */
+  readonly preview?: boolean;
   readonly output?: string;
   readonly error?: string;
 }
