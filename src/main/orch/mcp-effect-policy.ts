@@ -374,6 +374,13 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   'agent_prompt',
   'file_write',
   'plan_write',
+  // The UI kit writes components into the project and runs npm there — the
+  // same class as file_write/terminal_run, so the same stage gate. They used
+  // to fall to the `mission-effect` default and skip it (review 22/10).
+  'ui_kit_add',
+  'ui_kit_recipe',
+  'ui_kit_run',
+  'ui_kit_boardui',
   'git_add',
   // ORC-03: escreve arquivos calculados pelo Git na worktree do writer; os
   // destinos passam pela guarda de workflow no handler (tools-checkpoint).

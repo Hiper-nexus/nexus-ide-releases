@@ -186,6 +186,20 @@ describe('nexus_ui_kit_catalog is read-only in fact, not only by label', () => {
   });
 });
 
+describe('an unreadable cache does not take the listing down', () => {
+  it('still serves the BoardUI snapshot when the cache root is unconfigured', async () => {
+    setUiKitCacheRootResolver(() => {
+      throw new Error('no cache root in this test');
+    });
+
+    const out = (await tool('nexus_ui_kit_catalog').handler({ kit: 'boardui' }, ctx)) as {
+      items: unknown[];
+    };
+
+    expect(out.items.length).toBeGreaterThan(0);
+  });
+});
+
 describe('nexus_ui_kit_source is read-only in fact', () => {
   it('returns a cached item', async () => {
     writeCachedItem(

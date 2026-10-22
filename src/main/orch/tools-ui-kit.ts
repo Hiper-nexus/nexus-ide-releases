@@ -196,7 +196,14 @@ export function buildUiKitTools(): McpToolDef[] {
       handler: async (args) => {
         const kit = parseKit(args);
         const query = str(args, 'query');
-        const cached = listCachedItems(kit);
+        // An unreadable cache (NO_CACHE_ROOT, a damaged entry) must not take
+        // the listing down: the BoardUI snapshot needs no cache at all.
+        let cached: ReturnType<typeof listCachedItems> = [];
+        try {
+          cached = listCachedItems(kit);
+        } catch {
+          cached = [];
+        }
         const cachedSlugs = new Set(cached.map((entry) => entry.slug));
         // `cachedOnly` was declared in the schema and never read, so a caller
         // asking to work offline got BoardUI's whole bundled snapshot back

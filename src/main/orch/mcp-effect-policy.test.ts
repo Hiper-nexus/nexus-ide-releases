@@ -23,6 +23,10 @@ describe('MCP effect policy', () => {
   });
   it('keeps observations available before a mission exists', () => {
     expect(effectPolicyForTool('file_read')).toBe('read-only');
+    // The kit writes like file_write, so it passes the same stage gate.
+    for (const tool of ['nexus_ui_kit_add', 'nexus_ui_kit_recipe', 'nexus_ui_kit_run', 'nexus_ui_kit_boardui']) {
+      expect(effectPolicyForTool(tool)).toBe('execution-effect');
+    }
     expect(effectPolicyForTool('nexus_code_map_get')).toBe('read-only');
     expect(effectPolicyForTool('nexus_code_map_blast_radius')).toBe('read-only');
     expect(effectPolicyForTool('nexus_content_audit')).toBe('read-only');
