@@ -65,11 +65,11 @@ const OBJECTIVE =
  * Quantas vezes a suíte mecânica roda enquanto o juiz lê o MESMO candidato.
  * `reviewInFlight: false` reproduz a regra antiga (só TTL); `true` é a de hoje.
  */
-function mechanicalRuns(reviewInFlight: boolean): number {
+function mechanicalRuns(reviewInFlight: boolean, judgeReadMs = JUDGE_READ_MS): number {
   let runs = 1; // a primeira execução é trabalho legítimo
   let lastRunAt = 0;
   // O motor reavalia a cada acordada (RETRY_MS = 30 s) enquanto espera o juiz.
-  for (let now = 30_000; now <= JUDGE_READ_MS; now += 30_000) {
+  for (let now = 30_000; now <= judgeReadMs; now += 30_000) {
     if (!mechanicalChecksStillValid({ ageMs: now - lastRunAt, reviewInFlight })) {
       runs += 1;
       lastRunAt = now;
@@ -130,6 +130,22 @@ describe('orçamento de cerimônia: landing page como missão', () => {
     expect(depois).toBe(1);
     // Com o TTL de 5 min e um juiz de 8 min, a suíte rodava ao menos 2 vezes.
     expect(antes).toBeGreaterThanOrEqual(2);
+  });
+
+  // A propriedade que importa não é um número, é a INCLINAÇÃO: no motor antigo
+  // o desperdício crescia com o tempo de revisão (uma suíte inteira a cada
+  // TTL), então rejeição + reparo pioravam exatamente o caso já ruim. Agora é
+  // constante enquanto o candidato não muda.
+  it('o desperdício antigo crescia com a duração da revisão; agora é constante', () => {
+    for (const judgeMs of [8, 15, 25, 40].map((min) => min * 60_000)) {
+      expect(mechanicalRuns(true, judgeMs)).toBe(1);
+    }
+    const antes = [8, 15, 25, 40].map((min) => mechanicalRuns(false, min * 60_000));
+    // Estritamente crescente: cada janela de TTL custava a suíte de novo.
+    for (let i = 1; i < antes.length; i += 1) {
+      expect(antes[i]).toBeGreaterThan(antes[i - 1]!);
+    }
+    expect(antes.at(-1)).toBeGreaterThanOrEqual(8);
   });
 
   it('a captura do navegador encerra a dupla cobrança da entrega visual', () => {
