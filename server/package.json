@@ -1,6 +1,6 @@
 {
   "name": "@nexus/server",
-  "version": "0.76.378",
+  "version": "0.76.379",
   "private": true,
   "type": "module",
   "engines": {
