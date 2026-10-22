@@ -102,6 +102,10 @@ export async function handleRequest(request, env, originFetch = fetch) {
   if (url.hostname === COMMUNITY_HOST && isAccountPath(url.pathname)) {
     return new Response('Not found', { status: 404 });
   }
+  // O blog pertence ao produto; não publicar outra cópia no host da comunidade.
+  if (url.hostname === COMMUNITY_HOST && (url.pathname === '/blog' || url.pathname.startsWith('/blog/'))) {
+    return new Response('Not found', { status: 404 });
+  }
   const seo = seoFile(url.hostname, url.pathname);
   if (seo) {
     const headers = new Headers(SECURITY_HEADERS);

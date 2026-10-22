@@ -1,10 +1,42 @@
 # Changelog
 
-## 0.76.385 — Kits de UI: shadcn e BoardUI dentro do Nexus
+## 0.76.390 — Kits de UI: shadcn e BoardUI dentro do Nexus (macOS)
+
+Pacote macOS (DMG e ZIP arm64), assinado com Developer ID e notarizado. Mesma entrega da 0.76.382, que é o pacote Linux: esta é a publicação macOS dela.
+
+Da 0.76.374 à 0.76.385, cada candidata foi tagueada e não publicada — a revisão achou defeito real depois de cada tag, e duas caíram num erro intermitente do registry do npm. A 0.76.382 é o pacote Linux e não recebe arquivos macOS. A 0.76.373 é o pacote Linux anterior. A 0.76.372, a 0.76.370 e a 0.76.368 no espelho público são publicações Windows. A 0.76.365 no espelho continua Latest; esta release não toma essa marca. A 0.76.362 continua Latest na canônica.
+
+Em relação à 0.76.382:
+
+- **O portão da release não cai por erro de rede do registry.** O relatório de vulnerabilidades por árvore de produção vem de um endpoint do npm que responde erro de forma intermitente, e isso travou duas candidatas seguidas. Agora, só com prova de erro (saída não-zero ou o erro dito no payload/stderr), entra o relatório da árvore completa — que contém a de produção — com a substituição registrada no recibo. Relatório sujo, ou malformado sem erro declarado, continua bloqueando.
+
+O conteúdo de produto é o da 0.76.382, abaixo.
+
+## 0.76.382 — Kits de UI: shadcn e BoardUI dentro do Nexus
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+Da 0.76.374 à 0.76.381, cada candidata foi tagueada e não publicada: a revisão achou defeito real depois de cada tag. A 0.76.381 fica como carimbo com notas de pacote macOS e não recebe arquivos Linux. A 0.76.373 é o pacote Linux anterior. A 0.76.372, a 0.76.370 e a 0.76.368 no espelho público são publicações Windows e não recebem arquivos Linux. A 0.76.371 é o carimbo macOS e não recebe arquivos Linux. A 0.76.365 no espelho continua Latest; esta release não toma essa marca. A 0.76.362 continua Latest na canônica.
+
+Os commits depois da tag 0.76.381 só mexem no site público (blog). Não entram no app.
+
+No desktop Linux, em relação à 0.76.373:
+
+- **Os dois kits de verdade, não um atalho.** O shadcn/ui inteiro pela CLI oficial e o BoardUI pela CLI dele mais as ferramentas do MCP. A busca do shadcn responde em JSON tipado e o catálogo do BoardUI publica os itens grátis.
+- **O Jev escolhe o kit e o item.** Na superfície que instala, o Jev julga se a tarefa pede componente, qual kit serve e qual item encaixa. A heurística de palavras-chave responde offline e sem chave. "Nenhum kit" com confiança não instala componente por cima.
+- **A metade grátis funciona sem chave nenhuma.** O shadcn inteiro e os itens grátis do BoardUI. Item Pro sem licença não instala em silêncio: cai no grátis equivalente e nomeia o que ficou de fora.
+- **A chave vive no painel, e a do operador viaja no app.** Ajustes → Kits de UI guarda a chave do BoardUI no cofre. A chave do operador provisiona o arquivo de licença da máquina sem gastar assento; chave própria digitada sempre vence a embutida.
+- **O agente não escolhe destino.** As ferramentas não têm campo de caminho: cada kit instala onde o projeto manda.
+- **O registry é do Main.** A lista de registries não sai mais pela ponte genérica de configurações, então um namespace autenticado não é reapontado para outra URL com o token guardado.
+- **Um canal MCP que fecha a entrada não derruba o app.** EPIPE no processo principal vira chamada recusada, e a instalação que falha mostra a saída da ferramenta.
+
+O resto do desktop é o da 0.76.373.
+
+## 0.76.381 — Kits de UI: shadcn e BoardUI dentro do Nexus
 
 Pacote macOS (DMG e ZIP arm64), assinado com Developer ID e notarizado.
 
-Da 0.76.374 à 0.76.381, cada candidata foi tagueada e não publicada: a revisão achou defeito real depois de cada tag, e as duas últimas caíram num erro intermitente do endpoint de audit do npm. Os números 0.76.382 a 0.76.384 ficam livres para as outras máquinas. A 0.76.373 é o pacote Linux anterior. A 0.76.372, a 0.76.370 e a 0.76.368 no espelho público são publicações Windows e não recebem arquivos macOS. A 0.76.371 é o carimbo macOS anterior. A 0.76.365 no espelho continua Latest; esta release não toma essa marca. A 0.76.362 continua Latest na canônica.
+Da 0.76.374 à 0.76.380, cada candidata foi tagueada e não publicada. A 0.76.373 é o pacote Linux anterior. A 0.76.372, a 0.76.370 e a 0.76.368 no espelho público são publicações Windows e não recebem arquivos macOS. A 0.76.371 é o carimbo macOS anterior. A 0.76.365 no espelho continua Latest; esta release não toma essa marca. A 0.76.362 continua Latest na canônica.
 
 O Nexus entregava um contrato de design (DESIGN.md com tokens) e nenhum componente: o agente recebia a paleta e escrevia cada peça à mão. Agora os dois kits moram dentro dele.
 
@@ -32,7 +64,7 @@ Correções de credencial nesta release:
 - **Instalação que falha mostra a saída da ferramenta.** Conflito de dependência ou erro de rede deixa o diagnóstico na saída e nenhum texto de erro: o painel dizia só "a instalação falhou" e jogava fora a única pista.
 - **O motivo de uma chave recusada pelo cofre não é mais apagado** pelo recarregamento imediato do estado, nem na gravação nem na ativação (que recusa por motivos locais: arquivo de licença ilegível, de outra máquina ou impossível de gravar).
 - **Um registry conhecido apontado para outro caminho pede token novo.** A credencial foi autorizada para a URL que a pessoa digitou, não para o host inteiro: o fornecedor pode servir conteúdo de outra pessoa em outro caminho.
-- **O portão da release não cai por erro de rede do registry.** O relatório de vulnerabilidades por árvore de produção vem de um endpoint do npm que responde erro de forma intermitente, e isso travava qualquer release. Agora, só com prova de erro, entra o relatório da árvore completa — que contém a de produção — com a substituição registrada no recibo; relatório sujo, ou malformado sem erro declarado, continua bloqueando. O relatório de vulnerabilidades por árvore de produção vinha de um endpoint do npm que foi aposentado e passou a responder erro, o que travava qualquer release. Agora, só nesse caso, entra o relatório da árvore completa — que contém a de produção — com a substituição registrada no recibo; relatório sujo continua bloqueando.
+- **O portão da release não depende de um endpoint aposentado.** O relatório de vulnerabilidades por árvore de produção vinha de um endpoint do npm que foi aposentado e passou a responder erro, o que travava qualquer release. Agora, só nesse caso, entra o relatório da árvore completa — que contém a de produção — com a substituição registrada no recibo; relatório sujo continua bloqueando.
 - **Toolchain de build sem vulnerabilidade aberta:** o `vitest` subiu para 5.0.5 por dois avisos publicados hoje contra o `@vitest/mocker` (injeção de código por registro de mock não autenticado e travessia por barra invertida no Windows). É dependência de desenvolvimento — não vai no app —, mas o portão da release recusa qualquer vulnerabilidade na ferramenta que constrói o pacote, e com razão.
 - **O "nenhum kit serve" do Jev é respeitado.** Quando o juiz decidia, com confiança, que nenhum dos dois kits atende o pedido, a escolha era dobrada na da heurística e um componente era instalado de todo jeito. Agora zera kit e item, e o motivo diz para escrever do zero.
 - **"Baixado para uso offline" só quando o cache guardou.** O download anotava sucesso por não ter dado erro; com disco somente leitura ou limite de tamanho, o item era anunciado como disponível e a leitura seguinte não o achava.
