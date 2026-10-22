@@ -1,10 +1,10 @@
 # Changelog
 
-## 0.76.379 — Kits de UI: shadcn e BoardUI dentro do Nexus
+## 0.76.380 — Kits de UI: shadcn e BoardUI dentro do Nexus
 
 Pacote macOS (DMG e ZIP arm64), assinado com Developer ID e notarizado.
 
-A 0.76.378, a 0.76.377, a 0.76.376, a 0.76.375 e a 0.76.374 foram tagueadas e não publicadas. A 0.76.373 é o pacote Linux anterior. A 0.76.372, a 0.76.370 e a 0.76.368 no espelho público são publicações Windows e não recebem arquivos macOS. A 0.76.371 é o carimbo macOS anterior. A 0.76.365 no espelho continua Latest; esta release não toma essa marca. A 0.76.362 continua Latest na canônica.
+A 0.76.379, a 0.76.378, a 0.76.377, a 0.76.376, a 0.76.375 e a 0.76.374 foram tagueadas e não publicadas. A 0.76.373 é o pacote Linux anterior. A 0.76.372, a 0.76.370 e a 0.76.368 no espelho público são publicações Windows e não recebem arquivos macOS. A 0.76.371 é o carimbo macOS anterior. A 0.76.365 no espelho continua Latest; esta release não toma essa marca. A 0.76.362 continua Latest na canônica.
 
 O Nexus entregava um contrato de design (DESIGN.md com tokens) e nenhum componente: o agente recebia a paleta e escrevia cada peça à mão. Agora os dois kits moram dentro dele.
 
@@ -33,6 +33,10 @@ Correções de credencial nesta release:
 - **O motivo de uma chave recusada pelo cofre não é mais apagado** pelo recarregamento imediato do estado, nem na gravação nem na ativação (que recusa por motivos locais: arquivo de licença ilegível, de outra máquina ou impossível de gravar).
 - **Um registry conhecido apontado para outro caminho pede token novo.** A credencial foi autorizada para a URL que a pessoa digitou, não para o host inteiro: o fornecedor pode servir conteúdo de outra pessoa em outro caminho.
 - **Toolchain de build sem vulnerabilidade aberta:** o `vitest` subiu para 5.0.5 por dois avisos publicados hoje contra o `@vitest/mocker` (injeção de código por registro de mock não autenticado e travessia por barra invertida no Windows). É dependência de desenvolvimento — não vai no app —, mas o portão da release recusa qualquer vulnerabilidade na ferramenta que constrói o pacote, e com razão.
+- **O "nenhum kit serve" do Jev é respeitado.** Quando o juiz decidia, com confiança, que nenhum dos dois kits atende o pedido, a escolha era dobrada na da heurística e um componente era instalado de todo jeito. Agora zera kit e item, e o motivo diz para escrever do zero.
+- **"Baixado para uso offline" só quando o cache guardou.** O download anotava sucesso por não ter dado erro; com disco somente leitura ou limite de tamanho, o item era anunciado como disponível e a leitura seguinte não o achava.
+- **Remoção de licença que falha aparece.** A desativação no fornecedor pode recusar e o arquivo local pode não sair: antes a tela dizia que o assento pago havia sido liberado de qualquer forma.
+- **Registry conhecido configurado por você pode ser removido.** Salvo na URL do preset e sem token no cofre, ele ficava indistinguível de uma entrada que só o app fornece, e o botão de remover desaparecia.
 - **A sugestão de item entende o pedido, não a ordem do catálogo.** O catálogo do BoardUI tem categorias grossas e nenhum slug com a palavra "dashboard", então "monte um painel" não casava com nada e o primeiro item da lista era instalado (uma árvore de arquivos, para um painel). Agora há afinidade por conceito, a escolha é o item de maior afinidade e, sem afinidade nenhuma, nenhum item é escolhido.
 
 ## 0.76.373 — Estúdio de vídeo com contador, estilos e ditado
