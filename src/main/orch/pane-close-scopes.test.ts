@@ -336,25 +336,6 @@ describe("missionWriterAwaitsHandoffAck", () => {
     expect(missionWriterAwaitsHandoffAck({ ...worker, readOnly: true, isolatedWriter: true })).toBe(true);
   });
 
-  // F-1634 (revisão do Codex no PR 159): o flag `isolatedWriter` só chega ao
-  // contexto do FILHO DO OPERADOR (`mcp-server.ts`, `operatorChild && ...`);
-  // num worker de missão ele é sempre undefined, então ler só o flag deixava o
-  // fix anterior sem efeito justamente onde ele importa. O sinal FÍSICO vale:
-  // writer isolado é aquele cuja raiz de execução difere da de coordenação.
-  it("worktree própria prova writer isolado mesmo sem o flag no contexto", () => {
-    expect(missionWriterAwaitsHandoffAck({
-      ...worker, readOnly: true,
-      scopeRoot: '/projeto', executionRoot: '/worktrees/writer-1',
-    })).toBe(true);
-  });
-
-  it("mesma raiz não é worktree própria: rótulo readOnly continua valendo", () => {
-    expect(missionWriterAwaitsHandoffAck({
-      ...worker, readOnly: true,
-      scopeRoot: '/projeto', executionRoot: '/projeto',
-    })).toBe(false);
-  });
-
   it("revisor somente leitura não espera: não existe rework de leitura", () => {
     expect(missionWriterAwaitsHandoffAck({ ...worker, readOnly: true })).toBe(false);
   });

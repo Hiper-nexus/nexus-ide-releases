@@ -309,16 +309,6 @@ export function missionWriterAwaitsHandoffAck(input: {
   readonly readOnly?: boolean;
   readonly readOnlyEnforced?: boolean;
   readonly isolatedWriter?: boolean;
-  /**
-   * F-1634 (revisão do Codex no PR 159): o flag `isolatedWriter` só é copiado
-   * para o contexto do FILHO DO OPERADOR (`mcp-server.ts`, `operatorChild &&
-   * meta?.isolatedWriter`); num worker de missão ele é sempre undefined, e ler
-   * só o flag deixava a regra do F-1318 sem efeito justamente ali. Estes dois
-   * são o sinal FÍSICO, medido pelo Main: writer isolado é o que roda numa
-   * worktree própria, diferente do checkout de coordenação.
-   */
-  readonly scopeRoot?: string;
-  readonly executionRoot?: string;
 } | null | undefined): boolean {
   // F-1634: o fallback de disco do handoff MCP é ingerido NO BOOT, depois de
   // queda do Main (F-795), quando a sessão do worker já morreu e não há
@@ -328,13 +318,19 @@ export function missionWriterAwaitsHandoffAck(input: {
   if (input.missionId === undefined || input.role !== "worker") return false;
   if (input.readOnlyEnforced === true) return false;
   if (input.isolatedWriter === true) return true;
-  if (
-    input.executionRoot !== undefined &&
-    input.scopeRoot !== undefined &&
-    input.executionRoot !== input.scopeRoot
-  ) {
-    return true;
-  }
+  // F-1634 (revisão do Codex no PR 159, duas rodadas): tentei derivar "writer
+  // isolado" do sinal físico — raiz de execução diferente da de coordenação —
+  // porque o flag `isolatedWriter` não chega ao contexto do worker de missão
+  // (`mcp-server.ts` só o copia para filho do operador). Estava ERRADO: numa
+  // missão hospedada em worktree de ABA (F-162/F-1006) TODO worker tem raiz
+  // diferente, inclusive o revisor somente leitura — que então entrava na
+  // espera pelo aceite, o oposto do que esta função declara excluir.
+  //
+  // Sem um sinal que separe "worktree da aba" de "worktree deste writer", o
+  // rótulo é o que há. Consequência assumida: worker de missão rotulado
+  // readOnly que seja writer isolado não ganha o pane morno — fecha como antes
+  // deste PR. É otimização perdida, não comportamento errado. Para corrigir de
+  // verdade, propagar `isolatedWriter` no token do worker de missão.
   return input.readOnly !== true;
 }
 

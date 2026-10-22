@@ -2128,16 +2128,6 @@ export async function startMcpServer(): Promise<void> {
   installWorktreeSalvageNotifier();
   // F-795: spool de handoffs que o Main não recebeu — ingestão no boot, na
   // volta do loop (watch) e no fim de cada sessão; nunca no caminho quente.
-  /** F-1634: contexto do writer com o sinal físico de worktree própria. */
-  const spoolWriterContext = (sessionId: string) => {
-    const writer = getContextBySession(sessionId);
-    if (!writer) return null;
-    return {
-      ...writer,
-      scopeRoot: writer.scope?.rootRealPath,
-      executionRoot: writer.executionScope?.rootRealPath,
-    };
-  };
   /** F-1634: Maestro ocupado, neutro de transporte (PTY e ACP). */
   const spoolConsumerBusy = (
     handoff: { readonly missionId?: string | null },
@@ -2178,7 +2168,7 @@ export async function startMcpServer(): Promise<void> {
               // Main) a sessão já morreu e não há contexto: o predicado
               // devolve false e aquele caminho segue fechando na hora.
               awaitAckOnSuccess: missionWriterAwaitsHandoffAck(
-                handoff.sessionId ? spoolWriterContext(handoff.sessionId) : null,
+                handoff.sessionId ? getContextBySession(handoff.sessionId) : null,
               ),
               // F-1634: a espera do spool precisa da MESMA sonda do caminho
               // direto, senão a janela de três minutos fecha o writer enquanto

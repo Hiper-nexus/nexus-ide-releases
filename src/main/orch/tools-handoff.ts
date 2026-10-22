@@ -865,13 +865,7 @@ const handoffSubmitTool: McpToolDef = {
         // F-1634: o `success` do writer de missão também espera o veredito.
         // Fechar no submit apagava o contexto antes dele, e o `rework` caía
         // numa encarnação nova que refazia o trabalho do zero.
-        awaitAckOnSuccess: missionWriterAwaitsHandoffAck({
-          ...ctx,
-          // F-1634: o flag `isolatedWriter` não chega ao contexto do worker de
-          // missão; a worktree própria é o sinal físico equivalente.
-          scopeRoot: ctx.scope?.rootRealPath,
-          executionRoot: ctx.executionScope?.rootRealPath,
-        }),
+        awaitAckOnSuccess: missionWriterAwaitsHandoffAck(ctx),
         // F-1634: a doutrina manda o Maestro RODAR ele mesmo o teste que prova
         // a correção antes de aceitar, e uma suíte real passa dos três minutos
         // da janela. Enquanto ele está ocupado com isso, a rede de segurança
