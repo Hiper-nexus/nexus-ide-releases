@@ -495,6 +495,49 @@ export function resolveUiKitNpxLaunch(
 }
 
 /**
+ * Projects with a WRITING kit run in flight, by real path.
+ *
+ * An MCP client cuts a tool call long before an install finishes (Codex: 120 s
+ * against our 300 s), the install keeps running, and the agent's retry started
+ * a SECOND `shadcn add` / `npm install` in the same tree — two writers on one
+ * lockfile. One writer per project; the second is refused at once with what
+ * to do, instead of queueing behind a run nobody is watching.
+ */
+const writingProjects = new Map<string, number>();
+
+function projectWriteKey(cwd: string): string {
+  try {
+    return fs.realpathSync(cwd);
+  } catch {
+    return path.resolve(cwd);
+  }
+}
+
+export function claimUiKitProjectWrite(cwd: string, now: number = Date.now()): () => void {
+  const key = projectWriteKey(cwd);
+  const since = writingProjects.get(key);
+  if (since !== undefined) {
+    throw new UiKitCliError(
+      'PROJECT_BUSY',
+      `another UI-kit install is still running in this project ` +
+        `(started ${Math.max(0, Math.round((now - since) / 1000))} s ago)`,
+      'Wait for it to finish, check which files it wrote, then retry only what is missing.',
+    );
+  }
+  writingProjects.set(key, now);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    if (writingProjects.get(key) === now) writingProjects.delete(key);
+  };
+}
+
+export function resetUiKitProjectWritesForTests(): void {
+  writingProjects.clear();
+}
+
+/**
  * ESRCH means the group is already gone, which is the outcome teardown wanted.
  * Warning about it turned a clean exit into a scary log line.
  */
@@ -609,6 +652,19 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
       }
     }
 
+    // Released when the child is really gone, never on a timeout alone: the
+    // process group is still writing until it exits.
+    let releaseWrite: () => void = () => {};
+    if (writes) {
+      try {
+        releaseWrite = claimUiKitProjectWrite(cwd);
+      } catch (error) {
+        dropScratch();
+        reject(error);
+        return;
+      }
+    }
+
     let child: ReturnType<typeof spawn>;
     try {
       const launch = resolveUiKitNpxLaunch();
@@ -618,13 +674,16 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
         options,
       );
     } catch (error) {
+      releaseWrite();
       dropScratch();
       reject(
-        new UiKitCliError(
-          'SPAWN_FAILED',
-          `failed to spawn ${request.kit}: ` +
-            (error instanceof Error ? error.message : String(error)),
-        ),
+        error instanceof UiKitCliError
+          ? error
+          : new UiKitCliError(
+              'SPAWN_FAILED',
+              `failed to spawn ${request.kit}: ` +
+                (error instanceof Error ? error.message : String(error)),
+            ),
       );
       return;
     }
@@ -656,7 +715,10 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
       // its own rejection out of the derivative with no handler.
       void terminateTree(child.pid)
         .catch(() => {})
-        .finally(() => reject(error));
+        .finally(() => {
+          releaseWrite();
+          reject(error);
+        });
     }
     function onAbort(): void {
       fail(new UiKitCliError('ABORTED', 'UI-kit run aborted'));
@@ -680,6 +742,7 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
     child.stdout?.on('data', (chunk: Buffer) => accumulate(chunk, true));
     child.stderr?.on('data', (chunk: Buffer) => accumulate(chunk, false));
     child.once('error', (error: Error) => {
+      releaseWrite();
       if (settled) return;
       settled = true;
       cleanup();
@@ -692,6 +755,7 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
       );
     });
     child.once('close', (code: number | null) => {
+      releaseWrite();
       if (settled) return;
       settled = true;
       cleanup();

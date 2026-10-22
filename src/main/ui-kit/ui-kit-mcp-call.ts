@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   assertSafeUiKitCwd,
   buildUiKitChildEnv,
+  claimUiKitProjectWrite,
   isAlreadyGoneKillError,
   resolveUiKitNpxLaunch,
   UiKitCliError,
@@ -189,6 +190,18 @@ export async function callMcpToolOnce(
   }
 
   return await new Promise<McpOneShotResult>((resolve, reject) => {
+    // One writer per project, the same slot the CLI runner takes: an
+    // `install_components` retried after the client gave up must not race the
+    // first one. Released only once the server process is gone.
+    let releaseWrite: () => void = () => {};
+    if (request.writes === true) {
+      try {
+        releaseWrite = claimUiKitProjectWrite(cwd);
+      } catch (error) {
+        reject(error);
+        return;
+      }
+    }
     let child: ReturnType<typeof spawn>;
     try {
       child = spawnProcess(launch.command, args, {
@@ -200,6 +213,7 @@ export async function callMcpToolOnce(
         windowsHide: platform === 'win32',
       });
     } catch (error) {
+      releaseWrite();
       reject(
         new UiKitCliError(
           'SPAWN_FAILED',
@@ -245,7 +259,10 @@ export async function callMcpToolOnce(
       cleanup();
       void terminateTree(child.pid, platform)
         .catch(() => {})
-        .finally(() => reject(error));
+        .finally(() => {
+          releaseWrite();
+          reject(error);
+        });
     }
     function succeed(value: McpOneShotResult): void {
       if (settled) return;
@@ -253,7 +270,10 @@ export async function callMcpToolOnce(
       cleanup();
       void terminateTree(child.pid, platform)
         .catch(() => {})
-        .finally(() => resolve(value));
+        .finally(() => {
+          releaseWrite();
+          resolve(value);
+        });
     }
     function onAbort(): void {
       fail(new UiKitCliError('ABORTED', 'MCP call aborted'));
@@ -284,6 +304,7 @@ export async function callMcpToolOnce(
     request.signal?.addEventListener('abort', onAbort, { once: true });
 
     child.once('error', (error: Error) => {
+      releaseWrite();
       if (settled) return;
       settled = true;
       cleanup();

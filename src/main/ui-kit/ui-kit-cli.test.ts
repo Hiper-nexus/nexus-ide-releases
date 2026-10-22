@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type fs from 'node:fs';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {
   assertPathStaysInProject,
+  claimUiKitProjectWrite,
   assertSafeEnvName,
   isAlreadyGoneKillError,
   UI_KIT_DEFAULT_NPM_REGISTRY,
@@ -429,5 +431,41 @@ describe('assertPathStaysInProject', () => {
         },
       }),
     ).toThrow(/does not resolve/);
+  });
+});
+
+describe('claimUiKitProjectWrite', () => {
+  it('holds one writer per project and names how long the first has run', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ui-kit-slot-'));
+    try {
+      const release = claimUiKitProjectWrite(dir, 1_000);
+      expect(() => claimUiKitProjectWrite(dir, 31_000)).toThrow(/started 30 s ago/);
+      try {
+        claimUiKitProjectWrite(dir, 31_000);
+      } catch (error) {
+        expect((error as UiKitCliError).code).toBe('PROJECT_BUSY');
+        expect((error as UiKitCliError).hint).toMatch(/retry only what is missing/);
+      }
+      release();
+      release(); // idempotent
+      const again = claimUiKitProjectWrite(dir, 40_000);
+      again();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps two projects independent', () => {
+    const a = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ui-kit-slot-a-'));
+    const b = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ui-kit-slot-b-'));
+    try {
+      const releaseA = claimUiKitProjectWrite(a);
+      const releaseB = claimUiKitProjectWrite(b);
+      releaseA();
+      releaseB();
+    } finally {
+      fs.rmSync(a, { recursive: true, force: true });
+      fs.rmSync(b, { recursive: true, force: true });
+    }
   });
 });
