@@ -25,7 +25,7 @@ const DOCTRINE_BASE = [
   'DOUTRINA DE ORQUESTRAÇÃO:',
   '• ESPERA: delegar e encerrar o turno É esperar — a entrega cai no seu ' +
     'input ao ficar idle. NUNCA faça loop de nexus_pane_read/pane_wait_* em ' +
-    'worker vivo; wait só confirma boot. Olhar o que o pane N faz: ' +
+    'worker vivo; wait confirma boot. Olhar o que o pane N faz: ' +
     'nexus_pane_read UMA vez.',
   // Cobrança ativa (modelo Overclock, 19/08): o pane manda o handoff; se um
   // NÃO manda, o orquestrador chama ele. Missão real parou em "aguardar os
@@ -68,15 +68,15 @@ const DOCTRINE_BASE = [
   // handoff é alegação, não prova. (Resumo de worker que diz "corrigido" sem
   // diff nem teste já fechou missão com a correção ausente.)
   '• VERIFIQUE: handoff é alegação, não prova — antes de aceitar/integrar, ' +
-    'leia o diff e exija a prova que cabe: teste para comportamento, captura ' +
-    'do navegador para aparência; senão, "não verificado". Aceite com ' +
-    'nexus_handoff_ack accepted.',
+    'leia o diff e RODE você o teste que prova a correção; entrega de ' +
+    'aparência: a prova é a captura do navegador; senão, "não verificado". ' +
+    'Aceite com nexus_handoff_ack accepted.',
   // Regra do operador (01/10): escreve barato, julga caro — GLM/MiMo davam
   // "veredito APROVAR" em revisão de código.
   '• JULGAMENTO: código só integra/push após veredito de ponta — ' +
     'você (Fable/Opus/Sonnet/Sol 6.1/Astra) julga ou abre juiz via route_task ' +
     '"revisão"; barato nunca julga; sem juiz, você julga; registre com ' +
-    'nexus_review_verdict. Escreva barato; o caro só corrige.',
+    'nexus_review_verdict. Escreva barato; o caro corrige.',
   '• VOZ: ditado traduzido chega em inglês; responda em PT-BR.',
 ].join('\n');
 
@@ -255,7 +255,7 @@ export const MAESTRO_STANDING_DOCTRINE = [
   '6. Esteira: gate longo (validador, suíte) não para a missão. Enquanto ele roda, adiante em workers as próximas unidades; só comando pesado local vai um por vez.',
   // Dever do operador (02/10): o Maestro confere o que os workers dizem ter feito.
   // F-782: a recusa vira rótulo — o Jev e a nota da rota aprendem com ela.
-  '7. Verifique: handoff é alegação, não prova: leia o diff e exija a prova que cabe — teste para comportamento, captura do navegador para aparência; sem isso vale "não verificado". Aceite com nexus_handoff_ack verdict:"accepted". Rework: nexus_handoff_ack com verdict:"rework" e note ao mesmo writer, com o defeito concreto — nunca refazer do zero.',
+  '7. Verifique: handoff é alegação, não prova: leia o diff e RODE você o teste que prova a correção; entrega de aparência: a prova é a captura do navegador. Sem isso vale "não verificado". Aceite com nexus_handoff_ack verdict:"accepted". Rework: nexus_handoff_ack com verdict:"rework" e note ao mesmo writer, com o defeito concreto.',
   // F-781: a regra do navegador sobrevive à compactação também no Maestro
   // adotado (pane do operador) e nas CLIs sem o hook que nega o WebFetch.
   '8. Página web: navegador do Nexus (nexus_browser_open/read), não WebFetch; curl só para JSON de API.',

@@ -86,10 +86,15 @@ export const HANDOFF_REVIEW_QUESTIONS: Record<string, JevQuestion> = {
       'typecheck/build output, command output or a commit reference; for a ' +
       'review or audit, concrete cited evidence such as file:line references ' +
       'or reproduced cases; for a planning, mapping or research task, the ' +
-      'concrete output it produced (document path, sections, file:line map); ' +
-      'for a visual or interface delivery, an observed browser capture of the ' +
-      'rendered result, with the URL/viewport and what was seen — a unit test ' +
-      'cannot prove appearance? ' +
+      // F-1635 (revisão do Codex no PR 159): o texto desta rubrica NÃO muda
+      // aqui. A regra do repo é explícita — rubrica medida com o Jev real nas
+      // 105 entregas do HiperGO, reavaliar no MESMO conjunto se o texto mudar
+      // — e esse corpus não está no repositório, então qualquer reescrita
+      // sairia sem calibração e poderia virar devolução falsa ou aceite falso
+      // em produção. A entrega visual é resolvida por FATO determinístico
+      // (`facts.hasVisualEvidence`, abaixo), que não depende de probabilidade
+      // nenhuma: com a captura verificada pelo Main, o sinal nem é levantado.
+      'concrete output it produced (document path, sections, file:line map)? ' +
       'Merely claiming the work is done, or promising to check later, is not ' +
       'evidence.',
     criteria: {

@@ -371,17 +371,16 @@ describe('doutrina permanente do Maestro (F-701)', () => {
     // Nas três portas por onde a doutrina chega: kickoff, instruções permanentes e lembrete de turno.
     const base = buildOrchestratorDoctrine(null, mission());
     expect(base).toMatch(/VERIFIQUE: handoff é alegação, não prova/);
-    expect(base).toMatch(/leia o diff e exija a prova que cabe/);
     expect(base).toMatch(/"não verificado"/);
     expect(MAESTRO_STANDING_DOCTRINE).toMatch(/Verifique: handoff é alegação, não prova/);
-    expect(MAESTRO_STANDING_DOCTRINE).toMatch(/leia o diff e exija a prova que cabe/);
     expect(MAESTRO_STANDING_DOCTRINE).toMatch(/"não verificado"/);
-    // F-1633: a prova é a que cabe ao trabalho. "rode o teste" fixo levava a
-    // entrega de aparência a "não verificado" e a mais uma devolução: não
-    // existe teste de unidade que prove aparência.
+    // Regra do operador (02/10): o Maestro RODA o teste, não aceita a palavra
+    // do worker. Revisão do Codex no PR 159: trocar isso por "exija a prova"
+    // permitia integrar mudança de comportamento sem ninguém executar o teste.
+    // F-1633 preserva só a exceção de APARÊNCIA, onde esse teste não existe.
     for (const text of [base, MAESTRO_STANDING_DOCTRINE]) {
-      expect(text).toMatch(/teste para comportamento/);
-      expect(text).toMatch(/captura do navegador para aparência/);
+      expect(text).toMatch(/RODE você o teste que prova a correção/);
+      expect(text).toMatch(/aparência: a prova é a captura do navegador/);
     }
   });
 
