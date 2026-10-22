@@ -524,6 +524,40 @@ describe('path-resolver CLI binary resolution', () => {
     expect(parts).toContain(kimiDir);
   });
 
+  it.each(['/opt/homebrew', '/usr/local'])(
+    'F-1647: discovers keg-only Node/npm under %s without a login PATH',
+    (prefix) => {
+      const nodeBin = `${prefix}/opt/node@22/bin`;
+      const directory = fs.statSync(binDir);
+      const file = fs.statSync(executable);
+      file.mode |= 0o111;
+      const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+      // Virtual macOS filesystem: never create /usr/local or /opt on the host.
+      const stat = vi.spyOn(fs, 'statSync').mockImplementation((candidate) => {
+        const value = path.normalize(String(candidate));
+        if (value === path.normalize(nodeBin)) return directory;
+        if (['node', 'npm'].some(command => value === path.join(nodeBin, command))) return file;
+        throw Object.assign(new Error('missing fixture path'), { code: 'ENOENT' });
+      });
+      try {
+        const processPath = ['/usr/bin', '/bin'].join(path.delimiter);
+        const effectivePath = buildEffectivePath({ processPath, loginPath: '', home: tmp });
+        for (const command of ['node', 'npm']) {
+          expect(resolveCliBinary(command, { processPath, effectivePath, home: tmp })?.binPath)
+            .toBe(path.join(nodeBin, command));
+        }
+        // Discovery must not advertise a keg that is no longer installed.
+        stat.mockImplementation(() => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); });
+        const missingPath = buildEffectivePath({ processPath, loginPath: '', home: tmp });
+        expect(missingPath.split(path.delimiter)).not.toContain(nodeBin);
+        expect(resolveCliBinary('npm', { processPath, effectivePath: missingPath, home: tmp })).toBeNull();
+      } finally {
+        stat.mockRestore();
+        platform.mockRestore();
+      }
+    },
+  );
+
   it('probes the login shell asynchronously without blocking the main process', async () => {
     const value = await probeLoginShellPath(
       async () => '__NEXUS_PATH_START__/custom/async/bin__NEXUS_PATH_END__',

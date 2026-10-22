@@ -145,6 +145,7 @@ export function commonCliBinDirs(home = realUserHome()): string[] {
     '/opt/homebrew/opt/node@22/bin',
     '/opt/homebrew/bin',
     '/opt/homebrew/sbin',
+    '/usr/local/opt/node@22/bin',
     '/usr/local/bin',
     path.join(home, '.bun', 'bin'),
     path.join(home, '.cargo', 'bin'),

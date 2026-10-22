@@ -1,15 +1,20 @@
 import fsp from 'node:fs/promises';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import * as periodicFileRead from '../redline/redline-safe-read';
 import mimoRaw from '../../adapters/builtin/mimo-code.json';
 import museRaw from '../../adapters/builtin/muse.json';
 import codexRaw from '../../adapters/builtin/codex.json';
+import minimaxRaw from '../../adapters/builtin/minimax-code.json';
 import type { ChildProcess } from 'node:child_process';
 import { PROVIDER_CHANNELS } from '../../shared/provider-settings-types';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const spawnDeps = vi.hoisted(() => ({
   resolvedClaudeBin: '/usr/local/bin/claude' as string | null,
+  resolvedInstallBins: new Map<string, string>(),
+  userHome: '/fixture-quota-home',
   /** F-1397: adapters elegíveis para candidato de atualização (mutável por teste). */
   builtinIds: new Set<string>(['claude']),
   /** C5: brew resolvível só nos testes que pedem (null = sem Homebrew). */
@@ -22,6 +27,7 @@ const spawnDeps = vi.hoisted(() => ({
   downloadInstaller: vi.fn(async () => ({ ok: true, text: async () => '#!/bin/bash\nexit 0\n' })),
   systemIdleTime: vi.fn(() => 0),
   rescanBinaries: vi.fn(async () => []),
+  refreshUserPath: vi.fn(async () => process.env.PATH ?? ''),
   execFile: vi.fn<(...args: unknown[]) => ChildProcess>(),
   providersFile: { version: 3, providers: {
     claude: { upstream: 'glm' }, opencode: { upstream: 'glm' }, aider: { upstream: 'glm' },
@@ -300,7 +306,7 @@ vi.mock('../security/trusted-ipc', async (original) => ({
 vi.mock('../adapters/adapter-registry', () => ({
   isBuiltinAdapter: (id: string) => spawnDeps.builtinIds.has(id),
   getAdapter: (id: string) =>
-    id === 'codex' ? codexRaw : id === 'mimo-code'
+    id === 'minimax-code' ? minimaxRaw : id === 'codex' ? codexRaw : id === 'mimo-code'
       ? mimoRaw
       : id === 'claude'
       ? claudeAdapter
@@ -329,7 +335,7 @@ vi.mock('../adapters/adapter-registry', () => ({
   getAdapterInstallationWarning: (id: string) =>
     spawnDeps.installationWarnings.get(id),
   getAdapterResolvedBin: (id: string) =>
-    id === 'codex' ? '/mock/bin/codex' : id === 'mimo-code' ? '/usr/local/bin/mimo' : id === 'claude'
+    spawnDeps.resolvedInstallBins.get(id) ?? (id === 'codex' ? '/mock/bin/codex' : id === 'mimo-code' ? '/usr/local/bin/mimo' : id === 'claude'
       ? spawnDeps.resolvedClaudeBin
       : id === 'kimi'
         ? '/Users/test/.kimi-code/bin/kimi'
@@ -343,7 +349,7 @@ vi.mock('../adapters/adapter-registry', () => ({
           ? '/usr/local/bin/local-agent'
         : id === 'minimax-code'
           ? '/usr/local/bin/mcode'
-        : null,
+         : null),
   resolveAdapterBinary: (id: string) =>
     id === 'mimo-code' ? '/usr/local/bin/mimo' : id === 'claude'
       ? spawnDeps.resolvedClaudeBin
@@ -360,6 +366,7 @@ vi.mock('../adapters/adapter-registry', () => ({
         : null,
   rescanAdapterBinaries: spawnDeps.rescanBinaries,
   listAdapters: () => [
+    ...(spawnDeps.builtinIds.has('minimax-code') ? [minimaxRaw] : []),
     claudeAdapter,
     mimoRaw,
     kimiAdapter,
@@ -379,11 +386,12 @@ vi.mock('../adapters/adapter-registry', () => ({
 // Unit tests use synthetic absolute paths that do not exist on disk.
 vi.mock('../path-resolver', () => ({
   cachedCliBinaryVersion: () => undefined,
-  realUserHome: () => '/fixture-quota-home',
+  realUserHome: () => spawnDeps.userHome,
   revalidateExecutable: (binPath: string) =>
     typeof binPath === 'string' &&
     (binPath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(binPath)),
   resolveCliBinary: spawnDeps.resolveCliBinary,
+  refreshUserPath: spawnDeps.refreshUserPath,
 }));
 
 vi.mock('../adapters/control-args', async original => {
@@ -1305,7 +1313,7 @@ describe('background CLI maintenance during pane startup', () => {
       await runInstallRecipe({
         kind: 'powershell-script', scriptUrl: 'https://static.devin.ai/cli/setup.ps1',
         runner: 'powershell', runnerHint: '',
-      }, undefined, undefined, undefined, { childSignal, onChildStart });
+      }, 'devin', undefined, undefined, undefined, { childSignal, onChildStart });
       expect(spawnDeps.execFile.mock.calls.at(-1)?.[1]).toContain('-File');
       expect(onChildStart).toHaveBeenCalledOnce();
       expect(psOptions?.signal).toBe(childSignal);
@@ -3300,6 +3308,220 @@ describe('F-210: instalação de Claude verifica e reutiliza o binário real', (
     expect(spawnDeps.execFile.mock.calls.at(-1)?.slice(0, 2)).toEqual([
       '/fixture-quota-home/.local/share/claude/versions/4.12.7', ['--version'],
     ]);
+  });
+});
+
+describe('F-1647: POSIX installer PATH and recipe environment', () => {
+  let resolver: ReturnType<typeof spawnDeps.resolveCliBinary.getMockImplementation>;
+  const calls: Array<{ file: string; env: NodeJS.ProcessEnv; node: string | null }> = [];
+  let lookup: typeof import('../path-resolver').lookupInPath;
+  let prefix: string;
+  let userNode: boolean;
+
+  beforeEach(async () => {
+    lookup = (await vi.importActual<typeof import('../path-resolver')>('../path-resolver')).lookupInPath;
+    resolver = spawnDeps.resolveCliBinary.getMockImplementation();
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    spawnDeps.confirmInstall.mockClear();
+    spawnDeps.refreshUserPath.mockClear();
+    calls.length = 0;
+    vi.spyOn(fs, 'statSync').mockImplementation((candidate) => {
+      const file = String(candidate);
+      const exists = file === path.join(prefix, 'node') ||
+        (userNode && file === path.join('/chosen-node/bin', 'node'));
+      if (!exists) throw Object.assign(new Error('missing fixture executable'), { code: 'ENOENT' });
+      return { isFile: () => true, mode: 0o100755 } as fs.Stats;
+    });
+    spawnDeps.resolveCliBinary.mockImplementation(runner => {
+      if (runner === 'npm') return { binPath: `${prefix}/npm`, effectivePath: prefix, source: 'fallback-dir' };
+      if (runner === 'bash') return { binPath: '/bin/bash', effectivePath: [prefix, '/usr/bin', '/bin'].join(path.delimiter), source: 'process-path' };
+      return null;
+    });
+    spawnDeps.execFile.mockReset().mockImplementation((...args: unknown[]) => {
+      const [file, , options] = args as [string, string[], { env?: NodeJS.ProcessEnv }];
+      const env = options.env ?? process.env;
+      const node = lookup('node', env.PATH ?? '');
+      calls.push({ file, env, node });
+      (args.at(-1) as (error: Error | null, stdout: string) => void)(
+        node ? null : new Error('env: node: No such file or directory'), '');
+      return { stdin: { end: () => undefined } } as unknown as ChildProcess;
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    spawnDeps.resolveCliBinary.mockImplementation(resolver!);
+    spawnDeps.refreshUserPath.mockReset().mockImplementation(async () => process.env.PATH ?? '');
+  });
+
+  it.each([
+    ['/usr/local/opt/node@22/bin', false], ['/opt/homebrew/opt/node@22/bin', false],
+    ['/usr/local/opt/node@22/bin', true], ['/opt/homebrew/opt/node@22/bin', true],
+  ] as const)('npm at %s finds Node, preserving explicit Node = %s', async (bin, chosen) => {
+    prefix = bin;
+    userNode = chosen;
+    vi.stubEnv('PATH', [...(chosen ? ['/chosen-node/bin'] : []), '/usr/bin', '/bin'].join(path.delimiter));
+    const inherited = process.env.PATH;
+    await runInstallRecipe({ kind: 'argv', runner: 'npm', runnerHint: '',
+      argv: ['npm', 'install', '-g', '@openai/codex'], env: { npm_config_update_notifier: 'false' } }, 'codex');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].file).toBe(`${prefix}/npm`);
+    expect(calls[0].node).toBe(path.join(chosen ? '/chosen-node/bin' : prefix, 'node'));
+    expect(calls[0].env.npm_config_update_notifier).toBe('false');
+    expect(process.env.PATH).toBe(inherited);
+  });
+
+  it('POSIX recipe passes noninteractive Muse env while retaining the resolved PATH', async () => {
+    prefix = '/opt/homebrew/opt/node@22/bin';
+    userNode = false;
+    vi.stubEnv('PATH', ['/usr/bin', '/bin'].join(path.delimiter));
+    vi.stubEnv('MUSE_LOGIN', '1');
+    vi.spyOn(fsp, 'writeFile').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'rm').mockResolvedValue(undefined);
+    await runInstallRecipe({ kind: 'script', runner: 'bash', runnerHint: '',
+      scriptUrl: 'https://dev.meta.ai/install.sh',
+      env: { MUSE_LOGIN: '0', MUSE_NO_MODIFY_PATH: '1' } }, 'muse');
+    expect(calls[0].file).toBe('/bin/bash');
+    expect(calls[0].node).toBe(path.join(prefix, 'node'));
+    expect(calls[0].env).toMatchObject({ MUSE_LOGIN: '0', MUSE_NO_MODIFY_PATH: '1' });
+    expect(process.env.MUSE_LOGIN).toBe('1');
+  });
+
+  it('manual install refreshes a missed login PATH before choosing a runner', async () => {
+    prefix = '/chosen-node/bin';
+    userNode = true;
+    vi.stubEnv('PATH', ['/usr/bin', '/bin'].join(path.delimiter));
+    spawnDeps.resolveCliBinary.mockImplementation(runner =>
+      runner === 'npm' && process.env.PATH?.split(path.delimiter).includes(prefix)
+        ? { binPath: `${prefix}/npm`, effectivePath: process.env.PATH, source: 'process-path' } : null);
+    spawnDeps.refreshUserPath.mockImplementationOnce(async () => {
+      process.env.PATH = [prefix, '/usr/bin', '/bin'].join(path.delimiter);
+      return process.env.PATH;
+    });
+    spawnDeps.confirmInstall.mockResolvedValueOnce({ response: 0 });
+    registerProviderIpc();
+    const result = await spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.installCli)!({}, { adapterId: 'codex' });
+    expect(result).toMatchObject({ ok: false, error: 'instalação cancelada' });
+    expect(spawnDeps.confirmInstall).toHaveBeenCalledOnce();
+    expect(calls).toEqual([]);
+  });
+});
+
+describe.runIf(process.platform === 'win32')('F-1646: canonical identity in Windows CLI updates', () => {
+  let disk: typeof fs;
+  let root: string;
+  let shim: string;
+  let entry: string;
+  let node: string;
+  let stop: (() => Promise<void>) | undefined;
+  let version: string;
+  let resolver: (runner: string) => { binPath: string } | null;
+  let originalBuiltinIds: string[];
+  const calls: Array<{ file: string; argv: string[]; shell?: boolean }> = [];
+
+  beforeEach(async () => {
+    disk = await vi.importActual<typeof fs>('node:fs');
+    root = disk.realpathSync(disk.mkdtempSync(path.join(os.tmpdir(), 'nexus-cli-identity-')));
+    const prefix = path.join(root, 'npm prefix & space');
+    const pkg = path.join(prefix, 'node_modules', '@minimax-ai', 'code');
+    disk.mkdirSync(pkg, { recursive: true });
+    entry = path.join(pkg, 'cli.js');
+    disk.writeFileSync(entry, '// fixture: never executed');
+    disk.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({
+      name: '@minimax-ai/code', version: '0.5.8', bin: { mcode: './cli.js' },
+    }));
+    shim = path.join(prefix, 'mcode.cmd');
+    disk.writeFileSync(shim, '@ECHO off\r\n"%_prog%" "%dp0%\\node_modules\\@minimax-ai\\code\\cli.js" %*\r\n');
+    node = path.join(root, 'node.exe');
+    disk.writeFileSync(node, 'fixture: never executed');
+    disk.writeFileSync(path.join(root, 'cli-auto-update.json'), JSON.stringify({ enabled: true, checkedAt: {} }));
+    vi.spyOn(fs, 'readFileSync').mockImplementation(((file: fs.PathOrFileDescriptor, ...args: unknown[]) =>
+      typeof file === 'string' && file.startsWith(root + path.sep)
+        ? Reflect.apply(disk.readFileSync, disk, [file, ...args])
+        : JSON.stringify(spawnDeps.providersFile)) as typeof fs.readFileSync);
+    resolver = spawnDeps.resolveCliBinary.getMockImplementation()!;
+    spawnDeps.resolveCliBinary.mockImplementation(runner =>
+      runner === 'node' ? { binPath: node } : runner === shim ? { binPath: shim } : null);
+    spawnDeps.resolvedInstallBins.set('minimax-code', shim);
+    spawnDeps.userHome = root;
+    originalBuiltinIds = [...spawnDeps.builtinIds];
+    spawnDeps.builtinIds.clear();
+    spawnDeps.builtinIds.add('minimax-code');
+    spawnDeps.confirmInstall.mockClear();
+    spawnDeps.rescanBinaries.mockReset().mockResolvedValue([]);
+    spawnDeps.systemIdleTime.mockReturnValue(120);
+    version = '0.5.8';
+    calls.length = 0;
+    spawnDeps.execFile.mockReset().mockImplementation((...args: unknown[]) => {
+      const [file, argv, options] = args as [string, string[], { shell?: boolean }];
+      const callback = args.at(-1) as (error: Error | null, stdout: string) => void;
+      calls.push({ file, argv, shell: options.shell });
+      if (file === node && argv[0] === entry && argv[1] === '--version') callback(null, version);
+      else if (file === node && argv[0] === entry && argv[1] === 'update') {
+        version = '0.5.9';
+        callback(null, '');
+      } else callback(new Error('Unexpected fixture command'), '');
+      return {} as ChildProcess;
+    });
+    registerProviderIpc();
+  });
+
+  afterEach(async () => {
+    await stop?.();
+    stop = undefined;
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    spawnDeps.resolveCliBinary.mockImplementation(resolver);
+    spawnDeps.resolvedInstallBins.clear();
+    spawnDeps.userHome = '/fixture-quota-home';
+    spawnDeps.builtinIds.clear();
+    for (const id of originalBuiltinIds) spawnDeps.builtinIds.add(id);
+    disk.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('manual update launches the selected mcode package through Node without a shell', async () => {
+    const result = await spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.installCli)!(
+      {}, { adapterId: 'minimax-code', mode: 'update' });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, changed: true, version: '0.5.9' });
+    expect(calls.filter(call => call.argv.includes('update'))).toEqual([
+      { file: node, argv: [entry, 'update'], shell: false },
+    ]);
+    expect(spawnDeps.confirmInstall).toHaveBeenCalledOnce();
+    const detail = (spawnDeps.confirmInstall.mock.calls[0].at(-1) as { detail: string }).detail;
+    expect(detail).toContain(node);
+    expect(detail).toContain(JSON.stringify(entry));
+  });
+
+  it('automatic update keeps MiniMax eligible and runs the same verified entrypoint', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(fsp, 'realpath').mockResolvedValue(entry);
+    vi.spyOn(fsp, 'access').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'mkdir').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'writeFile').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'rename').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'rm').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'readFile').mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' }));
+    vi.spyOn(periodicFileRead, 'readRegularFileCappedAsync').mockResolvedValue({
+      kind: 'text', stamp: 'fixture', text: JSON.stringify({ enabled: true, checkedAt: {} }),
+    });
+    stop = startCliAutoUpdate(root, () => false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls.filter(call => call.argv.includes('update'))).toEqual([
+      { file: node, argv: [entry, 'update'], shell: false },
+    ]);
+    expect(listProviderSettings().find(info => info.adapterId === 'minimax-code')?.cliAutoUpdate)
+      .toMatchObject({ status: 'updated', fromVersion: '0.5.8', toVersion: '0.5.9' });
+  });
+
+  it.each(['different-package', 'missing-entrypoint'])('refuses %s without falling back to a shell', async variant => {
+    if (variant === 'different-package') {
+      disk.writeFileSync(shim, '@ECHO off\r\n"%_prog%" "%dp0%\\node_modules\\other-package\\cli.js" %*\r\n');
+    } else disk.unlinkSync(entry);
+    const result = await spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.installCli)!(
+      {}, { adapterId: 'minimax-code', mode: 'update' });
+    expect(result).toMatchObject({ ok: false });
+    expect(calls).toEqual([]);
+    expect(spawnDeps.confirmInstall).not.toHaveBeenCalled();
   });
 });
 
