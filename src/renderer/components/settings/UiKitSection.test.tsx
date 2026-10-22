@@ -820,3 +820,70 @@ it('sends no contract at all when the operator names none', async () => {
     act(() => root.unmount());
   }
 });
+
+it('shows the CLI output when an install fails', async () => {
+  // A dependency conflict or a network error leaves the diagnosis in `output`
+  // and no `error` at all, so the panel said only "a instalação falhou" and
+  // threw away the one text that says what to do about it.
+  api({
+    install: vi.fn().mockResolvedValue({
+      ok: false,
+      installed: [],
+      output: 'npm ERR! ERESOLVE could not resolve\nconflito com react@18',
+    }),
+  });
+  const { host, root } = await mount();
+  try {
+    await act(async () =>
+      typeInto(
+        host.querySelector<HTMLInputElement>(
+          'input[aria-label="Instalar item pelo nome exato"]',
+        )!,
+        'button',
+      ),
+    );
+    const install_ = [...host.querySelectorAll('button')].find(
+      (entry) => entry.textContent === 'Instalar',
+    );
+    expect(install_).toBeDefined();
+    await act(async () => install_!.click());
+
+    const notice = host.querySelector('[role="status"].mkt-notice--danger');
+    expect(notice?.textContent).toMatch(/ERESOLVE/);
+    expect(notice?.textContent).toMatch(/conflito com react@18/);
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it('keeps the vault reason when a licence key cannot be stored', async () => {
+  // Main answers the actionable reason in `detail`; the immediate refresh
+  // replaced it with the generic status ("abra um projeto…"), so the operator
+  // never learned why the key was not stored.
+  api({
+    license: vi.fn().mockResolvedValue({
+      state: 'unknown',
+      stored: false,
+      masked: null,
+      detail: 'o cofre recusou: keychain trancado',
+    }),
+  });
+  const { host, root } = await mount();
+  try {
+    await act(async () =>
+      typeInto(
+        host.querySelector<HTMLInputElement>('input[aria-label="Chave de licença do BoardUI"]')!,
+        'suk-a-chave',
+      ),
+    );
+    await act(async () =>
+      [...host.querySelectorAll('button')]
+        .find((entry) => entry.textContent === 'Salvar e ativar')!
+        .click(),
+    );
+
+    expect(host.textContent).toMatch(/keychain trancado/);
+  } finally {
+    act(() => root.unmount());
+  }
+});

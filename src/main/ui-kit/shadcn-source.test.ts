@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { UiKitCliError } from './ui-kit-cli';
 import {
   assertShadcnRegistries,
+  defaultShadcnSearchPlan,
   buildShadcnArgs,
   chunkShadcnSearchRegistries,
   classifyShadcnItem,
+  SHADCN_MAX_REGISTRIES,
   referencedShadcnNamespaces,
   shadcnCommandWrites,
   type ShadcnCommand,
@@ -294,5 +296,34 @@ describe('chunkShadcnSearchRegistries', () => {
 
   it('has nothing to search for an empty list', () => {
     expect(chunkShadcnSearchRegistries([])).toEqual([]);
+  });
+});
+
+describe('the default search says what it could not cover', () => {
+  const many = (count: number) =>
+    Array.from({ length: count }, (_, index) => `@ns${String(index).padStart(2, '0')}`);
+
+  it('covers everything and omits nothing while it fits', () => {
+    const plan = defaultShadcnSearchPlan(['@shadcn', '@acme']);
+
+    expect(plan.registries).toEqual(['@shadcn', '@acme']);
+    expect(plan.omitted).toEqual([]);
+  });
+
+  it('omits the namespaces beyond the first batch, and names them', () => {
+    const plan = defaultShadcnSearchPlan(many(40));
+
+    expect(plan.registries).toHaveLength(SHADCN_MAX_REGISTRIES);
+    expect(plan.omitted).toHaveLength(40 - SHADCN_MAX_REGISTRIES);
+    // Nothing is reported twice, and nothing covered is reported as omitted.
+    expect(plan.omitted.some((entry) => plan.registries.includes(entry))).toBe(false);
+    expect(new Set([...plan.registries, ...plan.omitted]).size).toBe(40);
+  });
+
+  it('answers an empty plan for no namespaces', () => {
+    const plan = defaultShadcnSearchPlan([]);
+
+    expect(plan.registries).toEqual([]);
+    expect(plan.omitted).toEqual([]);
   });
 });

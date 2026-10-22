@@ -125,7 +125,12 @@ export function UiKitSection() {
       // that was never saved.
       if (view.stored) setLicenseKey('');
       setStatus((prev) => (prev ? { ...prev, license: view } : prev));
-      await refreshStatus();
+      // The refresh REPLACED the vault's reason with the generic status — "abra
+      // um projeto para checar a licença" with no project open — so the
+      // operator never learned why the key was not stored. On failure the
+      // answer from Main is the last word; on success the refresh brings the
+      // state the vendor reports.
+      if (view.stored) await refreshStatus();
     } finally {
       setBusy(null);
     }
@@ -423,6 +428,15 @@ export function UiKitSection() {
               ? `Instalado: ${result.installed.join(', ') || 'nada a fazer'}`
               : (result.error ?? 'A instalação falhou.')}
           </p>
+          {!result.ok && result.output && (
+            // The CAUSE. A dependency conflict or a network error leaves the
+            // diagnosis in `output` and no `error` at all, so the panel said
+            // only "a instalação falhou" and threw away the one text that
+            // says what to do about it.
+            <pre className="settings-pre" aria-label="Saída da instalação">
+              {result.output.slice(-4000)}
+            </pre>
+          )}
           {result.unresolved && result.unresolved.length > 0 && (
             <p>Sem item no catálogo para: {result.unresolved.join(', ')}</p>
           )}

@@ -27,6 +27,8 @@ const handlers = vi.hoisted(
 const vault = vi.hoisted(() => ({
   entries: new Map<string, string>(),
   refuseWrites: false,
+  /** Refuse from the Nth write on, to break a ROLLBACK and nothing else. */
+  refuseWritesFrom: Number.POSITIVE_INFINITY,
   writes: [] as { key: string; value: string }[],
 }));
 const store = vi.hoisted(() => ({ registries: [] as unknown[], refuseWrite: false }));
@@ -52,7 +54,9 @@ const fakeVault = {
   getSecret: (key: string) => vault.entries.get(key) ?? null,
   setSecret: (key: string, value: string) => {
     vault.writes.push({ key, value });
-    if (vault.refuseWrites) return { ok: false, error: 'cofre trancado' };
+    if (vault.refuseWrites || vault.writes.length >= vault.refuseWritesFrom) {
+      return { ok: false, error: 'cofre trancado' };
+    }
     if (value.length === 0) vault.entries.delete(key);
     else vault.entries.set(key, value);
     return { ok: true };
@@ -89,6 +93,7 @@ beforeEach(() => {
   vault.entries.clear();
   vault.writes = [];
   vault.refuseWrites = false;
+  vault.refuseWritesFrom = Number.POSITIVE_INFINITY;
   store.registries = [{ ...VENDOR }];
   store.refuseWrite = false;
   vault.entries.set(TOKEN_KEY, 'tok-old');
@@ -251,5 +256,28 @@ describe('a licence key is validated before it reaches the vault', () => {
 
     expect(view.stored).toBe(true);
     expect([...vault.entries.values()]).toContain('suk-well-formed-key');
+  });
+});
+
+describe('a rollback that is itself refused is said out loud', () => {
+  it('clears the key when the previous value cannot go back', async () => {
+    // The dangerous state: the vault holds the NEW host's token while the
+    // settings still name the OLD url, so the next install would send that
+    // credential to the old host. With no way to put the old value back, no
+    // credential at all is the only fail-closed outcome left.
+    store.refuseWrite = true;
+    vault.refuseWritesFrom = 2; // the token write lands; the rollback does not
+    const handle = await registryHandler();
+
+    const view = await handle(null, {
+      action: 'set',
+      registry: { namespace: '@acme', url: 'https://elsewhere.test/r/{name}.json' },
+      token: 'tok-elsewhere',
+    });
+
+    expect(view.registrySaved).toBeUndefined();
+    expect(view.registryError).toMatch(/apagada|não corresponde/);
+    // Both the restore AND the clear were attempted.
+    expect(vault.writes.filter((write) => write.key === TOKEN_KEY)).toHaveLength(3);
   });
 });

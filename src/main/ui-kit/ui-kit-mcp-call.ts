@@ -221,9 +221,24 @@ export async function callMcpToolOnce(
     }, timeoutMs);
     timer.unref?.();
 
+    function onStdinError(error: Error): void {
+      // `Writable.write()` reports EPIPE ASYNCHRONOUSLY: when the server
+      // closes its input pipe (during the handshake, say), the failure
+      // arrives on the stream, not in the try/catch around the write. With no
+      // listener here it became an uncaught exception in the MAIN process
+      // instead of a rejected tool call.
+      fail(
+        new UiKitCliError(
+          'WRITE_FAILED',
+          `failed to write to MCP server: ${error.message}`,
+        ),
+      );
+    }
+
     function cleanup(): void {
       clearTimeout(timer);
       request.signal?.removeEventListener('abort', onAbort);
+      child.stdin?.off('error', onStdinError);
     }
     function fail(error: UiKitCliError): void {
       if (settled) return;
@@ -246,7 +261,11 @@ export async function callMcpToolOnce(
     }
     function send(message: Record<string, unknown>): void {
       try {
-        child.stdin?.write(`${JSON.stringify(message)}\n`);
+        // The callback catches the same asynchronous failure on this write;
+        // the stream listener covers one that arrives between writes.
+        child.stdin?.write(`${JSON.stringify(message)}\n`, (error) => {
+          if (error) onStdinError(error);
+        });
       } catch (error) {
         fail(
           new UiKitCliError(
@@ -258,6 +277,7 @@ export async function callMcpToolOnce(
       }
     }
 
+    child.stdin?.on('error', onStdinError);
     request.signal?.addEventListener('abort', onAbort, { once: true });
 
     child.once('error', (error: Error) => {

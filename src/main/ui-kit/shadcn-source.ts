@@ -174,6 +174,27 @@ export function chunkShadcnSearchRegistries(
   return batches;
 }
 
+/**
+ * What a DEFAULT search covers, and what it leaves out.
+ *
+ * The CLI takes a bounded number of registries per call, so the default is
+ * the first chunk — and the rest has to be SAID. Staying quiet about it reads
+ * as "those registries have nothing", and a caller cannot name a namespace it
+ * was never told about.
+ */
+export function defaultShadcnSearchPlan(namespaces: readonly string[]): {
+  readonly registries: readonly string[];
+  readonly omitted: readonly string[];
+} {
+  const batches = chunkShadcnSearchRegistries(namespaces);
+  const registries = batches[0] ?? [];
+  const covered = new Set(registries);
+  return {
+    registries,
+    omitted: batches.slice(1).flat().filter((entry) => !covered.has(entry)),
+  };
+}
+
 export function assertShadcnRegistries(
   registries: readonly string[],
 ): readonly string[] {

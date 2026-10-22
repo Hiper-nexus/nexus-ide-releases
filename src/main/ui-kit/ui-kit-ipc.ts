@@ -479,7 +479,7 @@ export function registerUiKitIpc(): void {
       // to another host with a fresh token and then failing to persist left
       // the OLD url configured with the NEW host's credential behind it — the
       // next install would have sent that token to the old host.
-      let rollbackToken: (() => void) | null = null;
+      let rollbackToken: (() => string | null) | null = null;
 
       try {
         if (parsed.data.action === 'remove') {
@@ -506,7 +506,11 @@ export function registerUiKitIpc(): void {
               return { ...(await buildStatus()), registryError: plan.error };
             }
             rollbackToken = () => {
-              secrets().setSecret(key, before);
+              if (secrets().setSecret(key, before).ok) return null;
+              return (
+                'o cofre recusou devolver o token; a remoção não foi salva e a ' +
+                'chave não está mais lá. Cadastre o registry de novo.'
+              );
             };
             const persistedRemoval = replaceOrchSettings({
               uiKitRegistries: plan.registries.map(persistableRegistry),
@@ -516,8 +520,11 @@ export function registerUiKitIpc(): void {
               persisted: persistedRemoval?.uiKitRegistries,
             });
             if (!removal.removed) {
-              rollbackToken();
-              return { ...(await buildStatus()), registryError: removal.error };
+              const undone = rollbackToken();
+              return {
+                ...(await buildStatus()),
+                registryError: undone ? `${removal.error}. ${undone}` : removal.error,
+              };
             }
           }
           return await buildStatus();
@@ -586,7 +593,20 @@ export function registerUiKitIpc(): void {
             };
           }
           rollbackToken = () => {
-            secrets().setSecret(key, before);
+            // A REFUSED rollback is the dangerous state: the vault then holds
+            // the NEW host's token while settings still name the OLD url, and
+            // the next install would send that credential to the old host. So
+            // if putting the previous value back fails, clear the key instead
+            // — no credential at all is the only fail-closed outcome left,
+            // and the operator retypes what they just typed.
+            if (secrets().setSecret(key, before).ok) return null;
+            const cleared = secrets().setSecret(key, '');
+            return cleared.ok
+              ? 'o cofre recusou devolver o token anterior; a chave foi apagada ' +
+                'para não sobrar credencial do host novo — digite-a de novo'
+              : 'o cofre recusou devolver E apagar o token: a chave guardada não ' +
+                'corresponde ao registry configurado. Remova o registry e ' +
+                'cadastre-o de novo antes de instalar.';
           };
         }
         const next = [
@@ -607,22 +627,26 @@ export function registerUiKitIpc(): void {
         });
         if (!outcome.saved) {
           // No token typed on this save means nothing to roll back.
-          rollbackToken?.();
-          return { ...(await buildStatus()), registryError: outcome.error };
+          const undone = rollbackToken?.() ?? null;
+          return {
+            ...(await buildStatus()),
+            registryError: undone ? `${outcome.error}. ${undone}` : outcome.error,
+          };
         }
         // The receipt, issued only here — after the write actually happened.
         return { ...(await buildStatus()), registrySaved: registry.namespace };
       } catch (error) {
-        rollbackToken?.();
+        const undone = rollbackToken?.() ?? null;
         // An exception in validation or persistence returns the PREVIOUS list,
         // which still contains the namespace being edited. Without a reason
         // the panel would read that as success and clear the operator's input.
+        const reason =
+          error instanceof Error
+            ? error.message.slice(0, 200)
+            : 'the registry could not be saved';
         return {
           ...(await buildStatus()),
-          registryError:
-            error instanceof Error
-              ? error.message.slice(0, 200)
-              : 'the registry could not be saved',
+          registryError: undone ? `${reason}. ${undone}` : reason,
         };
       }
     },

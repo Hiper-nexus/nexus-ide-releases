@@ -16,6 +16,8 @@ type Responder = (
 interface FakeServer {
   readonly child: ReturnType<typeof spawn>;
   readonly writes: string[];
+  /** The stdin stream, so a test can break it the way a real pipe breaks. */
+  readonly stdin: EventEmitter;
 }
 
 /**
@@ -25,9 +27,17 @@ interface FakeServer {
 function fakeServer(respond: Responder): FakeServer {
   const writes: string[] = [];
   const child = new EventEmitter() as unknown as ReturnType<typeof spawn> & {
-    stdin: { write: (chunk: string) => void };
+    stdin: EventEmitter & {
+      write: (chunk: string, callback?: (error?: Error | null) => void) => void;
+    };
     stdout: EventEmitter;
     stderr: EventEmitter;
+  };
+  // An EventEmitter, like the real `child.stdin`: `write()` reports EPIPE
+  // asynchronously on the stream, and a plain object with a `write` method
+  // cannot express that at all.
+  const stdin = new EventEmitter() as EventEmitter & {
+    write: (chunk: string, callback?: (error?: Error | null) => void) => void;
   };
   const stdout = new EventEmitter();
   const stderr = new EventEmitter();
@@ -37,22 +47,17 @@ function fakeServer(respond: Responder): FakeServer {
   const close = (): void => {
     child.emit('close', 0);
   };
-  Object.assign(child, {
-    stdin: {
-      write: (chunk: string) => {
-        writes.push(chunk);
-        for (const line of chunk.split('\n')) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          respond(JSON.parse(trimmed) as Record<string, unknown>, emit, close);
-        }
-      },
-    },
-    stdout,
-    stderr,
-    pid: undefined,
-  });
-  return { child, writes };
+  stdin.write = (chunk: string, callback?: (error?: Error | null) => void) => {
+    writes.push(chunk);
+    callback?.(null);
+    for (const line of chunk.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      respond(JSON.parse(trimmed) as Record<string, unknown>, emit, close);
+    }
+  };
+  Object.assign(child, { stdin, stdout, stderr, pid: undefined });
+  return { child, writes, stdin };
 }
 
 /**
@@ -271,5 +276,42 @@ describe('mcpResultText', () => {
 
   it('is empty when there is no content', () => {
     expect(mcpResultText({})).toBe('');
+  });
+});
+
+describe('a broken stdin pipe', () => {
+  it('rejects the call instead of throwing in the main process', async () => {
+    // `Writable.write()` reports EPIPE ASYNCHRONOUSLY: it arrives on the
+    // stream, not in the try/catch around the write. With no listener on
+    // stdin, that became an uncaught exception in the Electron main process
+    // — the whole app — instead of a refused tool call.
+    const server = fakeServer(() => {
+      // Answers nothing: the pipe breaks mid-handshake.
+    });
+    const call = callMcpToolOnce(
+      { ...base(), method: 'tools/call', tool: 'license_status' },
+      { spawnProcess: () => server.child, platform: 'linux' },
+    );
+    server.stdin.emit('error', new Error('write EPIPE'));
+
+    await expect(call).rejects.toThrow(UiKitCliError);
+    await expect(call).rejects.toThrow(/EPIPE/);
+  });
+
+  it('reports a write refused through the callback', async () => {
+    const server = fakeServer(() => {});
+    (server.stdin as unknown as { write: unknown }).write = (
+      _chunk: string,
+      callback?: (error?: Error | null) => void,
+    ) => {
+      callback?.(new Error('write EPIPE from callback'));
+    };
+
+    await expect(
+      callMcpToolOnce(
+        { ...base(), method: 'tools/call', tool: 'license_status' },
+        { spawnProcess: () => server.child, platform: 'linux' },
+      ),
+    ).rejects.toThrow(/EPIPE from callback/);
   });
 });

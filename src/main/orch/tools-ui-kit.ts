@@ -13,7 +13,7 @@ import {
   type ShadcnTemplate,
 } from '../ui-kit/shadcn-source';
 import { BOARDUI_MCP_TOOLS } from '../ui-kit/boardui-source';
-import { chunkShadcnSearchRegistries } from '../ui-kit/shadcn-source';
+import { defaultShadcnSearchPlan } from '../ui-kit/shadcn-source';
 import {
   findUiKitRecipe,
   resolveUiKitRecipe,
@@ -553,6 +553,19 @@ export function buildUiKitTools(): McpToolDef[] {
           { command, cwd },
           serviceDeps(),
         );
+        // What a DEFAULT search could not reach. The CLI takes a bounded
+        // number of registries per call, so the default is the first chunk;
+        // staying quiet about the rest reads as "those registries have
+        // nothing", and the caller cannot name a namespace it was never told
+        // about. `nexus_ui_kit_catalog` merges every chunk.
+        const omittedRegistries =
+          command.kind === 'search' && args.registries === undefined
+            ? defaultShadcnSearchPlan(
+                shadcnSearchNamespaces(
+                  withOperatorRegistries(configuredRegistries()),
+                ),
+              ).omitted
+            : [];
         return {
           ok: result.ok,
           command: command.kind,
@@ -561,6 +574,7 @@ export function buildUiKitTools(): McpToolDef[] {
           ...(result.missingRegistryKeys.length > 0
             ? { missingRegistryKeys: result.missingRegistryKeys }
             : {}),
+          ...(omittedRegistries.length > 0 ? { omittedRegistries } : {}),
         };
       },
     },
@@ -702,14 +716,18 @@ function buildRunCommand(args: Record<string, unknown>): ShadcnCommand {
               // runs a batch per chunk; this surface takes a single command,
               // so with 16 registries configured it used to be refused before
               // spawning. The first chunk carries `@shadcn` and the earliest
-              // configured namespaces; an agent that needs a later one names
-              // it in `registries`.
+              // configured namespaces.
+              //
+              // What the chunk leaves out is REPORTED (`omittedRegistries`
+              // below), because silence here reads as "that registry has
+              // nothing": the agent could not name a later namespace it was
+              // never told about. `nexus_ui_kit_catalog` merges every chunk.
               [
-                ...(chunkShadcnSearchRegistries(
+                ...defaultShadcnSearchPlan(
                   shadcnSearchNamespaces(
                     withOperatorRegistries(configuredRegistries()),
                   ),
-                )[0] ?? []),
+                ).registries,
               ],
         ...(str(args, 'query') ? { query: requireStr(args, 'query') } : {}),
         ...(num(args, 'limit') !== undefined ? { limit: num(args, 'limit') } : {}),
