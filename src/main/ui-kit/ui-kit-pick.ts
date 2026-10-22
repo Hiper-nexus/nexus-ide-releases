@@ -143,6 +143,7 @@ const TASK_CONCEPTS: readonly (readonly [string, readonly string[]])[] = [
   ['receita', ['revenue', 'sales', 'chart']],
   ['revenue', ['revenue', 'sales', 'chart']],
   ['login', ['login', 'auth', 'sign', 'password', 'credential']],
+  ['senha', ['password', 'login', 'auth']],
   ['entrar', ['login', 'auth', 'sign']],
   ['cadastro', ['signup', 'register', 'form', 'auth']],
   ['signup', ['signup', 'register', 'form']],
@@ -265,11 +266,45 @@ const FOLDED_CONCEPTS: ReadonlyMap<string, readonly string[]> = (() => {
 })();
 
 export function taskAffinityWords(task: string): readonly string[] {
-  const words = new Set<string>(wordsOf(task));
+  // A word that only says "UI" scores nothing: "página" is a prefix of
+  // "pagination", and "página de preços" installed a pagination control.
+  const words = new Set<string>(wordsOf(task).filter((word) => !GENERIC_SEARCH_WORDS.has(word)));
   for (const word of [...words]) {
     for (const expansion of FOLDED_CONCEPTS.get(word) ?? []) words.add(expansion);
   }
   return [...words];
+}
+
+/** Words that say "UI" without saying WHICH component; useless as a search. */
+const GENERIC_SEARCH_WORDS = new Set(
+  [
+    'tela', 'pagina', 'page', 'screen', 'component', 'componente', 'interface',
+    'layout', 'design', 'frontend', 'projeto', 'project', 'usuario', 'user',
+    'sistema', 'system', 'aplicativo', 'app', 'site', 'web', 'novo', 'nova',
+  ].map(foldWord),
+);
+const MAX_SEARCH_TERMS = 2;
+
+/**
+ * Up to two catalogue words to SEARCH a registry with for this task.
+ *
+ * A 1 228-item registry answers the first 200 of its own order, so "pricing
+ * page" never saw the 20 `pricing*` blocks of @shadcnuikit. The catalogue is
+ * English and the task often is not: a concept word contributes its first
+ * expansion ("preços" → "pricing"), any other specific word itself.
+ */
+export function searchTermsForTask(task: string): readonly string[] {
+  const terms: string[] = [];
+  const add = (term: string | undefined): void => {
+    if (!term || terms.includes(term) || terms.length >= MAX_SEARCH_TERMS) return;
+    terms.push(term);
+  };
+  for (const word of wordsOf(task)) {
+    if (GENERIC_SEARCH_WORDS.has(word)) continue;
+    const concept = FOLDED_CONCEPTS.get(word);
+    add(concept ? concept[0] : word.length >= 4 ? word : undefined);
+  }
+  return terms;
 }
 
 /**

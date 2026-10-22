@@ -5,6 +5,7 @@ import {
   candidateNeedsLicense,
   pickUiKit,
   pickUiKitByHeuristic,
+  searchTermsForTask,
   taskItemAffinity,
   taskLooksLikeUiWork,
   type UiKitCandidate,
@@ -654,5 +655,34 @@ describe('the receipt says who decided what', () => {
 
     expect(result.item).toBeNull();
     expect(result.reason).not.toMatch(/took the best-ranked/);
+  });
+});
+
+describe('searchTermsForTask', () => {
+  it.each([
+    ['uma página de preços', ['pricing']],
+    ['landing page com hero e preços', ['hero', 'pricing']],
+    ['tela de login com e-mail e senha', ['login', 'mail']],
+    ['gráfico de linhas das vendas', ['chart', 'line']],
+  ])('"%s" searches for %o', (task, terms) => {
+    expect(searchTermsForTask(task)).toEqual(terms);
+  });
+
+  it('never searches for a word that only says "UI"', () => {
+    expect(searchTermsForTask('uma tela nova no app')).toEqual([]);
+  });
+});
+
+describe('a generic UI word picks nothing', () => {
+  it('"página de preços" does not reach pagination', () => {
+    const pagination: UiKitCandidate = {
+      kit: 'shadcn', slug: 'pagination', label: 'pagination', category: 'ui', tier: 'free',
+    };
+    const pricing: UiKitCandidate = {
+      kit: 'shadcn', slug: '@shadcnuikit/pricing1', label: 'pricing1', category: 'block', tier: 'free',
+    };
+
+    expect(taskItemAffinity('uma página de preços', pagination)).toBe(0);
+    expect(taskItemAffinity('uma página de preços', pricing)).toBeGreaterThan(0);
   });
 });

@@ -10,6 +10,7 @@ import {
   resolveInstallTargetForTask,
 } from './ui-kit-install-target';
 import { resetBoardUiFreeListCacheForTests, type UiKitServiceDeps } from './ui-kit-service';
+import { resetLiveCandidatesCacheForTests } from './ui-kit-catalog';
 import type { BoardUiLicenseFile } from './boardui-license-file';
 import { operatorBoardUiLicenseFile } from './ui-kit-operator-keys';
 
@@ -45,6 +46,7 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
   resetBoardUiFreeListCacheForTests();
+  resetLiveCandidatesCacheForTests();
 });
 
 /** The shadcn `--json` shape, plus BoardUI's text listing. */
@@ -393,5 +395,46 @@ describe('ranking reaches past the catalogue head on a coarse catalogue', () => 
     ]);
 
     expect(['revenue-chart-card', 'stat-cards']).toContain(ranked[0]?.slug);
+  });
+});
+
+describe('a task reaches the operator registry', () => {
+  it('"página de preços" finds a @shadcnuikit pricing block', async () => {
+    // Review 22/10 (P0-4): pricing/hero/landing answered "Nothing in the
+    // catalog fits" while 20 `pricing*` and 26 `hero*` existed there.
+    surface.key = false;
+    fs.writeFileSync(path.join(cwd, 'components.json'), '{}');
+    const deps: UiKitServiceDeps = {
+      runCli: async (request) => {
+        const registries = request.args.slice(1).filter((arg) => arg.startsWith('@'));
+        const queryAt = request.args.indexOf('--query');
+        const query = queryAt >= 0 ? request.args[queryAt + 1] : undefined;
+        const names =
+          registries[0] === '@shadcnuikit'
+            ? query === 'pricing'
+              ? ['pricing1', 'pricing2']
+              : ['hero7', 'chart67']
+            : ['button', 'login-01'];
+        return {
+          stdout: JSON.stringify({
+            items: names.map((name) => ({ name, type: 'registry:block', registry: registries[0] })),
+          }),
+          stderr: '',
+          code: 0,
+        };
+      },
+      getSecret: () => null,
+      setSecret: () => ({ ok: true }),
+      cacheOptions: { rootDir: dir },
+    };
+
+    const result = await resolveInstallTargetForTask(
+      { task: 'uma página de preços', kit: 'shadcn', cwd },
+      deps,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.target.items[0]).toMatch(/^@shadcnuikit\/pricing/);
   });
 });

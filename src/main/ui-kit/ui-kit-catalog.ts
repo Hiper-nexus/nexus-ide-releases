@@ -2,7 +2,6 @@ import { listCachedItems, type UiKitCacheOptions } from './ui-kit-cache';
 import type { UiKitId } from './ui-kit-cli';
 import type { UiKitCandidate } from './ui-kit-pick';
 import { withOperatorRegistries } from './ui-kit-registry';
-import { chunkShadcnSearchRegistries } from './shadcn-source';
 import {
   boardUiCandidates,
   listBoardUiFreeSlugs,
@@ -109,11 +108,18 @@ export interface LiveCatalogResult {
  * the bundled snapshot deliberately holds no Pro entry, so a recipe resolving
  * against the snapshot alone could only ever pick free fallbacks.
  */
+export interface LiveCatalogOptions {
+  /** Catalogue words to search each registry FOR (see `searchTermsForTask`). */
+  readonly taskQueries?: readonly string[];
+  readonly now?: number;
+}
+
 export async function liveCandidates(
   kit: UiKitId,
   cwd: string,
   query: string | undefined,
   deps: UiKitServiceDeps = {},
+  options: LiveCatalogOptions = {},
 ): Promise<LiveCatalogResult> {
   const needle = query?.trim().toLowerCase();
 
@@ -146,50 +152,68 @@ export async function liveCandidates(
     };
   }
 
-  // ONE RUN PER BATCH. The CLI refuses more than `SHADCN_MAX_REGISTRIES`
-  // namespaces in a single search, and the settings schema allows twice that,
-  // so a 16-registry operator used to lose live shadcn discovery entirely
-  // rather than merely wait a little longer.
-  const batches = chunkShadcnSearchRegistries(
-    // The effective list: a namespace a bundled operator token exists
-    // for is searchable even before anyone configures it in settings.
-    shadcnSearchNamespaces(withOperatorRegistries(deps.registries?.() ?? [])),
+  // The effective list: a namespace a bundled operator token exists for is
+  // searchable even before anyone configures it in settings.
+  const namespaces = shadcnSearchNamespaces(withOperatorRegistries(deps.registries?.() ?? []));
+  const taskQueries = options.taskQueries ?? [];
+  const cacheKey = [cwd, namespaces.join(','), query ?? '', taskQueries.join('|')].join('\0');
+  const now = options.now ?? Date.now();
+  const hit = liveCache.get(cacheKey);
+  if (hit && now - hit.at < LIVE_CACHE_TTL_MS) return hit.result;
+
+  // ONE RUN PER REGISTRY, never one shared `--limit`. The CLI answers a
+  // multi-registry search in registry order and cuts at the limit, so the 471
+  // @shadcn items took all 200 slots and @shadcnuikit's 1 228 — 20 `pricing*`,
+  // 26 `hero*` — were invisible to every task pick (measured 22/10/2026).
+  // With a task, the first few registries are also searched FOR it: their own
+  // first 200 are their order, not the task's.
+  const plan: { readonly namespace: string; readonly query?: string; readonly limit: number }[] = [];
+  namespaces.forEach((namespace, index) => {
+    if (index < LIVE_TASK_QUERY_REGISTRIES) {
+      for (const term of taskQueries) {
+        plan.push({ namespace, query: term, limit: LIVE_SEARCH_QUERY_LIMIT });
+      }
+    }
+    plan.push({ namespace, ...(query ? { query } : {}), limit: LIVE_SEARCH_BREADTH_LIMIT });
+  });
+  const results = await mapWithConcurrency(plan, LIVE_SEARCH_CONCURRENCY, (run) =>
+    runShadcnCommand(
+      {
+        command: {
+          kind: 'search',
+          registries: [run.namespace],
+          ...(run.query ? { query: run.query } : {}),
+          limit: run.limit,
+        },
+        cwd,
+      },
+      deps,
+    ),
   );
+
   const found: UiKitCandidate[] = [];
   const raws: string[] = [];
   let bestEffort = false;
   let failure: string | undefined;
   let unmapped: readonly string[] | undefined;
-  for (const registries of batches) {
-    const result = await runShadcnCommand(
-      {
-        command: {
-          kind: 'search',
-          registries,
-          ...(query ? { query } : {}),
-          limit: 200,
-        },
-        cwd,
-      },
-      deps,
-    );
+  results.forEach((result) => {
     const parsed = parseShadcnSearch(result.stdout);
     found.push(...parsed.candidates);
     raws.push(result.stdout);
-    // Any scraped batch makes the whole answer best-effort: one typed batch
-    // does not vouch for a batch that was only read as text.
+    // Any scraped run makes the whole answer best-effort: one typed run does
+    // not vouch for a run that was only read as text.
     if (parsed.bestEffort) bestEffort = true;
-    // The FIRST failure is the one reported; a later batch succeeding does not
+    // The FIRST failure is the one reported; a later run succeeding does not
     // make an earlier refusal untrue.
     if (!result.ok && !failure) {
       failure = (result.stderr || result.stdout).slice(0, 300);
     }
     if (result.unmappedRegistries && result.unmappedRegistries.length > 0) {
-      unmapped = [...(unmapped ?? []), ...result.unmappedRegistries];
+      unmapped = [...new Set([...(unmapped ?? []), ...result.unmappedRegistries])];
     }
-  }
-  return {
-    candidates: union(found, cachedCandidates(kit, deps.cacheOptions)).filter(
+  });
+  const answer: LiveCatalogResult = {
+    candidates: union(dedupe(found), cachedCandidates(kit, deps.cacheOptions)).filter(
       (entry) => matchesQuery(entry, needle),
     ),
     raw: raws.join('\n').slice(0, 20_000),
@@ -200,4 +224,49 @@ export async function liveCandidates(
     ...(unmapped && unmapped.length > 0 ? { unmappedRegistries: unmapped } : {}),
     ...(failure ? { error: failure } : {}),
   };
+  // A failure is not worth remembering: the next call should try again.
+  if (!failure) liveCache.set(cacheKey, { at: now, result: answer });
+  return answer;
+}
+
+/** Five minutes: `add({task})` used to pay a fresh vendor search every call. */
+const LIVE_CACHE_TTL_MS = 5 * 60_000;
+const LIVE_SEARCH_CONCURRENCY = 6;
+const LIVE_SEARCH_BREADTH_LIMIT = 200;
+const LIVE_SEARCH_QUERY_LIMIT = 50;
+/** Registries searched FOR the task too; the rest only get their breadth run. */
+const LIVE_TASK_QUERY_REGISTRIES = 4;
+
+const liveCache = new Map<string, { readonly at: number; readonly result: LiveCatalogResult }>();
+
+export function resetLiveCandidatesCacheForTests(): void {
+  liveCache.clear();
+}
+
+function dedupe(candidates: readonly UiKitCandidate[]): readonly UiKitCandidate[] {
+  const seen = new Set<string>();
+  return candidates.filter((entry) => {
+    if (seen.has(entry.slug)) return false;
+    seen.add(entry.slug);
+    return true;
+  });
+}
+
+/** Results in input order, at most `limit` running at once. */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  work: (item: T) => Promise<R>,
+): Promise<readonly R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const lane = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await work(items[index] as T);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+  return results;
 }

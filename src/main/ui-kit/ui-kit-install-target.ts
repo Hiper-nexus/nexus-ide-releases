@@ -2,11 +2,16 @@ import { UI_KIT_IDS, type UiKitId } from './ui-kit-cli';
 import { liveCandidates } from './ui-kit-catalog';
 import {
   pickUiKit,
+  searchTermsForTask,
   taskItemAffinity,
   type UiKitCandidate,
   type UiKitPickResult,
 } from './ui-kit-pick';
-import { boardUiProSelectable, type UiKitServiceDeps } from './ui-kit-service';
+import {
+  boardUiProSelectable,
+  SHADCN_DEMO_CATEGORY,
+  type UiKitServiceDeps,
+} from './ui-kit-service';
 
 /**
  * "Install what fits this task" — the Jev's kit/item choice, on the INSTALL
@@ -90,6 +95,9 @@ export function rankForTask(
   const matched: UiKitCandidate[] = [];
   const byCategory = new Map<string, UiKitCandidate[]>();
   for (const candidate of candidates) {
+    // A demo (`button-demo`, `registry:example`) is not the component: it
+    // took scarce slots of the 12 the judge sees.
+    if (candidate.category === SHADCN_DEMO_CATEGORY) continue;
     if (score(candidate) > 0) {
       matched.push(candidate);
       continue;
@@ -159,11 +167,13 @@ export async function resolveInstallTargetForTask(
     ? await boardUiProSelectable({ cwd: request.cwd }, deps)
     : false;
 
-  const byKit: UiKitCandidate[][] = [];
-  for (const kit of kits) {
-    const live = await liveCandidates(kit, request.cwd, undefined, deps);
-    byKit.push([...rankForTask(request.task, live.candidates)]);
-  }
+  const taskQueries = searchTermsForTask(request.task);
+  const byKit = await Promise.all(
+    kits.map(async (kit) => {
+      const live = await liveCandidates(kit, request.cwd, undefined, deps, { taskQueries });
+      return [...rankForTask(request.task, live.candidates)];
+    }),
+  );
 
   const pick = await pickUiKit(
     {
