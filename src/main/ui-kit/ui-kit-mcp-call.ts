@@ -1,5 +1,6 @@
 import { spawn, type SpawnOptions } from 'node:child_process';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import {
   assertSafeUiKitCwd,
   buildUiKitChildEnv,
@@ -226,6 +227,7 @@ export async function callMcpToolOnce(
 
     let settled = false;
     let buffer = '';
+    const stdoutDecoder = new StringDecoder('utf8');
     let bytes = 0;
     let stderr = '';
     let initialized = false;
@@ -343,7 +345,7 @@ export async function callMcpToolOnce(
         );
         return;
       }
-      buffer += chunk.toString('utf8');
+      buffer += stdoutDecoder.write(chunk);
       if (buffer.length > UI_KIT_MCP_MAX_LINE_BYTES) {
         fail(
           new UiKitCliError(

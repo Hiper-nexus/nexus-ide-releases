@@ -90,6 +90,21 @@ function handshake(respond: Responder): Responder {
 }
 
 describe('callMcpToolOnce', () => {
+  it('preserves UTF-8 text when the stdio pipe splits multibyte characters', async () => {
+    const server = fakeServer(handshake(() => {}));
+    const call = callMcpToolOnce(
+      { ...base(), method: 'tools/call', tool: 'get_component' },
+      { spawnProcess: () => server.child, platform: 'linux' },
+    );
+    const text = 'Ação de instalação — botão 🐾';
+    const response = Buffer.from(`${JSON.stringify({ jsonrpc: '2.0', id: 2,
+      result: { content: [{ type: 'text', text }] } })}\n`, 'utf8');
+    for (const byte of response) {
+      server.child.stdout?.emit('data', Buffer.from([byte]));
+    }
+    expect((await call).text).toBe(text);
+  });
+
   it('initializes, calls the tool and returns its text', async () => {
     const server = fakeServer(
       handshake((message, emit) => {
