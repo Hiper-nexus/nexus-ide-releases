@@ -193,6 +193,13 @@ async function buildStatus(): Promise<UiKitStatusView> {
         ...(registry.auth ? { envVar: registry.auth.envVar } : {}),
         tokenStored,
         operatorKey: !tokenStored && operatorTokenForRegistry(registry) !== null,
+        // Whether there is a SETTINGS ROW behind this entry. A known registry
+        // saved at its preset URL with no vaulted token looked exactly like a
+        // synthesized bundle entry, so the panel hid its "Remover" and the
+        // operator had no way to delete the row they had just created.
+        configured: rawRegistries.some(
+          (entry) => entry.namespace === registry.namespace,
+        ),
       };
     }),
     knownRegistries: KNOWN_UI_KIT_REGISTRIES.map((entry) => ({
@@ -445,7 +452,19 @@ export function registerUiKitIpc(): void {
                 'presa no fornecedor, gastando um assento.',
             };
           }
-          await deactivateBoardUiLicense({ cwd }, serviceDeps());
+          const removed = await deactivateBoardUiLicense({ cwd }, serviceDeps());
+          if (!removed.ok) {
+            // The vendor's deactivation can fail, and a provisioned licence
+            // file can refuse to go. Reporting `absent` anyway told the
+            // operator the paid seat was released when it was not.
+            return {
+              ...(await buildLicenseView(cwd)),
+              detail:
+                removed.detail ??
+                'a licença não pôde ser removida; tente de novo ou remova o ' +
+                  'arquivo de licença à mão',
+            };
+          }
           return {
             state: 'absent',
             stored: false,

@@ -736,7 +736,7 @@ export function UiKitSection() {
                   : ' — o token pode vir dela'}
               </p>
             )}
-            {!(registry.operatorKey && !registry.tokenStored) && (
+            {(registry.configured || registry.tokenStored) && (
               // An entry only the bundle provides (no settings row, no vault
               // token of the operator's own) has nothing "Remover" can take.
               <div className="settings-row">

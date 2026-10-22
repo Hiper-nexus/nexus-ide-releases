@@ -505,14 +505,20 @@ export async function pickUiKit(
       : fallback.needsKit;
 
   const kit = acceptedChoice(answers.kit, UI_KIT_PICK_MIN_CONFIDENCE);
-  const chosenKit =
-    kit && kit !== NONE && available.includes(kit as UiKitId)
+  // An ACCEPTED `none` is a decision, not a missing answer: the judge looked
+  // at both kits and said neither fits. Folding it into the heuristic's kit
+  // installed a component anyway — the item answer, absent or below
+  // confidence, stayed the heuristic's guess.
+  const kitIsNone = kit === NONE;
+  const chosenKit = kitIsNone
+    ? null
+    : kit && available.includes(kit as UiKitId)
       ? (kit as UiKitId)
       : fallback.kit;
 
   const itemKey = acceptedChoice(answers.item, UI_KIT_PICK_MIN_CONFIDENCE);
-  let chosenItem: UiKitCandidate | null = fallback.item;
-  if (itemKey === NONE) chosenItem = null;
+  let chosenItem: UiKitCandidate | null = kitIsNone ? null : fallback.item;
+  if (itemKey === NONE || kitIsNone) chosenItem = null;
   else if (itemKey) {
     const index = candidates.findIndex(
       (_entry, position) => candidateKey(position) === itemKey,
@@ -551,6 +557,20 @@ export async function pickUiKit(
       needsLicense: false,
       confidence,
       reason: 'judged as not calling for a kit component',
+    };
+  }
+
+  if (kitIsNone) {
+    // UI work, but the judge looked at both kits and said neither fits: the
+    // honest answer is nothing to install, with the reason said out loud.
+    return {
+      needsKit: true,
+      kit: null,
+      item: null,
+      source: 'jev',
+      needsLicense: false,
+      confidence,
+      reason: 'judged that neither kit fits: this should be written from scratch',
     };
   }
 

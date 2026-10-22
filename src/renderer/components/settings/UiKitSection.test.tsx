@@ -916,3 +916,59 @@ it('keeps the reason an activation refused', async () => {
     act(() => root.unmount());
   }
 });
+
+it('offers Remover for a configured preset registry with no vaulted token', async () => {
+  // Saved by the operator at the preset URL, token coming from the bundled
+  // key: it looked exactly like a synthesized bundle entry, so the panel hid
+  // the only control that deletes the settings row.
+  api({
+    status: vi.fn().mockResolvedValue(
+      status({
+        registries: [
+          {
+            namespace: '@shadcnuikit',
+            url: 'https://shadcnuikit.com/r/{name}.json',
+            requiresToken: true,
+            tokenStored: false,
+            operatorKey: true,
+            configured: true,
+          },
+        ],
+      }),
+    ),
+  });
+  const { host, root } = await mount();
+  try {
+    expect(
+      [...host.querySelectorAll('button')].some((entry) => entry.textContent === 'Remover'),
+    ).toBe(true);
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it('offers no Remover for an entry only the bundle provides', async () => {
+  api({
+    status: vi.fn().mockResolvedValue(
+      status({
+        registries: [
+          {
+            namespace: '@shadcnuikit',
+            url: 'https://shadcnuikit.com/r/{name}.json',
+            requiresToken: true,
+            tokenStored: false,
+            operatorKey: true,
+          },
+        ],
+      }),
+    ),
+  });
+  const { host, root } = await mount();
+  try {
+    expect(
+      [...host.querySelectorAll('button')].some((entry) => entry.textContent === 'Remover'),
+    ).toBe(false);
+  } finally {
+    act(() => root.unmount());
+  }
+});

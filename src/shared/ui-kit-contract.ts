@@ -148,6 +148,14 @@ export interface UiKitRegistryView {
   /** Whether a token is stored. The value itself never travels. */
   readonly tokenStored: boolean;
   /**
+   * Whether a settings ROW backs this entry. False for the bundle-backed
+   * entries the read paths add, which have nothing to remove. Without it the
+   * panel could not tell a configured preset registry (saved by the operator,
+   * no vaulted token) from a synthesized one, and hid the only removal
+   * control from both.
+   */
+  readonly configured?: boolean;
+  /**
    * True when the token in use is the operator token bundled with Nexus: no
    * copy sits in this machine's vault. The panel must say "token do Nexus",
    * not "sem token" — installs work either way.

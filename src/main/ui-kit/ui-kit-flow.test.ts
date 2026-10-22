@@ -9,7 +9,11 @@ import {
   readCachedItem,
   setUiKitCacheRootResolver,
 } from './ui-kit-cache';
-import { readItemSource, type UiKitServiceDeps } from './ui-kit-service';
+import {
+  downloadItemsIntoCache,
+  readItemSource,
+  type UiKitServiceDeps,
+} from './ui-kit-service';
 
 /**
  * The flow test the last three review rounds argued for.
@@ -117,5 +121,41 @@ describe('fetch then read, with the cache resolved the way production resolves i
     expect(again.source).toBe('v2');
     expect(readCachedItem('shadcn', 'button')?.payload).toBe('v2');
     expect(listCachedItems('shadcn')).toHaveLength(1);
+  });
+});
+
+describe('a download is only "cached" when the cache says so', () => {
+  it('reports the slug as failed when the cache refused the write', async () => {
+    // `readItemSource` answers `cached: false` without throwing when the write
+    // is refused, and the loop used to append the slug anyway — the caller was
+    // told the item was available offline while the next read would miss.
+    const readOnly = path.join(root, 'read-only-cache');
+    fs.mkdirSync(readOnly);
+    fs.chmodSync(readOnly, 0o500);
+    setUiKitCacheRootResolver(() => readOnly);
+    try {
+      const result = await downloadItemsIntoCache(
+        { kit: 'shadcn', slugs: ['button'], cwd },
+        deps(JSON.stringify({ name: 'button', type: 'registry:ui' })),
+      );
+
+      expect(result.cached).toEqual([]);
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0]?.slug).toBe('button');
+      expect(result.failed[0]?.reason).toMatch(/cache/i);
+    } finally {
+      fs.chmodSync(readOnly, 0o700);
+      setUiKitCacheRootResolver(() => root);
+    }
+  });
+
+  it('reports it as cached when the write lands', async () => {
+    const result = await downloadItemsIntoCache(
+      { kit: 'shadcn', slugs: ['button'], cwd },
+      deps(JSON.stringify({ name: 'button', type: 'registry:ui' })),
+    );
+
+    expect(result.cached).toEqual(['button']);
+    expect(result.failed).toEqual([]);
   });
 });

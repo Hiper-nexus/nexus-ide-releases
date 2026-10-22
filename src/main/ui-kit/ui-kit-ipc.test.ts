@@ -38,7 +38,26 @@ vi.mock('../security/trusted-ipc', () => ({
     handlers.set(channel, handler);
   },
 }));
-vi.mock('../orch/workspace-path', () => ({ activeWorkspaceRoot: () => '' }));
+const workspace = vi.hoisted(() => ({ root: '' }));
+vi.mock('../orch/workspace-path', () => ({ activeWorkspaceRoot: () => workspace.root }));
+
+/**
+ * The licence FUNCTIONS are stubbed, the rest of the service stays real: with
+ * a cwd set, `buildStatus` would otherwise reach the BoardUI licence file of
+ * whoever runs this suite.
+ */
+const license = vi.hoisted(() => ({
+  deactivate: vi.fn(async () => ({ ok: true, stored: false })),
+  status: vi.fn(async () => ({ state: 'active' as const, stored: true, masked: '••••9999' })),
+}));
+vi.mock('./ui-kit-service', async (importOriginal) => {
+  const real = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...real,
+    deactivateBoardUiLicense: license.deactivate,
+    boardUiLicenseStatus: license.status,
+  };
+});
 vi.mock('../persistence/settings-store', () => ({
   getOrchSettings: () => ({ uiKitRegistries: store.registries }),
   replaceOrchSettings: (patch: { uiKitRegistries?: unknown[] }) => {
@@ -94,6 +113,11 @@ beforeEach(() => {
   vault.writes = [];
   vault.refuseWrites = false;
   vault.refuseWritesFrom = Number.POSITIVE_INFINITY;
+  workspace.root = '';
+  license.deactivate.mockReset();
+  license.deactivate.mockResolvedValue({ ok: true, stored: false });
+  license.status.mockReset();
+  license.status.mockResolvedValue({ state: 'active', stored: true, masked: '••••9999' });
   store.registries = [{ ...VENDOR }];
   store.refuseWrite = false;
   vault.entries.set(TOKEN_KEY, 'tok-old');
@@ -279,5 +303,43 @@ describe('a rollback that is itself refused is said out loud', () => {
     expect(view.registryError).toMatch(/apagada|não corresponde/);
     // Both the restore AND the clear were attempted.
     expect(vault.writes.filter((write) => write.key === TOKEN_KEY)).toHaveLength(3);
+  });
+});
+
+describe('a licence removal that failed is not reported as removed', () => {
+  async function licenseHandler() {
+    const ipc = await import('./ui-kit-ipc');
+    ipc.setUiKitVaultProvider(() => fakeVault);
+    (await import('./ui-kit-cache')).setUiKitCacheRootResolver(() => cacheRoot);
+    ipc.registerUiKitIpc();
+    return handlers.get(UI_KIT_CHANNELS.license)!;
+  }
+
+  it('answers the vendor/file reason instead of manufacturing "absent"', async () => {
+    // The vendor's deactivation can fail and a provisioned licence file can
+    // refuse to go. Reporting `absent` told the operator the paid seat had
+    // been released when it had not.
+    workspace.root = '/tmp/nexus-ui-kit-ipc-project';
+    license.deactivate.mockResolvedValue({
+      ok: false,
+      stored: true,
+      detail: 'o fornecedor recusou a desativação',
+    });
+    const handle = await licenseHandler();
+
+    const view = await handle(null, { action: 'remove' });
+
+    expect(view.state).not.toBe('absent');
+    expect(view.detail).toMatch(/recusou a desativação/);
+  });
+
+  it('reports absent when the removal did go through', async () => {
+    workspace.root = '/tmp/nexus-ui-kit-ipc-project';
+    const handle = await licenseHandler();
+
+    const view = await handle(null, { action: 'remove' });
+
+    expect(view.state).toBe('absent');
+    expect(view.stored).toBe(false);
   });
 });

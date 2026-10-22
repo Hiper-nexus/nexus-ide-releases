@@ -422,3 +422,60 @@ describe('affinity, not catalogue order', () => {
     expect(result.item).toBeNull();
   });
 });
+
+describe('the judge saying "neither kit fits" is a decision', () => {
+  const CANDIDATES = [
+    { kit: 'boardui' as const, slug: 'stat-cards', label: 'Stat cards', category: 'dashboard', tier: 'free' as const },
+    { kit: 'shadcn' as const, slug: 'data-table', label: 'Data table', category: 'ui', tier: 'free' as const },
+  ];
+
+  it('installs nothing when the judge accepted `none` for the kit', async () => {
+    // An accepted `none` was folded into the heuristic's kit, and the item —
+    // absent or below confidence — stayed the heuristic's guess, so a
+    // component was installed despite the judge deciding against both kits.
+    const result = await pickUiKit(
+      { task: 'monte um painel de receita', candidates: CANDIDATES },
+      {
+        enabled: () => true,
+        hasKey: () => true,
+        record: () => {},
+        runJudge: async () =>
+          ({
+            model: 'jev-test',
+            answers: {
+              needsKit: { type: 'noul', noul: 0.9 },
+              kit: { type: 'choice', choice: 'none', confidence: 0.95, probabilities: {} },
+            },
+          }) as never,
+      },
+    );
+
+    expect(result.source).toBe('jev');
+    expect(result.needsKit).toBe(true);
+    expect(result.kit).toBeNull();
+    expect(result.item).toBeNull();
+    expect(result.reason).toMatch(/neither kit fits/);
+  });
+
+  it('still falls back when the kit answer was merely below confidence', async () => {
+    const result = await pickUiKit(
+      { task: 'monte um painel de receita', candidates: CANDIDATES },
+      {
+        enabled: () => true,
+        hasKey: () => true,
+        record: () => {},
+        runJudge: async () =>
+          ({
+            model: 'jev-test',
+            answers: {
+              needsKit: { type: 'noul', noul: 0.9 },
+              kit: { type: 'choice', choice: 'boardui', confidence: 0.2, probabilities: {} },
+            },
+          }) as never,
+      },
+    );
+
+    expect(result.kit).not.toBeNull();
+    expect(result.item?.slug).toBe('stat-cards');
+  });
+});

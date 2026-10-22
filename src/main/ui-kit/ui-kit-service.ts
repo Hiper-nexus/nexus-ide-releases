@@ -1350,7 +1350,12 @@ export async function downloadItemsIntoCache(
   const failed: { slug: string; reason: string }[] = [];
   for (const slug of input.slugs) {
     try {
-      await readItemSource(
+      // THE RECEIPT, not the absence of an exception. `readItemSource`
+      // deliberately answers `cached: false` without throwing when the write
+      // is refused (read-only disk, a capacity limit, an identifier that
+      // cannot be cached), and appending the slug anyway told the caller the
+      // item was available offline when the next read would miss.
+      const fetched = await readItemSource(
         {
           kit: input.kit,
           slug,
@@ -1360,7 +1365,16 @@ export async function downloadItemsIntoCache(
         },
         deps,
       );
-      cached.push(slug);
+      if (fetched.cached) {
+        cached.push(slug);
+      } else {
+        failed.push({
+          slug,
+          reason:
+            'baixado, mas o cache não guardou (disco somente leitura, limite ' +
+            'de tamanho ou identificador não cacheável)',
+        });
+      }
     } catch (error) {
       failed.push({
         slug,
