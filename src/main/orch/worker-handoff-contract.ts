@@ -149,8 +149,11 @@ export function withHandoffContract(
       'quando disponíveis. O Nexus vincula essa captura ao worker e à tarefa; sem essa evidência, ' +
       'uma tarefa visual fica partial. Um caminho ou hash ' +
       'de screenshot não é inspeção: observe a imagem com uma ferramenta autorizada disponível. Build, testes ' +
-      'e leitura do código não comprovam aparência nem gameplay. Se uma ferramenta ou ' +
-      'ambiente necessário falhar, registre a validação como não verificada e envie ' +
+      'e leitura do código não comprovam aparência nem gameplay. Entrega ainda não ' +
+      'servida não é ferramenta indisponível: suba o preview você mesmo neste pane ' +
+      '(servidor de dev do projeto ou o arquivo local) e então observe. Se uma ' +
+      'ferramenta ou ' +
+      'ambiente necessário falhar mesmo assim, registre a validação como não verificada e envie ' +
       'handoff com status "partial" (ou "blocked" se impedir a tarefa), com os passos ' +
       'restantes para o orquestrador. Nunca invente screenshots, cliques, movimento ou aprovação visual.'
     : '';

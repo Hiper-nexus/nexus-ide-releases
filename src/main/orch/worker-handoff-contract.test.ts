@@ -209,6 +209,17 @@ describe('evidência visual no handoff', () => {
     expect(prompt).toContain('Nunca invente screenshots');
   });
 
+  // F-1636: "ambiente necessário falhou" virava `partial` sem o worker tentar
+  // servir a entrega — e `partial` custa uma devolução inteira. O pane tem
+  // terminal: subir o preview é trabalho dele, não ferramenta indisponível.
+  it('manda subir o preview antes de declarar o ambiente indisponível', () => {
+    const prompt = withHandoffContract('Implemente o frontend.', adapter);
+    expect(prompt).toContain('suba o preview');
+    expect(prompt.indexOf('suba o preview')).toBeLessThan(
+      prompt.indexOf('registre a validação como não verificada'),
+    );
+  });
+
   it('não acrescenta orientação visual a trabalho de backend', () => {
     const prompt = withHandoffContract('Implemente cache LRU no serviço de sessões.', adapter);
     expect(prompt).not.toContain('Validação visual de interface ou jogo');
