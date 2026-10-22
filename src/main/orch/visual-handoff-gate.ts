@@ -203,7 +203,7 @@ export type VisualCandidateObserver = (
 export const observeVisualCandidate: VisualCandidateObserver = async (scope, base) => {
   try {
     const snapshot = await captureWorkingTreeCandidate({ scope, ...(base ? { baseSha: base } : {}) });
-    if (!snapshot.contentFingerprint) return null;
+    if (!snapshot.complete || !snapshot.contentFingerprint) return null;
     return { base: base ?? snapshot.headSha, fingerprint: snapshot.contentFingerprint };
   } catch {
     return null;
@@ -409,8 +409,8 @@ export async function checkVisualHandoff(ctx: VisualHandoffContext, options: {
   const store = createScopedBrowserArtifactStore(manager, ctx.scope);
   let stale = false;
   for (const row of select()) {
-    // Unbound: recorded before this version, or its observation never finished.
-    if (row.candidate_observed_at === null) {
+    // An observation that failed also stays unbound, even if it finished.
+    if (row.candidate_observed_at === null || row.candidate_fingerprint === null) {
       stale = true;
       continue;
     }
@@ -421,9 +421,8 @@ export async function checkVisualHandoff(ctx: VisualHandoffContext, options: {
     const now = await currentAt(row.candidate_base);
     options.assertCurrent?.();
     if (ctx.visualTask !== initialAssignment) return missing();
-    // Null on both sides: the checkout cannot be observed at all, as before
-    // this binding existed; it never stands in for a measured fingerprint.
-    if ((now?.fingerprint ?? null) !== row.candidate_fingerprint) {
+    // Unavailable is never proof that the candidate still matches the capture.
+    if (!now || now.fingerprint !== row.candidate_fingerprint) {
       stale = true;
       continue;
     }

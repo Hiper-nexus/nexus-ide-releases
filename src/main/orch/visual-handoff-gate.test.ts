@@ -6,9 +6,11 @@ import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { createScopedBrowserArtifactStore } from '../browser/browser-artifact-store';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { ProcessGitRunner } from '../runtime/git-command';
+import * as candidateSnapshots from '../context/candidate-working-tree-snapshot';
 import {
   __resetVisualHandoffBouncesForTests, checkVisualHandoff, recordVisualHandoffEvidence, visualCandidateBindingsSettled,
   visualHandoffSendBack, visualTaskRequirement, visualTaskAtSpawn, visualEvidenceVerified, VISUAL_CAPTURE_STALE_REASON,
+  observeVisualCandidate,
 } from './visual-handoff-gate';
 
 let dir: string;
@@ -197,6 +199,31 @@ describe('review 22/10: a capture is bound to the preview and to the candidate',
   const shot = (url = 'http://127.0.0.1:4567/') => createScopedBrowserArtifactStore(manager, scope).recordScreenshot({
     paneId: 'browser-pane', missionId: 'mission', png: Buffer.from(`fixture ${Math.random()}`), width: 1, height: 1,
     url, title: 'UI', capturedAt: 1100 });
+
+  it('does not turn an incomplete snapshot fingerprint into a candidate observation', async () => {
+    const snapshot = vi.spyOn(candidateSnapshots, 'captureWorkingTreeCandidate').mockResolvedValue({
+      source: 'filesystem', headSha: null, fingerprint: 'f'.repeat(64), contentFingerprint: 'a'.repeat(64),
+      changedPaths: [], deletedPaths: [], untrackedPaths: [], diff: '', complete: false,
+      incompleteReasons: ['candidate file limit reached'],
+    });
+    try {
+      expect(await observeVisualCandidate(scope)).toBeNull();
+    } finally {
+      snapshot.mockRestore();
+    }
+  });
+
+  it.each(['null', 'error'])('refuses evidence when both candidate observations are unavailable (%s)', async mode => {
+    const unavailable = async () => {
+      if (mode === 'error') throw new Error('checkout cannot be read');
+      return null;
+    };
+    const image = shot();
+    expect(recordVisualHandoffEvidence(context(), image.id, manager,
+      { ...deps, observeCandidate: unavailable })).toBe(true);
+    expect(await checkVisualHandoff(context(), { manager, observeCandidate: unavailable }))
+      .toEqual({ required: true, verified: false, reason: VISUAL_CAPTURE_STALE_REASON });
+  });
 
   it('a page that is not served from this checkout is not evidence', async () => {
     const served = vi.fn(() => false);
