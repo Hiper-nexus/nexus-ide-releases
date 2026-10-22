@@ -12752,7 +12752,7 @@ const RELEASE_076411_FULL: AppRelease = {
 
 export const RELEASE_076411: AppRelease = RELEASE_076411_FULL;
 
-export const CURRENT_RELEASE: AppRelease = {
+const RELEASE_076413_FULL: AppRelease = {
   version: '0.76.413',
   date: '2026-10-22',
   codename: 'Kits de UI inteiros em todo PC',
@@ -12782,4 +12782,27 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076413: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076413: AppRelease = RELEASE_076413_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.414',
+  date: '2026-10-22',
+  codename: 'A coleta no Linux e a colagem grande',
+  summary:
+    'No desktop Linux, a coleta de worktrees volta a ter prova: o systemd ' +
+    '--user e o (sd-pam) são reconhecidos pelo PID 1, e qualquer outro ' +
+    'processo ilegível continua bloqueando. Colar mais de 4 KB num pane ' +
+    'com papel deixa de ser recusado (F-1633). A detecção do estado do ' +
+    'agente deixa de ser quadrática numa linha longa e respeita a quebra ' +
+    'de linha. A 0.76.413 continua Latest como pacote macOS; esta release ' +
+    'não toma essa marca. A 0.76.411 é o pacote Linux anterior.',
+  highlights: [
+    { title: 'A coleta de worktrees volta a ter prova', detail: 'O systemd --user é o MainPID que o PID 1 registra; o (sd-pam) só entra se for filho dele e tiver nascido junto. Qualquer outro cwd ilegível continua sem prova.' },
+    { title: 'Colar texto grande num pane com papel', detail: 'Num pane do "+ Pane" adotado pela missão da aba, ou aberto pelo agente, colar mais de 4 KB era recusado. A entrada do operador aceita o mesmo tamanho que a escrita direta (F-1633).' },
+    { title: 'A detecção não trava numa linha longa', detail: 'A reescrita linear do .* no meio da regra deixa de ser quadrática e respeita a quebra de linha e a flag s. 64 KB de uma regra do opencode custavam 186 ms e agora menos de 1 ms.' },
+    ...RELEASE_076411_FULL.highlights,
+  ],
+  fixes: RELEASE_076411_FULL.fixes,
+};
+
+export const RELEASE_076414: AppRelease = CURRENT_RELEASE;
