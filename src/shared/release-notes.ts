@@ -12476,7 +12476,7 @@ export const RELEASE_076373_FULL: AppRelease = {
 
 export const RELEASE_076373: AppRelease = RELEASE_076373_FULL;
 
-export const CURRENT_RELEASE: AppRelease = {
+const RELEASE_076381_FULL: AppRelease = {
   version: '0.76.381',
   date: '2026-10-21',
   codename: 'Kits de UI: shadcn e BoardUI dentro do Nexus',
@@ -12520,4 +12520,37 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076381: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076381: AppRelease = RELEASE_076381_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.382',
+  date: '2026-10-21',
+  codename: 'Kits de UI: shadcn e BoardUI dentro do Nexus',
+  summary:
+    'No desktop Linux, os dois kits de componentes moram dentro do Nexus: o ' +
+    'shadcn/ui inteiro pela CLI oficial e o BoardUI pela CLI dele mais as ' +
+    'ferramentas do MCP. O Jev escolhe o kit e o item na superfície que ' +
+    'instala, a metade grátis funciona sem chave nenhuma, e a chave do ' +
+    'operador provisiona a licença da máquina sem gastar assento. Da 0.76.374 ' +
+    'à 0.76.381, cada candidata foi tagueada e não publicada; a 0.76.381 não ' +
+    'recebe arquivos Linux. A 0.76.373 é o pacote Linux anterior. A 0.76.372, ' +
+    'a 0.76.370 e a 0.76.368 no espelho são Windows. A 0.76.371 é o carimbo ' +
+    'macOS. A 0.76.365 no espelho segue Latest. A 0.76.362 segue Latest na ' +
+    'canônica.',
+  highlights: [
+    { title: 'Os dois kits de verdade', detail: 'shadcn/ui inteiro (init, add, apply, preset, view, search, build, docs, info, migrate) e BoardUI pela CLI mais as 13 ferramentas do MCP. Medido: a busca do shadcn responde JSON tipado e o catálogo do BoardUI publica 69 itens grátis.' },
+    { title: 'O Jev escolhe o kit e o item', detail: 'Na superfície que instala: se a tarefa pede componente, qual kit serve e qual item encaixa, com heurística offline embaixo. Medido com o Jev real: painel de receita → stat cards do BoardUI; tela de login → login block do shadcn; conserto no parser do cron → nenhum kit.' },
+    { title: 'A metade grátis sem chave', detail: 'shadcn inteiro e ~45 itens do BoardUI. Item Pro sem licença não instala em silêncio: cai no grátis equivalente e nomeia o que ficou de fora.' },
+    { title: 'Chave no painel, licença sem assento', detail: 'Ajustes → Kits de UI guarda a chave no cofre, lista registries e aceita registry privado com token. A chave do operador viaja no app e provisiona o arquivo de licença da máquina; chave própria digitada sempre vence.' },
+    { title: 'Receitas por papel', detail: 'Super admin, dashboard e afins resolvem contra o catálogo ao vivo. Papel sem item disponível volta como não resolvido, nunca preenchido com chute.' },
+    { title: 'O agente não escolhe destino', detail: 'As ferramentas não têm campo de caminho: cada kit instala onde o projeto manda, que é configuração do operador.' },
+  ],
+  fixes: [
+    { title: 'O registry é do Main', detail: 'A ponte genérica de configurações não reescreve mais a lista de registries. Um namespace autenticado não pode ser reapontado para outra URL levando o token guardado.' },
+    { title: 'O "nenhum kit serve" do Jev é respeitado', detail: 'Quando o juiz decide que nenhum kit atende, a instalação não cai na heurística e não coloca um componente de todo jeito.' },
+    { title: 'Canal MCP fechado não derruba o app', detail: 'A falha de escrita (EPIPE) chega de forma assíncrona e virava exceção não tratada no processo principal; agora é uma chamada recusada.' },
+    { title: 'Falha de instalação mostra a saída', detail: 'Conflito de dependência e erro de rede deixam o diagnóstico na saída da ferramenta, que o painel escondia.' },
+  ],
+};
+
+export const RELEASE_076382: AppRelease = CURRENT_RELEASE;
