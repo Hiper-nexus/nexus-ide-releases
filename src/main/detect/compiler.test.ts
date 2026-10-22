@@ -239,6 +239,29 @@ describe('prefixo `.*` redundante (F-764 C.3)', () => {
     }
   });
 
+  it('`regex` roda na região inteira: casa depois de um LF como o original', () => {
+    const doc = (pattern: string) => ['id = "x"', '[[rules]]', 'id = "r"', `regex = ['${pattern}']`].join('\n');
+    expect(matches(doc('foo.*bar'), 'prefix\nfoo---bar')).toBe(true);
+    expect(matches(doc('foo.*bar'), 'foo\nbar')).toBe(false);
+    // Com `(?s)` o `.` cruza a linha: nada de reescrita, o original decide.
+    expect(matches(doc('(?s)foo.*bar'), 'foo\nbar')).toBe(true);
+    const pieces = ['foo', 'bar', '\n', '\r', '-', ' '];
+    for (const flags of ['', '(?s)', '(?m)']) {
+      const original = new RegExp(`foo.*bar`, `u${flags.replace(/[()?]/g, '')}`);
+      let seed = 7;
+      const random = () => {
+        seed = (seed * 1_103_515_245 + 12_345) & 0x7fffffff;
+        return seed / 0x7fffffff;
+      };
+      for (let round = 0; round < 5_000; round += 1) {
+        let text = '';
+        const length = Math.floor(random() * 9);
+        for (let i = 0; i < length; i += 1) text += pieces[Math.floor(random() * pieces.length)];
+        expect(matches(doc(`${flags}foo.*bar`), text), `${flags} ${JSON.stringify(text)}`).toBe(original.test(text));
+      }
+    }
+  });
+
   it('padrão que é só `.*` continua casando qualquer texto', () => {
     const doc = ['id = "x"', '[[rules]]', 'id = "r"', "regex = ['.*']"].join('\n');
     expect(matches(doc, '')).toBe(true);
