@@ -695,3 +695,36 @@ it('adds a registry with the operator own token', async () => {
     act(() => root.unmount());
   }
 });
+
+it('says why a registry would not go away', async () => {
+  // The Main keeps the row when the vault refuses to clear the token. The
+  // panel used to only repaint the list, so the row simply stayed there with
+  // nothing to explain it.
+  const configured = [
+    {
+      namespace: '@acme',
+      url: 'https://registry.acme.test/r/{name}.json',
+      requiresToken: true,
+      tokenStored: true,
+    },
+  ];
+  api({
+    // Configured on MOUNT, so the row — and its "Remover" — is on screen.
+    status: vi.fn().mockResolvedValue(status({ registries: configured })),
+    registry: vi
+      .fn()
+      .mockResolvedValue(status({ registries: configured, registryError: 'cofre trancado' })),
+  });
+  const { host, root } = await mount();
+  try {
+    const remove = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Remover',
+    );
+    expect(remove).toBeDefined();
+    await act(async () => remove!.click());
+
+    expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/cofre trancado/);
+  } finally {
+    act(() => root.unmount());
+  }
+});

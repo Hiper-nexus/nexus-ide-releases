@@ -39,6 +39,8 @@ import {
   assertRegistry,
   normalizeConfiguredRegistries,
   persistableRegistry,
+  planRegistryRemoval,
+  registrySaveOutcome,
   registrySecretKey,
   resolveRegistryAuthContract,
   KNOWN_UI_KIT_REGISTRIES,
@@ -90,7 +92,30 @@ function serviceDeps() {
   return { registries: configuredRegistries };
 }
 
-function secrets(): typeof import('../persistence/secrets-store') {
+type UiKitVault = Pick<
+  typeof import('../persistence/secrets-store'),
+  'getSecret' | 'setSecret'
+>;
+
+let vaultProvider: (() => UiKitVault) | null = null;
+
+/**
+ * The vault seam, same shape as `setUiKitCacheRootResolver`.
+ *
+ * The require below is lazy because secrets-store touches
+ * electron/safeStorage, and under vitest it does not resolve at all — which is
+ * what made this handler untestable, and is how three rounds in a row found it
+ * ignoring an answer its own helpers had already given (a refused vault
+ * delete, a dropped settings write, a token written before a failed persist).
+ * Those are wiring defects: only the handler shows them. Production never sets
+ * this, so the real vault stays the default.
+ */
+export function setUiKitVaultProvider(provider: (() => UiKitVault) | null): void {
+  vaultProvider = provider;
+}
+
+function secrets(): UiKitVault {
+  if (vaultProvider) return vaultProvider();
   // Lazy: secrets-store touches electron/safeStorage.
   return require('../persistence/secrets-store') as typeof import('../persistence/secrets-store');
 }
@@ -440,6 +465,12 @@ export function registerUiKitIpc(): void {
       const parsed = uiKitRegistryRequestSchema.safeParse(raw);
       if (!parsed.success) return await buildStatus();
       const current = [...configuredRegistries()];
+      // Armed only after the vault takes a NEW token, and fired on every path
+      // that does not end in a saved registry. Without it, moving a namespace
+      // to another host with a fresh token and then failing to persist left
+      // the OLD url configured with the NEW host's credential behind it — the
+      // next install would have sent that token to the old host.
+      let rollbackToken: (() => void) | null = null;
 
       try {
         if (parsed.data.action === 'remove') {
@@ -448,11 +479,21 @@ export function registerUiKitIpc(): void {
             // The DERIVED vault key, not the stored row's `secretKey`: a
             // settings file that carries a foreign name must not clear that
             // secret here — only this namespace's own token ever goes.
-            secrets().setSecret(registrySecretKey(namespace), '');
+            //
+            // And the vault's ANSWER decides, in `planRegistryRemoval`: a
+            // refused delete used to be ignored, so the row disappeared while
+            // the token stayed behind it.
+            const cleared = secrets().setSecret(registrySecretKey(namespace), '');
+            const plan = planRegistryRemoval({
+              registries: current,
+              namespace,
+              cleared,
+            });
+            if (!plan.removed) {
+              return { ...(await buildStatus()), registryError: plan.error };
+            }
             replaceOrchSettings({
-              uiKitRegistries: current
-                .filter((entry) => entry.namespace !== namespace)
-                .map(persistableRegistry),
+              uiKitRegistries: plan.registries.map(persistableRegistry),
             } as never);
           }
           return await buildStatus();
@@ -461,8 +502,11 @@ export function registerUiKitIpc(): void {
         const input = parsed.data.registry;
         if (!input) return await buildStatus();
         // The panel sends namespace + URL + token; the auth CONTRACT is
-        // resolved in ui-kit-registry, where it is testable (this file cannot
-        // load under test: `handleTrusted` pulls in electron).
+        // resolved in ui-kit-registry, as a pure decision. (The claim that
+        // used to be here — that this file cannot load under test — was
+        // wrong, and the blind spot it created is where three rounds of review
+        // found the handler dropping its helpers' answers. See
+        // `ui-kit-ipc.test.ts`.)
         const previous = current.find(
           (entry) => entry.namespace === input.namespace.trim(),
         );
@@ -492,7 +536,9 @@ export function registerUiKitIpc(): void {
         // saved namespace, cleared the password field, and every later install
         // reported a missing token with the key gone.
         if (parsed.data.token && registry.secretKey) {
-          const write = secrets().setSecret(registry.secretKey, parsed.data.token.trim());
+          const key = registry.secretKey;
+          const before = secrets().getSecret(key) ?? '';
+          const write = secrets().setSecret(key, parsed.data.token.trim());
           if (!write.ok) {
             return {
               ...(await buildStatus()),
@@ -501,6 +547,9 @@ export function registerUiKitIpc(): void {
                 'o cofre recusou o token; o registry não foi salvo e a chave não foi descartada',
             };
           }
+          rollbackToken = () => {
+            secrets().setSecret(key, before);
+          };
         }
         const next = [
           ...current.filter((entry) => entry.namespace !== registry.namespace),
@@ -508,12 +557,25 @@ export function registerUiKitIpc(): void {
         ];
         // PERSISTED without the derived `secretKey`: settings hold the
         // operator's registry configuration, never vault names.
-        replaceOrchSettings({
+        const persisted = replaceOrchSettings({
           uiKitRegistries: next.map(persistableRegistry),
         } as never);
+        // AND READ BACK: a patch the schema refuses returns the previous
+        // settings in silence, so "no exception" never meant "saved".
+        const outcome = registrySaveOutcome({
+          namespace: registry.namespace,
+          url: registry.url,
+          persisted: persisted?.uiKitRegistries,
+        });
+        if (!outcome.saved) {
+          // No token typed on this save means nothing to roll back.
+          rollbackToken?.();
+          return { ...(await buildStatus()), registryError: outcome.error };
+        }
         // The receipt, issued only here — after the write actually happened.
         return { ...(await buildStatus()), registrySaved: registry.namespace };
       } catch (error) {
+        rollbackToken?.();
         // An exception in validation or persistence returns the PREVIOUS list,
         // which still contains the namespace being edited. Without a reason
         // the panel would read that as success and clear the operator's input.

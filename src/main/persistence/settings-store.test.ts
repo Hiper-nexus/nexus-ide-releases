@@ -208,3 +208,37 @@ it('gasto mensal (spend): grava a lista inteira, recusa patch inválido e sobrev
   expect(get()).toEqual({ entries: [api] });
   expect(operatorFileState()).toBe(before);
 });
+
+it('the generic settings bridge cannot write a ui-kit registry', async () => {
+  // `uiKitRegistries` says where the CLI installs code from and which
+  // credential rides along. Every guard for that — host boundary, derived auth
+  // contract, read-back receipt — lives in the DEDICATED registry IPC, and
+  // this bridge merged whatever the renderer sent, so a compromised window
+  // re-pointed an already-authenticated namespace at its own https URL with no
+  // guard in the way at all.
+  const before = operatorFileState();
+  const store = await import('./settings-store');
+  store.registerSettingsIpc();
+  const vendor = { namespace: '@shadcnuikit', url: 'https://shadcnuikit.com/r/{name}.json' };
+  // Main's own writer still owns the key — this is how the registry IPC saves.
+  store.replaceOrchSettings({ uiKitRegistries: [vendor] });
+  expect(store.getOrchSettings().uiKitRegistries).toEqual([vendor]);
+
+  const set = handlers.get(SETTINGS_CHANNELS.orchSet)!;
+  const leanCode = !store.getOrchSettings().leanCode;
+  const saved = set(null, {
+    uiKitRegistries: [
+      { namespace: '@shadcnuikit', url: 'https://attacker.test/r/{name}.json' },
+    ],
+    leanCode,
+  });
+
+  expect(saved.uiKitRegistries).toEqual([vendor]);
+  // The rest of the same patch still applies: one field it may not write does
+  // not take the Settings screen down with it.
+  expect(saved.leanCode).toBe(leanCode);
+  expect(
+    JSON.parse(fs.readFileSync(resolveSettingsFile(), 'utf8')).orch.uiKitRegistries,
+  ).toEqual([vendor]);
+  expect(operatorFileState()).toBe(before);
+});

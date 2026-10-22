@@ -208,8 +208,15 @@ export function UiKitSection() {
 
   async function removeRegistry(namespace: string) {
     setBusy(`registry:${namespace}`);
+    setRegistryError(null);
     try {
-      setStatus(await window.nexus.uiKit.registry({ action: 'remove', namespace }));
+      const next = await window.nexus.uiKit.registry({ action: 'remove', namespace });
+      setStatus(next);
+      // The Main keeps the row when the vault refuses to clear the token —
+      // otherwise the panel would report the registry gone with its credential
+      // still stored. Saying so is the other half of that: without it the row
+      // just stayed on screen and nothing explained why.
+      if (next.registryError) setRegistryError(next.registryError);
     } finally {
       setBusy(null);
     }

@@ -406,11 +406,94 @@ export function resolveRegistryAuthContract(input: {
   if (input.stored && input.storedUrl !== undefined && input.storedUrl === input.url) {
     return input.stored;
   }
-  if (!input.hasToken && !findKnownRegistry(input.namespace)) return undefined;
+  // AND THE PRESET ONLY VOUCHES FOR THE PRESET'S HOST.
+  //
+  // The host check above compares against the STORED url, so it says nothing
+  // once there is no stored row — and this branch then derived a contract for
+  // a known namespace pointed anywhere, which is the same leak by another
+  // door: the token for that namespace may still be in the vault (a removal
+  // whose vault write was refused leaves it there), and the contract is
+  // exactly what `buildScopedRegistryEnv` requires before it releases it to
+  // the URL's host. A preset is Nexus's claim about one vendor; it cannot
+  // vouch for a URL that is not theirs.
+  //
+  // The comparison is the HOST, like the one above, not the whole URL: the
+  // credential leaves this machine to a host, and the vendor moving their
+  // path is not a new party to trust. A token typed now covers any host —
+  // the operator chose where it goes.
+  const known = findKnownRegistry(input.namespace);
+  const atPresetHost =
+    known !== null &&
+    (input.url === undefined ||
+      hostOfRegistryUrl(known.url) === hostOfRegistryUrl(input.url));
+  if (!input.hasToken && !atPresetHost) return undefined;
   return {
     kind: 'header',
     name: 'Authorization',
     envVar: derivedRegistryEnvVar(input.namespace),
+  };
+}
+
+/**
+ * Whether the registry just written is actually IN the settings.
+ *
+ * `replaceOrchSettings` answers the PREVIOUS settings when the merged object
+ * fails the schema and throws nothing — a 33rd registry against the schema's
+ * cap of 32 is the easy way to see it. The receipt went out anyway, so the
+ * panel cleared every field while the token written a moment earlier had no
+ * registry left to belong to. Reading the row back covers that mode and every
+ * other silent one, which a length check would not.
+ */
+export function registrySaveOutcome(input: {
+  readonly namespace: string;
+  readonly url: string;
+  readonly persisted:
+    | readonly { readonly namespace: string; readonly url: string }[]
+    | undefined;
+}): { readonly saved: true } | { readonly saved: false; readonly error: string } {
+  const namespace = input.namespace.trim();
+  const landed = input.persisted?.find((entry) => entry.namespace === namespace);
+  if (landed && landed.url === input.url) return { saved: true };
+  return {
+    saved: false,
+    error:
+      `o registry não ficou salvo nas configurações (o limite é ` +
+      `${UI_KIT_MAX_REGISTRIES} registries); a chave digitada não foi mantida`,
+  };
+}
+
+/**
+ * What removing a registry does, decided before anything is written.
+ *
+ * The vault goes FIRST and its answer decides: secure storage can refuse the
+ * delete (a locked keychain, a backend that is not there), and that answer
+ * used to be dropped on the floor — the row went away, the panel reported the
+ * registry gone, and the token stayed. Re-adding that namespace later would
+ * then pick the supposedly removed credential straight back up.
+ *
+ * Nothing here deletes a row the operator can still see: a refusal keeps the
+ * registry listed, with its reason, so the removal can be retried once the
+ * vault is reachable.
+ */
+export function planRegistryRemoval(input: {
+  readonly registries: readonly UiKitRegistry[];
+  readonly namespace: string;
+  readonly cleared: { readonly ok: boolean; readonly error?: string | undefined };
+}):
+  | { readonly removed: true; readonly registries: readonly UiKitRegistry[] }
+  | { readonly removed: false; readonly error: string } {
+  if (!input.cleared.ok) {
+    return {
+      removed: false,
+      error:
+        input.cleared.error ??
+        'o cofre recusou apagar o token; o registry continua na lista',
+    };
+  }
+  const namespace = input.namespace.trim();
+  return {
+    removed: true,
+    registries: input.registries.filter((entry) => entry.namespace !== namespace),
   };
 }
 

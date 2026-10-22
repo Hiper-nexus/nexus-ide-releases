@@ -14,6 +14,8 @@ import {
   isRegistrySecretKey,
   normalizeConfiguredRegistries,
   persistableRegistry,
+  planRegistryRemoval,
+  registrySaveOutcome,
   operatorTokenForRegistry,
   registryEntryNeedsAuth,
   registrySecretKey,
@@ -806,5 +808,133 @@ describe('buildScopedRegistryEnv — the token cannot be hijacked', () => {
 
     expect(result.env).toEqual({});
     expect(result.unreferenced).toEqual(['@acme']);
+  });
+});
+
+describe('the preset fallback is bounded by the preset host', () => {
+  const PRESET = 'https://shadcnuikit.com/r/{name}.json';
+
+  it('refuses to derive preset auth for a known namespace pointed elsewhere', () => {
+    // The hole the host check left open: with the settings row GONE (so no
+    // `storedUrl` to compare) a known namespace derived its contract for ANY
+    // URL, and the install then released the token still sitting in the vault
+    // for that namespace to whatever host the new URL names.
+    expect(
+      resolveRegistryAuthContract({
+        namespace: '@shadcnuikit',
+        url: 'https://elsewhere.test/r/{name}.json',
+        hasToken: false,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('still derives it at the preset host, which is what makes the ENV path reachable', () => {
+    expect(
+      resolveRegistryAuthContract({
+        namespace: '@shadcnuikit',
+        url: PRESET,
+        hasToken: false,
+      })?.envVar,
+    ).toBe('SHADCNUIKIT_REGISTRY_TOKEN');
+  });
+
+  it('accepts another path on the preset host: same host, same credential scope', () => {
+    expect(
+      resolveRegistryAuthContract({
+        namespace: '@shadcnuikit',
+        url: 'https://shadcnuikit.com/registry/v2/{name}.json',
+        hasToken: false,
+      })?.envVar,
+    ).toBe('SHADCNUIKIT_REGISTRY_TOKEN');
+  });
+
+  it('derives it anyway when a fresh token comes with the new URL', () => {
+    expect(
+      resolveRegistryAuthContract({
+        namespace: '@shadcnuikit',
+        url: 'https://elsewhere.test/r/{name}.json',
+        hasToken: true,
+      })?.envVar,
+    ).toBe('SHADCNUIKIT_REGISTRY_TOKEN');
+  });
+});
+
+describe('removing a registry waits for the vault', () => {
+  const rows: readonly UiKitRegistry[] = [
+    PRIVATE,
+    { namespace: '@other', url: 'https://other.test/r/{name}.json' },
+  ];
+
+  it('removes the row once the token is gone', () => {
+    const plan = planRegistryRemoval({
+      registries: rows,
+      namespace: '@acme',
+      cleared: { ok: true },
+    });
+
+    expect(plan.removed).toBe(true);
+    expect(plan.removed && plan.registries.map((entry) => entry.namespace)).toEqual([
+      '@other',
+    ]);
+  });
+
+  it('KEEPS the row when the vault refused, and says why', () => {
+    // Removing the row while the secret stays would tell the panel the
+    // registry is gone with its credential still in the vault — and re-adding
+    // that namespace would quietly pick the supposedly removed token up again.
+    const plan = planRegistryRemoval({
+      registries: rows,
+      namespace: '@acme',
+      cleared: { ok: false, error: 'keychain locked' },
+    });
+
+    expect(plan.removed).toBe(false);
+    expect(!plan.removed && plan.error).toMatch(/keychain locked/);
+  });
+
+  it('still says something when the vault refused without a reason', () => {
+    const plan = planRegistryRemoval({
+      registries: rows,
+      namespace: '@acme',
+      cleared: { ok: false },
+    });
+
+    expect(plan.removed).toBe(false);
+    expect(!plan.removed && plan.error.length).toBeGreaterThan(0);
+  });
+});
+
+describe('saving a registry is proven by what landed on disk', () => {
+  const SAVED = { namespace: '@acme', url: 'https://registry.acme.test/r/{name}.json' };
+
+  it('confirms the save when the row is in the persisted settings', () => {
+    const outcome = registrySaveOutcome({ ...SAVED, persisted: [SAVED] });
+
+    expect(outcome.saved).toBe(true);
+  });
+
+  it('refuses when the write was DROPPED, which it is in silence', () => {
+    // `replaceOrchSettings` returns the PREVIOUS settings when the merged
+    // object fails the schema — a 33rd registry against the schema's max of
+    // 32, for instance. It throws nothing, so the receipt went out, the panel
+    // cleared every field, and the token written a moment earlier was left
+    // with no registry to belong to.
+    const outcome = registrySaveOutcome({ ...SAVED, persisted: [] });
+
+    expect(outcome.saved).toBe(false);
+    expect(!outcome.saved && outcome.error.length).toBeGreaterThan(0);
+  });
+
+  it('refuses when the namespace landed pointing somewhere else', () => {
+    const outcome = registrySaveOutcome({
+      ...SAVED,
+      persisted: [{ namespace: '@acme', url: 'https://other.test/r/{name}.json' }],
+    });
+
+    expect(outcome.saved).toBe(false);
+  });
+
+  it('refuses when there is nothing to read back', () => {
+    expect(registrySaveOutcome({ ...SAVED, persisted: undefined }).saved).toBe(false);
   });
 });

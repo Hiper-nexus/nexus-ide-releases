@@ -430,6 +430,40 @@ export type OrchSettingsPatch = Omit<Partial<OrchSettings>, 'jevSurfaces'> & {
   jevSurfaces?: Partial<NonNullable<OrchSettings['jevSurfaces']>>;
 };
 
+/**
+ * Chaves das configurações do orquestrador que SÓ o Main escreve.
+ *
+ * `uiKitRegistries` diz de onde a CLI instala código e qual credencial viaja
+ * nessa instalação, e toda a guarda disso — fronteira de host, contrato de
+ * auth derivado, prova do que foi salvo — vive no IPC dedicado de registry.
+ * A ponte genérica `orchSet` mesclava o que o renderer mandasse, então uma
+ * tela comprometida reapontava um namespace JÁ autenticado para uma URL dela
+ * sem passar por guarda nenhuma: o Main depois normaliza a linha, deriva a
+ * chave de cofre e a variável reais do namespace, e a instalação entrega o
+ * token guardado para aquele host.
+ */
+export const MAIN_OWNED_ORCH_SETTINGS_KEYS = ['uiKitRegistries'] as const;
+
+export function isMainOwnedOrchSettingsKey(key: string): boolean {
+  return (MAIN_OWNED_ORCH_SETTINGS_KEYS as readonly string[]).includes(key);
+}
+
+/**
+ * O patch do renderer sem as chaves que só o Main escreve.
+ *
+ * Descarta a chave em silêncio em vez de recusar o patch inteiro: a tela de
+ * Ajustes manda vários campos juntos, e recusar tudo tiraria do ar ajustes
+ * legítimos por causa de um campo que ela não deveria ter mandado.
+ */
+export function withoutMainOwnedOrchSettings(patch: unknown): unknown {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return patch;
+  const raw = patch as Record<string, unknown>;
+  if (!Object.keys(raw).some(isMainOwnedOrchSettingsKey)) return patch;
+  return Object.fromEntries(
+    Object.entries(raw).filter(([key]) => !isMainOwnedOrchSettingsKey(key)),
+  );
+}
+
 /** Mescla de um patch nas configurações atuais (rasa, exceto `jevSurfaces`). */
 export function mergeOrchSettingsPatch(current: OrchSettings, patch: unknown): Record<string, unknown> {
   const raw = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch as Record<string, unknown> : {};

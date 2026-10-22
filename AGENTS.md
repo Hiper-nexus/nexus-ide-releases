@@ -2932,6 +2932,45 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
   a ativação presa no fornecedor gastando assento, e com `stored: false` o
   painel escondia justamente o botão que a libera. O Remover aparece com
   `stored` OU `state === 'active'`.
+- **O registry é do Main: a ponte genérica de settings não o escreve.** Toda
+  guarda de credencial de registry (fronteira de host, contrato de auth
+  derivado, recibo) vive no IPC dedicado, e o `orchSet` mesclava o que o
+  renderer mandasse — uma tela comprometida reapontava um namespace JÁ
+  autenticado para a URL dela sem passar por guarda nenhuma, e a instalação
+  entregava o token guardado para aquele host. `withoutMainOwnedOrchSettings`
+  (`MAIN_OWNED_ORCH_SETTINGS_KEYS`) tira a chave do patch do renderer ANTES da
+  mescla; `replaceOrchSettings` continua escrevendo tudo, porque é por lá que o
+  IPC dedicado salva. Chave nova que só o Main escreve entra naquela lista.
+- **Fronteira de credencial é HOST, e vale até contra o preset.** `resolveRegistryAuthContract`
+  compara host (não string) como PRIMEIRA coisa: `declared` vem do chamador e
+  um namespace conhecido derivava contrato de qualquer jeito, então os dois
+  reapontados liberavam o token do host antigo. E o preset só responde pelo
+  host DELE: sem linha salva não há `storedUrl` para comparar, e aí `@shadcnuikit`
+  apontado para qualquer lugar ganhava contrato — que é exatamente o que
+  `buildScopedRegistryEnv` exige para soltar o token. Caminho diferente no mesmo
+  host passa (o fornecedor mudar de rota não é outra parte para confiar); token
+  digitado agora cobre qualquer host, porque a escolha é do operador.
+- **Nada do cofre é apagado para fechar vazamento**: sem contrato o
+  `resolveRegistryToken` nunca é consultado, então o token fica inalcançável em
+  vez de destruído (as credenciais do operador não são nossas para apagar).
+- **Presença não é recibo, e exceção não é a única falha.** `replaceOrchSettings`
+  devolve as configurações ANTERIORES em silêncio quando o merge reprova no
+  schema (um 33º registry contra o `.max(32)`), então "não lançou" nunca
+  significou "salvou": o Main lê a linha de volta (`registrySaveOutcome`) e só
+  então emite `registrySaved`; o painel exige o recibo. Token gravado antes de
+  uma persistência que falhou é DESFEITO (`rollbackToken`) — senão a URL velha
+  ficava configurada com a credencial do host novo atrás dela.
+- **Remover registry espera o cofre** (`planRegistryRemoval`): delete recusado
+  (keychain trancado) mantinha a linha fora e o token dentro, e re-adicionar o
+  namespace reaproveitava a credencial "removida". A linha fica, com o motivo, e
+  o painel diz qual é.
+- **`ui-kit-ipc.ts` É testável** (`ui-kit-ipc.test.ts`): o comentário antigo dizia
+  que não, e nesse ponto cego três rodadas de revisão seguidas acharam o handler
+  ignorando a resposta que os próprios helpers davam. `handleTrusted` mocka como
+  qualquer módulo; o cofre entra por `setUiKitVaultProvider` (o `require` lazy
+  não resolve sob vitest) e a raiz do cache pelo resolver de sempre. O teste
+  monta o workspace VAZIO de propósito: sem cwd o `buildStatus` nunca chega ao
+  `license.json` real de quem roda a suíte.
 - **A chave nunca é argumento.** Licença do BoardUI por stdio (argv apareceria no
   `ps`), injetada do cofre (`external:boardui-license-key`) pelo serviço. As
   tools do BoardUI passam por allowlist POR TOOL (`sanitizeBoardUiToolArgs`):
