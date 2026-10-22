@@ -257,6 +257,13 @@ export class HeavyCommandPermitPool {
       reservedMB: this.#active.size * (this.#options.reserveMB ?? 2048) };
   }
 
+  /** The session holds or waits for (attached or parked) a heavy admission: something in it runs. */
+  sessionAdmissionOpen(sessionId: string): boolean {
+    if (!sessionId) return false;
+    for (const job of this.#active.values()) if (job.sessionId === sessionId) return true;
+    return this.#waiters.some((waiter) => waiter.request.sessionId === sessionId);
+  }
+
   acquire(request: HeavyCommandRequest): Promise<HeavyCommandPermit> {
     // Callers are Main-owned agent execution paths. A loose helper has no
     // mission, and role=user is also used by CLI agents: neither means a
@@ -553,4 +560,5 @@ const permits = new HeavyCommandPermitPool({ memory: getMemoryAfterAgentReservat
 registerHeavyCommandMemoryReservation(() => permits.snapshot().reservedMB);
 export function acquireHeavyCommandPermit(request: HeavyCommandRequest): Promise<HeavyCommandPermit> { return permits.acquire(request); }
 export function heavyCommandPermitSnapshot(): ReturnType<HeavyCommandPermitPool['snapshot']> { return permits.snapshot(); }
+export function heavyCommandAdmissionOpenForSession(sessionId: string): boolean { return permits.sessionAdmissionOpen(sessionId); }
 export function closeHeavyCommandPermits(): void { permits.close(); }

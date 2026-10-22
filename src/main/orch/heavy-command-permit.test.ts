@@ -457,6 +457,24 @@ it('reports an exclusive build that holds its root while others wait, without ev
   expect(admitted).toBe(true);
 });
 
+it('says whether a session holds or waits for a heavy admission, parked waiters included', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(0);
+  const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 100_000, swapUsedMB: 0 }),
+    limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {},
+    pollMs: 10, waitMs: Number.POSITIVE_INFINITY, maxActive: 4, progressAfterMs: 50 });
+  pools.push(value);
+  const build = await value.acquire({ ...request(), kind: 'build', sessionId: 'holder' });
+  const parked = value.acquire({ ...request(), kind: 'tests', sessionId: 'queued' }).catch((error: Error) => error.message);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(await parked).toBe('heavy_command_queued');
+  expect(value.sessionAdmissionOpen('holder')).toBe(true);
+  expect(value.sessionAdmissionOpen('queued')).toBe(true);
+  expect(value.sessionAdmissionOpen('stranger')).toBe(false);
+  expect(value.sessionAdmissionOpen('')).toBe(false);
+  build.release();
+  expect(value.sessionAdmissionOpen('holder')).toBe(false);
+});
+
 it('never reports a long exclusive job nobody is waiting for, nor a long reader', async () => {
   vi.useFakeTimers(); vi.setSystemTime(0);
   const reports: HeavyExclusiveHeldReport[] = [];

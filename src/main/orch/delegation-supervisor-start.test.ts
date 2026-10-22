@@ -53,6 +53,12 @@ const h = vi.hoisted(() => ({
   // F-1486: o failover está reabrindo a tarefa (pedido dele, não da rede).
   failoverReopens: vi.fn((_paneId: string) => false),
   setCooldown: vi.fn((_id: string, _until: number, _reason: string) => {}),
+  heavyAdmissionOpen: vi.fn((_sessionId: string) => false),
+}));
+
+vi.mock('./heavy-command-permit', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./heavy-command-permit')>()),
+  heavyCommandAdmissionOpenForSession: (sessionId: string) => h.heavyAdmissionOpen(sessionId),
 }));
 
 vi.mock('./failover', () => ({
@@ -1454,6 +1460,36 @@ describe('F-1414: tarefa delegada sem execução comprovada é reaberta noutra L
       expect.objectContaining({ kind: 'pane-not-started', cause: 'turn-not-started', outcome: 'rerouted' }),
     );
     expect(getPaneStartWatch('pane-kimi')).toBeNull();
+  });
+
+  it('a quiet worker whose command waits in the heavy queue is not "turn-not-started" until the queue lets go', async () => {
+    kimiStuckInComposer(START_GRACE_MS + 5_000);
+    h.heavyAdmissionOpen.mockImplementation(id => id === 'session-kimi');
+    try {
+      await checkPaneStarts(NOW + executionProofGraceMs('kimi'));
+      expect(reroute).not.toHaveBeenCalled();
+      expect(h.requestPaneClose).not.toHaveBeenCalled();
+      expect(getPaneStartWatch('pane-kimi')?.failure).toBeNull();
+      // The queue let go and the pane is still idle without a turn: the verdict comes back.
+      h.heavyAdmissionOpen.mockReturnValue(false);
+      await checkPaneStarts(NOW + executionProofGraceMs('kimi') + 1_000);
+      expect(reroute).toHaveBeenCalledTimes(1);
+    } finally { h.heavyAdmissionOpen.mockReset().mockReturnValue(false); }
+  });
+
+  it('registers the busy-session evidence the brief delivery reads, and drops it on shutdown', async () => {
+    const { sessionBusyContradiction } = await import('./pane-start-watchdog');
+    h.heavyAdmissionOpen.mockImplementation(id => id === 'session-q');
+    h.toolActivity.mockImplementation(id => id === 'session-w' ? 2 : 0);
+    try {
+      expect(sessionBusyContradiction('session-q')).toBe('heavy-queue');
+      expect(sessionBusyContradiction('session-w')).toBe('working');
+      await shutdownDelegationSupervisor();
+      expect(sessionBusyContradiction('session-q')).toBeNull();
+    } finally {
+      h.heavyAdmissionOpen.mockReset().mockReturnValue(false);
+      h.toolActivity.mockReset().mockReturnValue(0);
+    }
   });
 
   /** F-1477: Grok vivo, parado na tela de OAuth vencido, sem turno. */

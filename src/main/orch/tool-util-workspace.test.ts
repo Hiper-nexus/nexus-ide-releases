@@ -321,6 +321,7 @@ import { inFlightRequestOf, resetInFlightRequestsForTests } from './in-flight-re
 import {
   getPaneStartWatch,
   resetPaneStartWatchdogForTests,
+  setPaneStartBusyEvidence,
   trackPaneStart,
 } from './pane-start-watchdog';
 import { testProjectScope } from './__tests__/scope-fixture';
@@ -2102,6 +2103,27 @@ describe('agent prompt injection', () => {
       expect(stubs.requestPaneClose).toHaveBeenCalledWith('pane-kimi');
       expect(failures).toHaveLength(1);
       expect(failures[0]?.message).toContain('briefing não foi entregue');
+    });
+
+    it.each([
+      ['already using tools', { toolActivityCount: () => 3, heavyAdmissionOpen: () => false }, true],
+      ['waiting in the heavy-command queue', { toolActivityCount: () => 0, heavyAdmissionOpen: (id: string) => id === 'session-kimi' }, false],
+    ])('a session %s is not a rejected brief: the pane stays and nothing is rerouted', async (_label, evidence, accepted) => {
+      resetPaneStartWatchdogForTests(); // Earlier tests leave early marks for the same paneId.
+      setPaneStartBusyEvidence(evidence);
+      try {
+        trackPaneStart({ paneId: 'pane-kimi', requestId: 'req-kimi', adapterId: 'kimi', scope, role: 'worker',
+          callerSessionId: 'maestro', turnProof: false, pinnedRuntime: false, rerouted: false, createdAt: Date.now() });
+        await spawnPendingKimi();
+        bindAttempt('session-kimi');
+        await vi.advanceTimersByTimeAsync(120_000);
+
+        expect(stubs.requestPaneClose).not.toHaveBeenCalled();
+        expect(failures).toEqual([]);
+        const watch = getPaneStartWatch('pane-kimi');
+        expect(watch?.failure).toBeNull();
+        expect(watch?.accepted).toBe(accepted);
+      } finally { resetPaneStartWatchdogForTests(); }
     });
 
     it('pane reciclado no mesmo paneId não recebe o brief da tentativa anterior nem é fechado', async () => {
