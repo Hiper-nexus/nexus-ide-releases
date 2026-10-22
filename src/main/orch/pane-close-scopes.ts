@@ -309,7 +309,12 @@ export function missionWriterAwaitsHandoffAck(input: {
   readonly readOnly?: boolean;
   readonly readOnlyEnforced?: boolean;
   readonly isolatedWriter?: boolean;
-}): boolean {
+} | null | undefined): boolean {
+  // F-1634: o fallback de disco do handoff MCP é ingerido NO BOOT, depois de
+  // queda do Main (F-795), quando a sessão do worker já morreu e não há
+  // contexto de gate. Sem contexto não há conversa morna a preservar: devolve
+  // false e aquele caminho mantém o fechamento imediato de sempre.
+  if (!input) return false;
   if (input.missionId === undefined || input.role !== "worker") return false;
   if (input.readOnlyEnforced === true) return false;
   if (input.isolatedWriter === true) return true;

@@ -90,7 +90,10 @@ import {
   findPane,
   requestPaneClose,
 } from "./pane-registry";
-import { scheduleAutoCloseAfterHandoff } from "./pane-close-scopes";
+import {
+  missionWriterAwaitsHandoffAck,
+  scheduleAutoCloseAfterHandoff,
+} from "./pane-close-scopes";
 import { workerActivityProbes } from "./worker-idle-probe";
 import {
   isPlaceholderSummary,
@@ -2140,6 +2143,15 @@ export async function startMcpServer(): Promise<void> {
               ...workerActivityProbes,
               isDelivered: (id) =>
                 getProjectDomainStores(scope).handoffs.get(id)?.deliveryState !== "queued",
+              // F-1634: o spool é o fallback do MESMO submit MCP, então o
+              // `success` do writer de missão também espera o veredito aqui —
+              // senão a garantia de pane morno sumia justamente na falha de
+              // transporte. Na ingestão de BOOT (F-795, depois de queda do
+              // Main) a sessão já morreu e não há contexto: o predicado
+              // devolve false e aquele caminho segue fechando na hora.
+              awaitAckOnSuccess: missionWriterAwaitsHandoffAck(
+                handoff.sessionId ? getContextBySession(handoff.sessionId) : null,
+              ),
             },
           ),
       },

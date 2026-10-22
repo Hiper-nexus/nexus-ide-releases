@@ -344,6 +344,16 @@ describe("missionWriterAwaitsHandoffAck", () => {
     expect(missionWriterAwaitsHandoffAck({ ...worker, readOnlyEnforced: true, isolatedWriter: true })).toBe(false);
   });
 
+  // F-1634 (revisão do Codex no PR 159, achado do spool): o fallback de disco
+  // do handoff MCP é ingerido NO BOOT, depois de queda do Main (F-795) —
+  // quando a sessão do worker normalmente já morreu e não há contexto de gate.
+  // Sem contexto o predicado devolve false sozinho, então o boot mantém o
+  // fechamento imediato de sempre e só o timeout com sessão VIVA espera.
+  it("sem contexto (ingestão de boot) não espera: não há conversa a preservar", () => {
+    expect(missionWriterAwaitsHandoffAck({})).toBe(false);
+    expect(missionWriterAwaitsHandoffAck(undefined as never)).toBe(false);
+  });
+
   it("fora de missão e fora do papel de worker não espera (não há ACK)", () => {
     expect(missionWriterAwaitsHandoffAck({ role: "worker" })).toBe(false);
     expect(missionWriterAwaitsHandoffAck({ missionId: "m1", role: "orchestrator" })).toBe(false);
