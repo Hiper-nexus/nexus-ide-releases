@@ -8,6 +8,7 @@ import {
   closeAfterNonSuccessHandoffAck,
   disarmAutoCloseOnHandoff,
   NON_SUCCESS_IDLE_CLOSE_MS,
+  SUCCESS_ACK_IDLE_CLOSE_MS,
   selectScopedPaneCloseTargets,
   scheduleAutoCloseAfterHandoff,
   shouldArmAutoCloseOnHandoff,
@@ -389,6 +390,58 @@ describe("F-1409: entrega não-success fecha no ACK ou na rede de segurança", (
     expect(closeAfterNonSuccessHandoffAck("sess-w", "hoff-1", "accepted")).toBe(false);
     await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS * 2);
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  // F-1634: a entrega `success` do worker de missão ainda passa pelo veredito
+  // do Maestro. Fechar o pane no submit apagava o contexto antes dele: um
+  // `rework` depois caía numa encarnação nova (resume indisponível => brief
+  // original) e o worker refazia o trabalho do zero — o "recusa isso, aí
+  // volta tudo de novo" que o operador vê. Com o aceite pendente, `accepted`
+  // fecha na hora e `rework` chega ao pane morno, que já sabe o que tentou.
+  it("success de worker de missão espera o aceite em vez de fechar no submit", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "hoff-ack", awaitAckOnSuccess: true,
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(close).not.toHaveBeenCalled();
+
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "hoff-ack", "accepted")).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
+  it("rework de um success pendente mantém o pane morno para a nota", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "hoff-ack", awaitAckOnSuccess: true,
+    });
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "hoff-ack", "rework")).toBe(false);
+    await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS * 2);
+    expect(close).not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId("sess-w")).toBe("pane-w");
+  });
+
+  it("Maestro que nunca acusa não deixa o worker aberto: a rede fecha no prazo do aceite", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "hoff-ack", awaitAckOnSuccess: true,
+    });
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_IDLE_CLOSE_MS - 1);
+    expect(close).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
+  it("sem awaitAckOnSuccess (helper do operador, sem missão) success fecha já", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, { handoffId: "hoff-now" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
   });
 
   it.each(["progress", "stalled"])("%s nunca arma a rede de 15 min (só partial|failed|blocked)", async (status) => {

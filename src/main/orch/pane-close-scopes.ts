@@ -167,6 +167,12 @@ function closeArmedPaneSoon(
  * entrega e o scrollback relevante vivem no ledger). Worker ocupado adia.
  */
 export const NON_SUCCESS_IDLE_CLOSE_MS = 15 * 60_000;
+/**
+ * F-1634: prazo do aceite de uma entrega `success`. Curto de propósito — o
+ * ACK do Maestro chega em um turno dele, e um pane de agente custa ~1 GB
+ * (F-572): esperar os 15 min da rede não-success encheria a máquina.
+ */
+export const SUCCESS_ACK_IDLE_CLOSE_MS = 3 * 60_000;
 
 /**
  * F-1409/M3: enquanto a entrega está `queued` (Maestro em turno longo), o
@@ -228,6 +234,18 @@ export interface NonSuccessCloseOptions {
   /** A entrega já chegou ao Maestro (deliveryState ≠ queued)? Ausente = desde o submit. */
   readonly isDelivered?: (handoffId: string) => boolean;
   readonly idleCloseMs?: number;
+  /**
+   * F-1634: a entrega `success` deste worker ainda passa pelo veredito do
+   * Maestro (`nexus_handoff_ack`). Fechar o pane no submit apagava o contexto
+   * antes do veredito: um `rework` depois caía numa encarnação nova — resume
+   * indisponível volta ao brief original — e o worker refazia o trabalho do
+   * zero. Com o aceite pendente, `accepted` fecha na hora, `rework` encontra
+   * o pane morno e a rede de segurança fecha quem nunca é acusado.
+   *
+   * Só para worker de missão: handoff sem missão não tem ACK, então ali o
+   * `success` continua fechando já.
+   */
+  readonly awaitAckOnSuccess?: boolean;
 }
 
 /**
@@ -246,15 +264,22 @@ export function scheduleAutoCloseAfterHandoff(
   const paneId = paneIdOf(sessionId);
   const armedPaneId = armedAutoClosePaneId(sessionId, paneId);
   if (armedPaneId === null) return;
-  if (!shouldAutoCloseAfterHandoff({ armed: true, status })) {
+  // F-1634: `success` de worker de missão espera o aceite do Maestro pelo
+  // MESMO caminho diferido do não-success — só o prazo da rede é mais curto.
+  const awaitAck =
+    status === "success" && nonSuccess?.awaitAckOnSuccess === true;
+  if (awaitAck || !shouldAutoCloseAfterHandoff({ armed: true, status })) {
     // A rede de segurança só arma para entrega terminal não-success
-    // (partial|failed|blocked): `progress`/`stalled` são sintéticos e o worker
-    // ainda trabalha — não há entrega para o Maestro consumir, então armar
-    // aqui fecharia o pane parado antes de ele entregar.
-    if (status !== "partial" && status !== "failed" && status !== "blocked") return;
+    // (partial|failed|blocked) ou para o `success` que aguarda aceite:
+    // `progress`/`stalled` são sintéticos e o worker ainda trabalha — não há
+    // entrega para o Maestro consumir, então armar aqui fecharia o pane
+    // parado antes de ele entregar.
+    if (!awaitAck && status !== "partial" && status !== "failed" && status !== "blocked") return;
     if (nonSuccess) {
       clearPendingNonSuccess(sessionId);
-      const idleMs = nonSuccess.idleCloseMs ?? NON_SUCCESS_IDLE_CLOSE_MS;
+      const idleMs =
+        nonSuccess.idleCloseMs ??
+        (awaitAck ? SUCCESS_ACK_IDLE_CLOSE_MS : NON_SUCCESS_IDLE_CLOSE_MS);
       const handoffId = nonSuccess.handoffId;
       const markOf = (): number | null => {
         try {
