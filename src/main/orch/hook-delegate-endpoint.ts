@@ -142,7 +142,11 @@ export const MAESTRO_TURN_REMINDER =
   'os independentes em paralelo); seu pane coordena, integra e valida. ' +
   'Trabalho restante sem worker vivo: abra os workers agora. ' +
   'Entrega com código: veredito de modelo de ponta antes de integrar. ' +
-  'Handoff é alegação: confira o diff e rode o teste da correção antes de aceitar.';
+  // F-1633: "rode o teste" fixo manda a entrega de aparência para um teste que
+  // não existe; a prova dela é a captura do navegador. E sem o gesto de ACEITE
+  // o laço só tinha a saída que custa outra rodada do worker.
+  'Handoff é alegação: confira o diff e rode o teste da correção (entrega de ' +
+  'aparência: captura do navegador), depois aceite com nexus_handoff_ack accepted.';
 
 const maestroRemindedAt = new Map<string, number>();
 const leanRemindedAt = new Map<string, number>();

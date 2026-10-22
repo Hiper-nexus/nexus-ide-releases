@@ -88,6 +88,102 @@ describe('evaluateHandoffEvidence', () => {
     expect(signals.some((s) => s.includes('verificação'))).toBe(false);
   });
 
+  // F-1635: a captura do navegador que o PORTÃO VISUAL exige é evidência
+  // Main-owned — mais forte que um id declarado pelo worker. Sem contá-la, a
+  // mesma entrega era cobrada duas vezes: o portão visual pedia a captura e o
+  // Jev devolvia o handoff "sem evidência de verificação" porque não havia
+  // saída de teste. Numa landing page não existe teste que prove aparência.
+  it('has_verification baixo COM captura visual verificada de entrega de aparência → sem sinal', () => {
+    const signals = evaluateHandoffEvidence(
+      result({ has_verification: 0.1 }).answers,
+      { ...facts, hasVisualEvidence: true, declaredFiles: ['landing/estilo.css', 'landing/hero.webp'] },
+    );
+    expect(signals.some((s) => s.includes('verificação'))).toBe(false);
+  });
+
+  // F-1635 (revisão do Codex no PR 159): a captura prova APARÊNCIA. Numa
+  // tarefa mista — layout do checkout + lógica de envio — ela não prova a
+  // metade comportamental, e eu estava deixando o screenshot desculpar a
+  // ausência de QUALQUER verificação. Só vale quando tudo que mudou é
+  // asset de aparência.
+  it('a captura não dispensa verificação quando mudou código de comportamento', () => {
+    const signals = evaluateHandoffEvidence(
+      result({ has_verification: 0.1 }).answers,
+      { ...facts, hasVisualEvidence: true, declaredFiles: ['src/checkout/form.tsx', 'src/checkout/form.css'] },
+    );
+    expect(signals.some((s) => s.includes('evidência de verificação'))).toBe(true);
+  });
+
+  it('entrega só de aparência: a captura é a prova e não há devolução', () => {
+    const signals = evaluateHandoffEvidence(
+      result({ has_verification: 0.1 }).answers,
+      { ...facts, hasVisualEvidence: true, declaredFiles: ['site/estilo.css', 'site/logo.png'] },
+    );
+    expect(signals.some((s) => s.includes('evidência de verificação'))).toBe(false);
+  });
+
+  // F-1635 (revisão do Codex no PR 159): página de arquivo único carrega
+  // JavaScript embutido. Tratar `.html` como só-aparência deixaria a captura
+  // desculpar a lógica de envio escrita no mesmo arquivo.
+  it('html não é só-aparência: formato que executa continua devendo prova', () => {
+    const signals = evaluateHandoffEvidence(
+      result({ has_verification: 0.1 }).answers,
+      { ...facts, hasVisualEvidence: true, declaredFiles: ['site/checkout.html'] },
+    );
+    expect(signals.some((s) => s.includes('evidência de verificação'))).toBe(true);
+  });
+
+  // F-1635 (2ª rodada do Codex no PR 159): SVG aceita `<script>` e manipulador
+  // de evento, e aqui só se conhece o NOME do arquivo — o ícone inerte e o SVG
+  // que executa chegam iguais. Mesma regra do `.html`.
+  it('svg não é só-aparência: o nome do arquivo não prova que ele não executa', () => {
+    const signals = evaluateHandoffEvidence(
+      result({ has_verification: 0.1 }).answers,
+      { ...facts, hasVisualEvidence: true, declaredFiles: ['site/estilo.css', 'site/widget.svg'] },
+    );
+    expect(signals.some((s) => s.includes('evidência de verificação'))).toBe(true);
+  });
+
+  // F-1635 (medição de 22/10): o caso REAL do operador. Uma landing page é um
+  // `.html`, que executa, então a dispensa não vale e a devolução acontece. O
+  // defeito era o PEDIDO: "cole a saída de testes" é impossível numa página, e
+  // o worker voltava sem poder cumprir. Com captura, o pedido nomeia o que é
+  // obtível no navegador do Nexus.
+  it('com captura, o pedido é satisfazível: console do navegador, não saída de teste', () => {
+    const signals = evaluateHandoffEvidence(
+      result({ has_verification: 0.1 }).answers,
+      { ...facts, hasVisualEvidence: true, declaredFiles: ['site/index.html'] },
+    );
+    const pedido = signals.find((s) => s.includes('comportamento'));
+    expect(pedido).toBeDefined();
+    expect(pedido).toContain('console do navegador');
+    expect(pedido).not.toContain('saída de testes');
+  });
+
+  it('sem captura, o pedido continua sendo saída de teste', () => {
+    const signals = evaluateHandoffEvidence(
+      result({ has_verification: 0.1 }).answers,
+      { ...facts, declaredFiles: ['src/checkout/form.tsx'] },
+    );
+    expect(signals.some((s) => s.includes('saída de testes/typecheck/build'))).toBe(true);
+  });
+
+  it('sem arquivos declarados a captura não basta: não dá para provar que é só aparência', () => {
+    const signals = evaluateHandoffEvidence(
+      result({ has_verification: 0.1 }).answers,
+      { ...facts, hasVisualEvidence: true, declaredFiles: [] },
+    );
+    expect(signals.some((s) => s.includes('evidência de verificação'))).toBe(true);
+  });
+
+  it('a captura visual não dispensa as outras provas (resumo genérico ainda cai)', () => {
+    const signals = evaluateHandoffEvidence(
+      result({ is_specific: 0.2 }).answers,
+      { ...facts, hasVisualEvidence: true },
+    );
+    expect(signals.some((s) => s.includes('resumo genérico'))).toBe(true);
+  });
+
   it('admits_incomplete alto → sinal de pendência', () => {
     const signals = evaluateHandoffEvidence(
       result({ admits_incomplete: ADMITS_INCOMPLETE_MAX + 0.1 }).answers,

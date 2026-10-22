@@ -45,6 +45,8 @@ export interface HandoffReviewInput {
   artifactKinds: string[];
   evidenceIdsCount: number;
   hasObservedCommit: boolean;
+  /** F-1635: captura do navegador verificada pelo Main para esta entrega. */
+  hasVisualEvidence?: boolean;
   declaredStatus: string;
 }
 
@@ -84,6 +86,14 @@ export const HANDOFF_REVIEW_QUESTIONS: Record<string, JevQuestion> = {
       'typecheck/build output, command output or a commit reference; for a ' +
       'review or audit, concrete cited evidence such as file:line references ' +
       'or reproduced cases; for a planning, mapping or research task, the ' +
+      // F-1635 (revisão do Codex no PR 159): o texto desta rubrica NÃO muda
+      // aqui. A regra do repo é explícita — rubrica medida com o Jev real nas
+      // 105 entregas do HiperGO, reavaliar no MESMO conjunto se o texto mudar
+      // — e esse corpus não está no repositório, então qualquer reescrita
+      // sairia sem calibração e poderia virar devolução falsa ou aceite falso
+      // em produção. A entrega visual é resolvida por FATO determinístico
+      // (`facts.hasVisualEvidence`, abaixo), que não depende de probabilidade
+      // nenhuma: com a captura verificada pelo Main, o sinal nem é levantado.
       'concrete output it produced (document path, sections, file:line map)? ' +
       'Merely claiming the work is done, or promising to check later, is not ' +
       'evidence.',
@@ -209,6 +219,15 @@ export interface HandoffReviewFacts {
   declaredFiles: string[];
   evidenceIdsCount: number;
   hasObservedCommit: boolean;
+  /**
+   * F-1635: o portão visual já exigiu, e o Main já verificou, uma captura do
+   * navegador do Nexus feita por este worker nesta execução. É evidência
+   * Main-owned — mais forte que um id declarado pelo worker. Sem contá-la, a
+   * mesma entrega era cobrada duas vezes: o portão pedia a captura e o Jev
+   * devolvia "sem evidência de verificação" por não haver saída de teste.
+   * Numa entrega de aparência não existe teste que prove aparência.
+   */
+  hasVisualEvidence?: boolean;
 }
 
 function noulOf(answers: Record<string, JevAnswer>, id: string): number | null {
@@ -220,6 +239,28 @@ interface HandoffSignal {
   readonly text: string;
   /** O worker conserta anexando: vale uma devolução. */
   readonly bounce: boolean;
+}
+
+/**
+ * F-1635 (revisão do Codex no PR 159): a captura do navegador prova
+ * APARÊNCIA, não comportamento. Numa entrega mista — layout do checkout mais
+ * a lógica de envio — deixar o screenshot desculpar a ausência de QUALQUER
+ * verificação esconde a metade que ele não vê. A dispensa vale só quando tudo
+ * que o worker declarou é asset de aparência; sem arquivo declarado não dá
+ * para provar que é só aparência, e aí a prova de verificação continua devida.
+ */
+// F-1635 (revisão do Codex no PR 159): `.html` e `.svg` SAÍRAM daqui. Uma
+// página de arquivo único carrega JavaScript embutido — o checkout com layout
+// e lógica de envio no mesmo arquivo seria classificado como só-aparência, e a
+// captura passaria a desculpar a metade comportamental. SVG é o mesmo caso:
+// aceita `<script>` e manipulador de evento, e aqui só se conhece o NOME do
+// arquivo declarado, nunca o conteúdo — não há como separar o ícone inerte do
+// SVG que executa. Formato que executa não entra nesta lista.
+const APPEARANCE_ASSET =
+  /\.(?:css|scss|sass|less|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf)$/i;
+
+function appearanceOnlyDelivery(declaredFiles: readonly string[]): boolean {
+  return declaredFiles.length > 0 && declaredFiles.every((file) => APPEARANCE_ASSET.test(file));
 }
 
 function handoffSignals(
@@ -242,12 +283,25 @@ function handoffSignals(
   if (
     hasVerification !== null &&
     hasVerification < HAS_VERIFICATION_MIN &&
-    facts.evidenceIdsCount === 0
+    facts.evidenceIdsCount === 0 &&
+    !(facts.hasVisualEvidence === true && appearanceOnlyDelivery(facts.declaredFiles))
   ) {
+    // F-1635 (medição de 22/10): a entrega COM captura verificada que não é
+    // só-aparência — uma landing page de arquivo único é o caso — recebia um
+    // pedido IMPOSSÍVEL: numa página não existe saída de teste que prove
+    // aparência. O worker devolvia, queimava a rodada e voltava sem poder
+    // cumprir, que é o "volta e volta" que o operador vê. A exigência fica —
+    // `.html` executa e comportamento se prova —, mas o pedido passa a nomear
+    // o que ALI é obtível: o que ele rodou no navegador que o Nexus tem.
     signals.push({
       text:
-        'sem evidência de verificação: cole a saída de testes/typecheck/build ' +
-        'ou a referência do commit',
+        facts.hasVisualEvidence === true
+          ? 'sem evidência de verificação do comportamento: a captura prova a ' +
+            'aparência, não o que a página executa — diga que verificação você ' +
+            'rodou (o console do navegador sem erro, o comando que subiu o ' +
+            'preview) ou a referência do commit'
+          : 'sem evidência de verificação: cole a saída de testes/typecheck/build ' +
+            'ou a referência do commit',
       bounce: changedCode,
     });
   }
@@ -437,6 +491,9 @@ export async function reviewMissionHandoff(
     declaredFiles: params.declaredFiles,
     evidenceIdsCount: params.evidenceIdsCount,
     hasObservedCommit: params.hasObservedCommit,
+    ...(params.hasVisualEvidence !== undefined
+      ? { hasVisualEvidence: params.hasVisualEvidence }
+      : {}),
   };
   const signals = evaluateHandoffEvidence(result.answers, facts);
   const bounceSignals = handoffBounceSignals(result.answers, facts);

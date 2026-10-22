@@ -962,7 +962,94 @@ describe.runIf(ENABLED)('F-997 — missão inteira de ponta a ponta (Main real, 
       if (failures.length > 0) {
         throw new Error(`E2E do operador VERMELHO (${failures.length} falhas; evidências em ${path.join(opDir, 'evidence.json')}):\n- ${failures.join('\n- ')}`);
       }
+      // ---- 22/10: a comparação que o operador pediu — "um pane só" contra
+      // "missão", no MESMO motor, na mesma máquina, costas com costas. O
+      // trabalho é idêntico (escreve o arquivo, comando leve, comando pesado
+      // pela admissão real, commit); o que difere é a cerimônia. Aqui não há
+      // LLM em nenhum dos dois lados, então o que sobra na diferença é o custo
+      // do motor, que é exatamente o que se queria isolar.
+      const soloDir = path.join(root, 'e2e-solo');
+      const soloRepo = path.join(root, 'solo-project');
+      for (const dir of [path.join(soloDir, 'agents'), soloRepo]) fs.mkdirSync(dir, { recursive: true });
+      git(soloRepo, 'init', '-q', '-b', 'main');
+      git(soloRepo, 'config', 'user.name', 'Nexus Mission E2E');
+      git(soloRepo, 'config', 'user.email', 'mission-e2e@nexus.invalid');
+      git(soloRepo, 'config', 'commit.gpgsign', 'false');
+      fs.writeFileSync(path.join(soloRepo, 'README.md'), '# projeto do pane solo (E2E)\n');
+      fs.mkdirSync(path.join(soloRepo, 'bin'));
+      fs.copyFileSync(path.join(REPO, 'scripts/mission-e2e/fixture-vitest'), path.join(soloRepo, 'bin/vitest'));
+      fs.chmodSync(path.join(soloRepo, 'bin/vitest'), 0o755);
+      git(soloRepo, 'add', 'README.md', 'bin/vitest');
+      git(soloRepo, 'commit', '-qm', 'base do projeto do pane solo');
+
+      // O pane do operador vive no escopo de `opRepo`; um pane com `cwd` fora
+      // dele é recusado pelo motor, e com razão (a missão não escapa do
+      // checkout). A missão já está provada acima, então aqui a janela passa a
+      // apontar para o projeto do solo — é o que o operador faz ao trocar de
+      // projeto, e o solo nasce como a mão do operador naquele checkout.
+      const soloScope: ProjectExecutionScope = {
+        version: 1, installationId: 'installation-mission-e2e', projectId: 'project-solo-e2e',
+        checkoutId: 'checkout-solo-e2e', rootRealPath: soloRepo, identitySource: 'manifest',
+      };
+      bindResolvedRendererWorkspaceScope(renderer, soloScope);
+
+      const soloPaneId = 'pane-solo-e2e';
+      const soloPane: GridPane = { paneId: soloPaneId, sessionId: null, title: 'Pane solo', kind: 'cli-agent', adapterId: state.adapterId };
+      grid.push(soloPane);
+      syncGrid();
+      const soloOpened = await ipc(PTY_CHANNELS.spawn, {
+        kind: 'cli-agent', cols: 120, rows: 40, cwd: soloRepo, paneId: soloPaneId, adapterId: state.adapterId,
+        resume: false, resumeLatestOnly: false, restorePersistedAuthority: false,
+      }) as { ok: boolean; sessionId?: string; error?: string };
+      check(soloOpened.ok && soloOpened.sessionId, `[comparação] o pane solo não abriu: ${JSON.stringify(soloOpened)}`);
+      let soloElapsedMs: number | null = null;
+      if (soloOpened.ok && soloOpened.sessionId) {
+        const soloSession = soloOpened.sessionId;
+        sessions.push(soloSession);
+        opSessions.push(soloSession);
+        soloPane.sessionId = soloSession;
+        syncGrid();
+        // A mão do operador: `user`, sem missão — é o "pane só" do relato.
+        const soloHand = getContextBySession(soloSession);
+        check(soloHand?.role === 'user' && !soloHand.missionId,
+          `[comparação] o pane solo não nasceu como a mão do operador: ${JSON.stringify({ role: soloHand?.role, missionId: soloHand?.missionId })}`);
+        for (const by = Date.now() + 30_000; !(output.get(soloSession) ?? '').includes('digite a tarefa') && Date.now() < by;) await sleep(100);
+        const soloStarted = Date.now();
+        ipc(PTY_CHANNELS.write, { sessionId: soloSession, data: `[[E2E_DIR=${soloDir}]] [[E2E_ROLE=solo]] Escreva e2e/solo.txt, rode a prova e faça commit você mesmo.\r` });
+        const soloReceipt = path.join(soloDir, 'agents', 'solo.result.json');
+        for (const by = Date.now() + OPERATOR_DEADLINE_MS; Date.now() < by;) {
+          if (fs.existsSync(soloReceipt)) break;
+          await sleep(200);
+        }
+        soloElapsedMs = Date.now() - soloStarted;
+        const solo = readJson<WorkerResult>(soloReceipt);
+        check(solo?.heavy.code === 0 && solo.commit.code === 0,
+          `[comparação] o pane solo não terminou o trabalho (pesado ${solo?.heavy.code}, commit ${solo?.commit.code})`);
+        // O arranjo intercepta o console, então o número sai em arquivo. Por
+        // padrão fica na pasta temporária do teste; com
+        // NEXUS_MISSION_E2E_COMPARISON vai para um caminho estável, para quem
+        // está medindo poder ler sem garimpar log.
+        const comparisonPath = process.env.NEXUS_MISSION_E2E_COMPARISON
+          ? path.resolve(process.env.NEXUS_MISSION_E2E_COMPARISON)
+          : path.join(root, 'comparacao-pane-vs-missao.json');
+        fs.mkdirSync(path.dirname(comparisonPath), { recursive: true });
+        fs.writeFileSync(comparisonPath, JSON.stringify({
+          medidoEm: new Date().toISOString(),
+          trabalhoIdentico: 'escreve arquivo, comando leve, comando pesado pela admissão real, commit',
+          semLlmEmNenhumDosLados: true,
+          paneSo: { elapsedMs: soloElapsedMs, cerimonia: 'nenhuma' },
+          missao: { elapsedMs, cerimonia: 'missão da aba criada, pane promovido a orquestrador, helper em worktree isolada, handoff, revisão Jev, entrega colada no PTY, ACK' },
+          sobretaxaMs: soloElapsedMs === null ? null : elapsedMs - soloElapsedMs,
+        }, null, 2));
+      }
+
+      if (failures.length > 0) {
+        throw new Error(`E2E do operador VERMELHO (${failures.length} falhas; evidências em ${path.join(opDir, 'evidence.json')}):\n- ${failures.join('\n- ')}`);
+      }
       console.info(`[mission-e2e] operador VERDE em ${Math.round(elapsedMs / 1000)} s: missão da aba ${missionId}, helper ${spawnReceipt?.paneId}, entrega ${helperHandoff?.id} com ACK`);
+      if (soloElapsedMs !== null) {
+        console.info(`[mission-e2e] COMPARAÇÃO mesmo trabalho, mesmo motor, sem LLM: pane só ${(soloElapsedMs / 1000).toFixed(1)} s | missão ${(elapsedMs / 1000).toFixed(1)} s | sobretaxa da cerimônia ${((elapsedMs - soloElapsedMs) / 1000).toFixed(1)} s (${(elapsedMs / soloElapsedMs).toFixed(2)}×)`);
+      }
     } finally {
       for (const id of opSessions) await pty.orchTerminateSession(id, { origin: 'mission-e2e-teardown' }).catch(() => undefined);
       clearRendererWorkspaceScope(renderer);

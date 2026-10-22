@@ -7,7 +7,13 @@ import {
   armedAutoClosePaneId,
   closeAfterNonSuccessHandoffAck,
   disarmAutoCloseOnHandoff,
+  missionWriterAwaitsHandoffAck,
+  restoreHandoffWaitAfterFailedRework,
   NON_SUCCESS_IDLE_CLOSE_MS,
+  SUCCESS_ACK_DELIVERY_CEILING_MS,
+  SUCCESS_ACK_IDLE_CLOSE_MS,
+  SUCCESS_ACK_TOTAL_CEILING_MS,
+  CONSUMER_BUSY_POLL_MS,
   selectScopedPaneCloseTargets,
   scheduleAutoCloseAfterHandoff,
   shouldArmAutoCloseOnHandoff,
@@ -316,6 +322,46 @@ describe("braço de autoClose por pane (spawn com ACK pendente)", () => {
   });
 });
 
+// F-1634 (revisão do Codex no PR 159): quem pode receber rework é quem
+// ESCREVE. O rótulo `readOnly` é consultivo fora do Hardened (F-1157) e
+// `isolatedWriter: true` explícito vence esse rótulo (F-1318): o "leitor" que
+// pediu worktree é writer. Ler só o rótulo tirava o writer isolado da espera
+// pelo aceite, e o rework dele voltava a cair em resume/pane novo.
+describe("missionWriterAwaitsHandoffAck", () => {
+  const worker = { missionId: "m1", role: "worker" as const };
+
+  it("writer comum de missão espera o aceite", () => {
+    expect(missionWriterAwaitsHandoffAck(worker)).toBe(true);
+  });
+
+  it("writer isolado rotulado readOnly continua writer (F-1318)", () => {
+    expect(missionWriterAwaitsHandoffAck({ ...worker, readOnly: true, isolatedWriter: true })).toBe(true);
+  });
+
+  it("revisor somente leitura não espera: não existe rework de leitura", () => {
+    expect(missionWriterAwaitsHandoffAck({ ...worker, readOnly: true })).toBe(false);
+  });
+
+  it("lane confinada pelo Hardened nunca escreve, nem pedindo worktree (F-1157)", () => {
+    expect(missionWriterAwaitsHandoffAck({ ...worker, readOnlyEnforced: true, isolatedWriter: true })).toBe(false);
+  });
+
+  // F-1634 (revisão do Codex no PR 159, achado do spool): o fallback de disco
+  // do handoff MCP é ingerido NO BOOT, depois de queda do Main (F-795) —
+  // quando a sessão do worker normalmente já morreu e não há contexto de gate.
+  // Sem contexto o predicado devolve false sozinho, então o boot mantém o
+  // fechamento imediato de sempre e só o timeout com sessão VIVA espera.
+  it("sem contexto (ingestão de boot) não espera: não há conversa a preservar", () => {
+    expect(missionWriterAwaitsHandoffAck({})).toBe(false);
+    expect(missionWriterAwaitsHandoffAck(undefined as never)).toBe(false);
+  });
+
+  it("fora de missão e fora do papel de worker não espera (não há ACK)", () => {
+    expect(missionWriterAwaitsHandoffAck({ role: "worker" })).toBe(false);
+    expect(missionWriterAwaitsHandoffAck({ missionId: "m1", role: "orchestrator" })).toBe(false);
+  });
+});
+
 // F-1409: o operador fechava à mão os workers que entregaram partial e ficaram
 // parados. Não-success de worker armado fecha no ACK aceito do Maestro ou,
 // sem ACK, depois de NON_SUCCESS_IDLE_CLOSE_MS com o worker parado.
@@ -389,6 +435,277 @@ describe("F-1409: entrega não-success fecha no ACK ou na rede de segurança", (
     expect(closeAfterNonSuccessHandoffAck("sess-w", "hoff-1", "accepted")).toBe(false);
     await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS * 2);
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  // F-1634: a entrega `success` do worker de missão ainda passa pelo veredito
+  // do Maestro. Fechar o pane no submit apagava o contexto antes dele: um
+  // `rework` depois caía numa encarnação nova (resume indisponível => brief
+  // original) e o worker refazia o trabalho do zero — o "recusa isso, aí
+  // volta tudo de novo" que o operador vê. Com o aceite pendente, `accepted`
+  // fecha na hora e `rework` chega ao pane morno, que já sabe o que tentou.
+  it("success de worker de missão espera o aceite em vez de fechar no submit", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "hoff-ack", awaitAckOnSuccess: true,
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(close).not.toHaveBeenCalled();
+
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "hoff-ack", "accepted")).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
+  it("rework de um success pendente mantém o pane morno para a nota", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "hoff-ack", awaitAckOnSuccess: true,
+    });
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "hoff-ack", "rework")).toBe(false);
+    await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS * 2);
+    expect(close).not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId("sess-w")).toBe("pane-w");
+  });
+
+  it("Maestro que nunca acusa não deixa o worker aberto: a rede fecha no prazo do aceite", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "hoff-ack", awaitAckOnSuccess: true,
+    });
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_IDLE_CLOSE_MS - 1);
+    expect(close).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
+  // F-1634: o `success` esperava o aceite, mas o prazo só começa quando a
+  // entrega sai de `queued` (M3) — então uma entrega presa deixava o pane de
+  // ~1 GB vivo sem prazo nenhum. Antes da mudança o `success` fechava na hora,
+  // e o `success` é o caso COMUM: o teto é obrigatório aqui.
+  it("entrega presa em queued não deixa o worker aberto para sempre", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "hoff-stuck",
+      awaitAckOnSuccess: true,
+      isDelivered: () => false,
+    });
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_DELIVERY_CEILING_MS + SUCCESS_ACK_IDLE_CLOSE_MS + 1_000);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
+  // F-1636 (2ª revisão do Codex no PR 159): a janela era medida UMA vez, no
+  // fim. O Maestro que verifica durante quase toda ela e fica ocioso no último
+  // segundo recebia 1 segundo para devolver `rework` — o contrário do que a
+  // janela promete, e o worker morno fechava justamente quando ele ia olhar.
+  it("Maestro que fica ocioso no fim da janela recebe a janela INTEIRA", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    let busy = true;
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "hoff-ack",
+      awaitAckOnSuccess: true,
+      isDeliveryConsumerBusy: () => busy,
+    });
+    // Ocupado até 1 s antes do fim da janela.
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_IDLE_CLOSE_MS - 1_000);
+    expect(close).not.toHaveBeenCalled();
+    busy = false;
+    // A amostragem vê a transição e recomeça a janela inteira.
+    await vi.advanceTimersByTimeAsync(CONSUMER_BUSY_POLL_MS + 1_000);
+    expect(close, "fechou logo depois de o Maestro ficar ocioso").not.toHaveBeenCalled();
+    // Uma janela inteira a partir da transição, e só então fecha.
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_IDLE_CLOSE_MS - CONSUMER_BUSY_POLL_MS);
+    expect(close).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(CONSUMER_BUSY_POLL_MS + 1_000);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
+  // F-1636: reiniciar a janela a cada volta ocupada não pode ser sem fim — um
+  // Maestro ocupado uma hora seguraria um pane de ~1 GB uma hora (F-572), e
+  // worker de missão é excluído da limpeza do guardião.
+  it("Maestro ocupado para sempre não segura o worker: o teto total fecha", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "hoff-ack",
+      awaitAckOnSuccess: true,
+      isDeliveryConsumerBusy: () => true,
+    });
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_TOTAL_CEILING_MS - 1_000);
+    expect(close, "fechou antes do teto total").not.toHaveBeenCalled();
+    // Fecha no teto, com a folga de UMA amostragem — não no fim da janela
+    // seguinte, que chegaria até 3 min depois dele.
+    await vi.advanceTimersByTimeAsync(CONSUMER_BUSY_POLL_MS + 2_000);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
+  // F-1636 (3ª revisão do Codex no PR 159): o teto é para o CONSUMIDOR
+  // ocupado, não para o worker. Matar um writer no meio do trabalho é o dano
+  // que esta rede existe para evitar (F-1409), e ficou alcançável quando uma
+  // espera obsoleta era armada depois de um `rework` já entregue: o worker
+  // voltava a trabalhar e o teto o fechava 10 min depois.
+  it("worker trabalhando não é fechado pelo teto total", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "hoff-ack",
+      awaitAckOnSuccess: true,
+      isDeliveryConsumerBusy: () => true,
+      isBusy: () => true,
+    });
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_TOTAL_CEILING_MS * 3);
+    expect(close, "o teto fechou um worker que estava trabalhando").not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId("sess-w")).toBe("pane-w");
+  });
+
+  // O teto continua valendo quando o worker está PARADO: é o caso para que ele
+  // foi feito (Maestro ocupado sem fim segurando um pane de ~1 GB, F-572).
+  it("worker parado com Maestro ocupado sem fim: o teto fecha", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "hoff-ack",
+      awaitAckOnSuccess: true,
+      isDeliveryConsumerBusy: () => true,
+      isBusy: () => false,
+    });
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_TOTAL_CEILING_MS + CONSUMER_BUSY_POLL_MS + 2_000);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
+  // F-1634 (revisão do Codex no PR 159): um worker pode ter DUAS rodadas
+  // entregues e não consumidas — payload novo depois de uma entrega já
+  // entregue abre rodada nova (F-239). O ramo de `rework` limpava a espera da
+  // sessão SEM conferir o handoff, então um ACK da rodada ANTIGA cancelava a
+  // rede de segurança da rodada NOVA e o pane ficava armado sem prazo. O
+  // defeito é anterior a esta mudança, mas ela o leva ao caso comum: antes só
+  // partial/failed/blocked criavam espera, agora o `success` também.
+  it("rework de uma rodada antiga não cancela a rede de segurança da nova", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "rodada-1", awaitAckOnSuccess: true,
+    });
+    // Rodada nova do mesmo worker, antes de o Maestro consumir a primeira.
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "rodada-2", awaitAckOnSuccess: true,
+    });
+
+    // O Maestro devolve a rodada ANTIGA.
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "rodada-1", "rework")).toBe(false);
+
+    // A rede da rodada 2 sobrevive: o pane não fica armado para sempre.
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_IDLE_CLOSE_MS + 1_000);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
+  // F-1634 (2ª rodada do Codex no PR 159): a minha correção anterior guardou
+  // só o mapa de PENDENTES. Quando a rodada nova já passou de pendente para o
+  // close AGENDADO, um rework da rodada antiga ainda cancelava esse close e
+  // apenas rearmava o pane — sem pendente e sem timer, ele ficava aberto sem
+  // prazo nenhum. O `handoffId` agora viaja no agendado e é conferido.
+  it("rework de rodada antiga não cancela o close JÁ AGENDADO da nova", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "rodada-2", awaitAckOnSuccess: true,
+    });
+    // Janela de ociosidade expira e o close vai para o AGENDADO (delay 0).
+    // Avanço síncrono para parar exatamente nesse estado, sem rodar o timer 0.
+    vi.advanceTimersByTime(SUCCESS_ACK_IDLE_CLOSE_MS);
+
+    // Rework da rodada ANTIGA, que nem tem pendente.
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "rodada-1", "rework")).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
+  it("rework da rodada agendada ainda vence a corrida e preserva o pane (Grok #1)", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "rodada-1", awaitAckOnSuccess: true,
+    });
+    vi.advanceTimersByTime(SUCCESS_ACK_IDLE_CLOSE_MS);
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "rodada-1", "rework")).toBe(false);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(close).not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId("sess-w")).toBe("pane-w");
+  });
+
+  // F-1634 (4ª rodada do Codex no PR 159): o `rework` cancela a rede de
+  // segurança ANTES de a nota ser entregue. Se a entrega falha — sem nota,
+  // `injectPrompt` recusado, resume indisponível — o worker fica ARMADO e sem
+  // prazo nenhum, e worker de missão é excluído da limpeza do guardião: o pane
+  // de ~1 GB vazava até a missão encerrar. Antes isto só alcançava
+  // partial/failed/blocked; o `success` do writer levou ao caminho comum.
+  it("entrega de rework que falha devolve a rede de segurança", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "h-rw", awaitAckOnSuccess: true,
+    });
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "h-rw", "rework")).toBe(false);
+
+    // A nota não chegou ao writer: o chamador devolve a rede.
+    restoreHandoffWaitAfterFailedRework("sess-w", "h-rw", paneOf, close, {
+      handoffId: "h-rw", awaitAckOnSuccess: true,
+    });
+
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_IDLE_CLOSE_MS + 1_000);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
+  it("rework da rodada em espera continua cancelando a rede dela", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "rodada-1", awaitAckOnSuccess: true,
+    });
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "rodada-1", "rework")).toBe(false);
+    await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS * 2);
+    expect(close).not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId("sess-w")).toBe("pane-w");
+  });
+
+  // F-1634 (3ª rodada do Codex no PR 159): contradição entre duas mudanças
+  // minhas. A doutrina restaurada manda o Maestro RODAR o teste que prova a
+  // correção antes de aceitar — e a suíte deste repo leva 3,5 min, acima da
+  // janela de 3 min. A rede fechava o pane do worker enquanto o Maestro estava
+  // legitimamente verificando, e um rework depois perdia a conversa morna: o
+  // laço que esta mudança existe para evitar. A janela não corre enquanto quem
+  // vai consumir a entrega está ocupado.
+  it("a janela de aceite não corre enquanto o Maestro verifica", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    let maestroBusy = true;
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "h-verify",
+      awaitAckOnSuccess: true,
+      isDeliveryConsumerBusy: () => maestroBusy,
+    });
+
+    // Maestro rodando o teste por bem mais que a janela de 3 min.
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_IDLE_CLOSE_MS * 3);
+    expect(close).not.toHaveBeenCalled();
+
+    // Terminou de verificar e não acusou: a rede volta a correr.
+    maestroBusy = false;
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_IDLE_CLOSE_MS + 1_000);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
+  it("sem awaitAckOnSuccess (helper do operador, sem missão) success fecha já", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, { handoffId: "hoff-now" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
   });
 
   it.each(["progress", "stalled"])("%s nunca arma a rede de 15 min (só partial|failed|blocked)", async (status) => {

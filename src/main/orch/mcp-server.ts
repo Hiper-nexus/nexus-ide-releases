@@ -88,9 +88,15 @@ import { loadToolset } from "./toolset-loader";
 import {
   assertMissionSpawnAuthorityCurrent,
   findPane,
+  listPaneSnapshots,
   requestPaneClose,
 } from "./pane-registry";
-import { scheduleAutoCloseAfterHandoff } from "./pane-close-scopes";
+import type { ProjectExecutionScope } from "../../shared/project-identity-types";
+import {
+  isWorkerSessionBusy,
+  missionWriterAwaitsHandoffAck,
+  scheduleAutoCloseAfterHandoff,
+} from "./pane-close-scopes";
 import { workerActivityProbes } from "./worker-idle-probe";
 import {
   isPlaceholderSummary,
@@ -2122,6 +2128,21 @@ export async function startMcpServer(): Promise<void> {
   installWorktreeSalvageNotifier();
   // F-795: spool de handoffs que o Main não recebeu — ingestão no boot, na
   // volta do loop (watch) e no fim de cada sessão; nunca no caminho quente.
+  /** F-1634: Maestro ocupado, neutro de transporte (PTY e ACP). */
+  const spoolConsumerBusy = (
+    handoff: { readonly missionId?: string | null },
+    scope: ProjectExecutionScope,
+  ): boolean => {
+    const missionId = handoff.missionId ?? undefined;
+    if (!missionId) return false;
+    const orchestrator = getProjectDomainStores(scope).missions.get(missionId)
+      ?.orchestratorSessionId;
+    if (!orchestrator) return false;
+    const snapshot = listPaneSnapshots().find(
+      (pane) => pane.sessionId === orchestrator,
+    );
+    return isWorkerSessionBusy(snapshot?.state ?? null);
+  };
   try {
     startHandoffSpool({
       root: handoffSpoolRoot(app.getPath("userData")),
@@ -2140,6 +2161,19 @@ export async function startMcpServer(): Promise<void> {
               ...workerActivityProbes,
               isDelivered: (id) =>
                 getProjectDomainStores(scope).handoffs.get(id)?.deliveryState !== "queued",
+              // F-1634: o spool é o fallback do MESMO submit MCP, então o
+              // `success` do writer de missão também espera o veredito aqui —
+              // senão a garantia de pane morno sumia justamente na falha de
+              // transporte. Na ingestão de BOOT (F-795, depois de queda do
+              // Main) a sessão já morreu e não há contexto: o predicado
+              // devolve false e aquele caminho segue fechando na hora.
+              awaitAckOnSuccess: missionWriterAwaitsHandoffAck(
+                handoff.sessionId ? getContextBySession(handoff.sessionId) : null,
+              ),
+              // F-1634: a espera do spool precisa da MESMA sonda do caminho
+              // direto, senão a janela de três minutos fecha o writer enquanto
+              // o Maestro ainda roda o teste que a doutrina manda rodar.
+              isDeliveryConsumerBusy: () => spoolConsumerBusy(handoff, scope),
             },
           ),
       },

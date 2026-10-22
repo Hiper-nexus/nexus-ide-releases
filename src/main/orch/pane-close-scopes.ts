@@ -167,6 +167,42 @@ function closeArmedPaneSoon(
  * entrega e o scrollback relevante vivem no ledger). Worker ocupado adia.
  */
 export const NON_SUCCESS_IDLE_CLOSE_MS = 15 * 60_000;
+/**
+ * F-1634: prazo do aceite de uma entrega `success`. Curto de propósito — o
+ * ACK do Maestro chega em um turno dele, e um pane de agente custa ~1 GB
+ * (F-572): esperar os 15 min da rede não-success encheria a máquina.
+ */
+export const SUCCESS_ACK_IDLE_CLOSE_MS = 3 * 60_000;
+/**
+ * F-1634: teto da espera pela ENTREGA do `success` que aguarda aceite.
+ *
+ * O prazo do aceite só começa quando a entrega sai de `queued` (M3). Numa
+ * entrega presa — Maestro morto, outbox parado — isso deixaria o pane vivo
+ * sem prazo nenhum, e `success` é o caso comum (antes fechava na hora).
+ * Estourado o teto, a janela de ociosidade corre mesmo sem entrega
+ * confirmada: sem Maestro para acusar, não há contexto a preservar.
+ */
+export const SUCCESS_ACK_DELIVERY_CEILING_MS = 10 * 60_000;
+
+/**
+ * F-1636 (2ª revisão do Codex no PR 159): a janela de aceite é AMOSTRADA, não
+ * medida uma vez no fim. Com uma sonda só, o Maestro que verifica durante
+ * 2m59s de uma janela de 3 min e fica ocioso em 2m59 tinha **1 segundo** para
+ * devolver `rework` — o contrário do que a janela promete. A cada volta desta
+ * a transição ocupado → ocioso recomeça a janela inteira, que é o instante em
+ * que ele de fato pode olhar a entrega.
+ */
+export const CONSUMER_BUSY_POLL_MS = 5_000;
+/**
+ * F-1636: teto TOTAL da espera armada por aceite, contado do armar.
+ *
+ * Reiniciar a janela a cada volta ocupada não pode ser sem fim: um Maestro
+ * ocupado uma hora seguraria um pane de ~1 GB por uma hora (F-572), e worker
+ * de missão é excluído da limpeza do guardião. Estourado o teto, o pane fecha:
+ * a entrega é durável no ledger e o `rework` ainda alcança o writer por
+ * `resume` ou por brief novo na mesma worktree (F-1409).
+ */
+export const SUCCESS_ACK_TOTAL_CEILING_MS = 10 * 60_000;
 
 /**
  * F-1409/M3: enquanto a entrega está `queued` (Maestro em turno longo), o
@@ -192,7 +228,17 @@ const pendingNonSuccessBySession = new Map<string, PendingNonSuccessClose>();
  */
 const scheduledNonSuccessCloseBySession = new Map<
   string,
-  { readonly paneId: string; readonly timer: ReturnType<typeof setTimeout> }
+  {
+    readonly paneId: string;
+    /**
+     * F-1634 (2ª rodada do Codex no PR 159): de QUAL handoff é este close.
+     * Sem o id, um rework de rodada antiga cancelava o close já agendado da
+     * rodada nova e só rearmava o pane — sem pendente e sem timer, ele ficava
+     * aberto sem prazo nenhum.
+     */
+    readonly handoffId: string;
+    readonly timer: ReturnType<typeof setTimeout>;
+  }
 >();
 
 function clearPendingNonSuccess(sessionId: string): void {
@@ -207,7 +253,11 @@ function closePendingNonSuccess(sessionId: string, pending: PendingNonSuccessClo
   if (armedAutoClosePaneId(sessionId, pending.paneId) !== pending.paneId) return;
   disarmAutoCloseOnHandoff(sessionId, pending.paneId);
   const timer = closeArmedPaneSoon(sessionId, pending.paneId, pending.paneIdOf, pending.close);
-  scheduledNonSuccessCloseBySession.set(sessionId, { paneId: pending.paneId, timer });
+  scheduledNonSuccessCloseBySession.set(sessionId, {
+    paneId: pending.paneId,
+    handoffId: pending.handoffId,
+    timer,
+  });
 }
 
 /** Estados em que o worker ainda trabalha — a rede de segurança espera. */
@@ -227,7 +277,30 @@ export interface NonSuccessCloseOptions {
   readonly activityMark?: (sessionId: string) => number | null;
   /** A entrega já chegou ao Maestro (deliveryState ≠ queued)? Ausente = desde o submit. */
   readonly isDelivered?: (handoffId: string) => boolean;
+  /**
+   * F-1634: quem vai CONSUMIR a entrega está ocupado agora?
+   *
+   * A doutrina manda o Maestro rodar ele mesmo o teste que prova a correção
+   * antes de aceitar (regra do operador de 02/10), e uma suíte real passa dos
+   * três minutos da janela de aceite. Sem isto, a rede fechava o pane do
+   * worker enquanto o Maestro estava legitimamente verificando, e um `rework`
+   * depois perdia a conversa morna — o laço que a espera existe para evitar.
+   * A janela só corre quando worker E consumidor estão parados.
+   */
+  readonly isDeliveryConsumerBusy?: () => boolean;
   readonly idleCloseMs?: number;
+  /**
+   * F-1634: a entrega `success` deste worker ainda passa pelo veredito do
+   * Maestro (`nexus_handoff_ack`). Fechar o pane no submit apagava o contexto
+   * antes do veredito: um `rework` depois caía numa encarnação nova — resume
+   * indisponível volta ao brief original — e o worker refazia o trabalho do
+   * zero. Com o aceite pendente, `accepted` fecha na hora, `rework` encontra
+   * o pane morno e a rede de segurança fecha quem nunca é acusado.
+   *
+   * Só para worker de missão: handoff sem missão não tem ACK, então ali o
+   * `success` continua fechando já.
+   */
+  readonly awaitAckOnSuccess?: boolean;
 }
 
 /**
@@ -235,6 +308,52 @@ export interface NonSuccessCloseOptions {
  * success fecha já. Com `nonSuccess` (worker de missão), partial/failed/blocked
  * ficam abertos até o ACK do Maestro ou a rede de segurança (F-1409).
  */
+/**
+ * F-1634: esta entrega `success` fica aberta esperando o veredito do Maestro?
+ *
+ * Quem pode receber rework é quem ESCREVE, e o rótulo não basta para saber
+ * isso. `readOnly` é consultivo fora do Hardened (F-1157), e `isolatedWriter`
+ * explícito VENCE esse rótulo (F-1318): o "leitor" que pediu worktree é writer
+ * e nasce `isolated_worktree`. Lendo só o rótulo, o writer isolado ficava fora
+ * da espera e o rework dele voltava a cair em resume/pane novo — justamente o
+ * que esta mudança existe para evitar (revisão do Codex no PR 159).
+ *
+ * Fica fora: a lane que o Hardened confina (nunca escreve por caminho
+ * nenhum), o revisor somente leitura (entrega consumida pelo motor da
+ * conclusão, e não existe rework de leitura) e qualquer entrega sem missão,
+ * que não tem ACK.
+ */
+export function missionWriterAwaitsHandoffAck(input: {
+  readonly missionId?: string;
+  readonly role?: string;
+  readonly readOnly?: boolean;
+  readonly readOnlyEnforced?: boolean;
+  readonly isolatedWriter?: boolean;
+} | null | undefined): boolean {
+  // F-1634: o fallback de disco do handoff MCP é ingerido NO BOOT, depois de
+  // queda do Main (F-795), quando a sessão do worker já morreu e não há
+  // contexto de gate. Sem contexto não há conversa morna a preservar: devolve
+  // false e aquele caminho mantém o fechamento imediato de sempre.
+  if (!input) return false;
+  if (input.missionId === undefined || input.role !== "worker") return false;
+  if (input.readOnlyEnforced === true) return false;
+  if (input.isolatedWriter === true) return true;
+  // F-1634 (revisão do Codex no PR 159, duas rodadas): tentei derivar "writer
+  // isolado" do sinal físico — raiz de execução diferente da de coordenação —
+  // porque o flag `isolatedWriter` não chega ao contexto do worker de missão
+  // (`mcp-server.ts` só o copia para filho do operador). Estava ERRADO: numa
+  // missão hospedada em worktree de ABA (F-162/F-1006) TODO worker tem raiz
+  // diferente, inclusive o revisor somente leitura — que então entrava na
+  // espera pelo aceite, o oposto do que esta função declara excluir.
+  //
+  // Sem um sinal que separe "worktree da aba" de "worktree deste writer", o
+  // rótulo é o que há. Consequência assumida: worker de missão rotulado
+  // readOnly que seja writer isolado não ganha o pane morno — fecha como antes
+  // deste PR. É otimização perdida, não comportamento errado. Para corrigir de
+  // verdade, propagar `isolatedWriter` no token do worker de missão.
+  return input.readOnly !== true;
+}
+
 export function scheduleAutoCloseAfterHandoff(
   sessionId: string | undefined,
   status: string,
@@ -246,15 +365,22 @@ export function scheduleAutoCloseAfterHandoff(
   const paneId = paneIdOf(sessionId);
   const armedPaneId = armedAutoClosePaneId(sessionId, paneId);
   if (armedPaneId === null) return;
-  if (!shouldAutoCloseAfterHandoff({ armed: true, status })) {
+  // F-1634: `success` de worker de missão espera o aceite do Maestro pelo
+  // MESMO caminho diferido do não-success — só o prazo da rede é mais curto.
+  const awaitAck =
+    status === "success" && nonSuccess?.awaitAckOnSuccess === true;
+  if (awaitAck || !shouldAutoCloseAfterHandoff({ armed: true, status })) {
     // A rede de segurança só arma para entrega terminal não-success
-    // (partial|failed|blocked): `progress`/`stalled` são sintéticos e o worker
-    // ainda trabalha — não há entrega para o Maestro consumir, então armar
-    // aqui fecharia o pane parado antes de ele entregar.
-    if (status !== "partial" && status !== "failed" && status !== "blocked") return;
+    // (partial|failed|blocked) ou para o `success` que aguarda aceite:
+    // `progress`/`stalled` são sintéticos e o worker ainda trabalha — não há
+    // entrega para o Maestro consumir, então armar aqui fecharia o pane
+    // parado antes de ele entregar.
+    if (!awaitAck && status !== "partial" && status !== "failed" && status !== "blocked") return;
     if (nonSuccess) {
       clearPendingNonSuccess(sessionId);
-      const idleMs = nonSuccess.idleCloseMs ?? NON_SUCCESS_IDLE_CLOSE_MS;
+      const idleMs =
+        nonSuccess.idleCloseMs ??
+        (awaitAck ? SUCCESS_ACK_IDLE_CLOSE_MS : NON_SUCCESS_IDLE_CLOSE_MS);
       const handoffId = nonSuccess.handoffId;
       const markOf = (): number | null => {
         try {
@@ -264,21 +390,86 @@ export function scheduleAutoCloseAfterHandoff(
         }
       };
       let windowMark: number | null = null;
+      let windowEndsAt = 0;
+      let sawConsumerBusy = false;
+      const ackCeilingAt = awaitAck ? Date.now() + SUCCESS_ACK_TOTAL_CEILING_MS : null;
+      const pastAckCeiling = (): boolean => ackCeilingAt !== null && Date.now() >= ackCeilingAt;
+      /**
+       * `null` = não há sonda (caminho não-success de sempre). Sonda que lança
+       * conta como OCUPADO: indisponibilidade não autoriza fechar o pane no
+       * meio de uma verificação.
+       */
+      const consumerBusyNow = (): boolean | null => {
+        if (!nonSuccess.isDeliveryConsumerBusy) return null;
+        try {
+          return nonSuccess.isDeliveryConsumerBusy() === true;
+        } catch {
+          return true;
+        }
+      };
       const startIdleWindow = (): void => {
         windowMark = markOf();
-        pending.timer = setTimeout(onIdle, idleMs);
+        sawConsumerBusy = false;
+        windowEndsAt = Date.now() + idleMs;
+        scheduleTick();
+      };
+      const scheduleTick = (): void => {
+        const remaining = Math.max(windowEndsAt - Date.now(), 0);
+        // Sem sonda, um timer só — o caminho não-success não muda de forma.
+        if (!nonSuccess.isDeliveryConsumerBusy) {
+          pending.timer = setTimeout(onIdle, remaining);
+          return;
+        }
+        pending.timer = setTimeout(onTick, Math.min(CONSUMER_BUSY_POLL_MS, remaining));
+      };
+      const onTick = (): void => {
+        if (pendingNonSuccessBySession.get(sessionId) !== pending) return;
+        // Teto conferido AQUI, não só na borda da janela: medido na borda, um
+        // Maestro sempre ocupado só fechava no fim da janela seguinte — até
+        // 3 min depois do teto. Teto é teto, com a folga de uma amostragem.
+        if (pastAckCeiling()) {
+          onIdle();
+          return;
+        }
+        const busy = consumerBusyNow();
+        if (busy === true) sawConsumerBusy = true;
+        else if (busy === false && sawConsumerBusy && !pastAckCeiling()) {
+          // F-1636: ele acabou de ficar ocioso — a janela inteira começa AGORA.
+          startIdleWindow();
+          return;
+        }
+        if (Date.now() >= windowEndsAt) {
+          onIdle();
+          return;
+        }
+        scheduleTick();
       };
       const onIdle = (): void => {
         if (pendingNonSuccessBySession.get(sessionId) !== pending) return;
         const mark = markOf();
         const producedOutput = mark !== null && windowMark !== null && mark !== windowMark;
-        if (producedOutput || nonSuccess.isBusy?.(sessionId)) {
+        // F-1636 (3ª revisão do Codex no PR 159): o teto NÃO alcança o worker
+        // que ainda trabalha. Ele existe para limitar a espera por um
+        // CONSUMIDOR ocupado; matar um writer no meio do trabalho é justamente
+        // o dano que esta rede existe para evitar (F-1409), e ficou alcançável
+        // quando uma espera obsoleta era armada depois de um `rework` já
+        // entregue. Worker produzindo saída recomeça a janela, com teto ou sem.
+        if (producedOutput || nonSuccess.isBusy?.(sessionId) === true) {
+          startIdleWindow();
+          return;
+        }
+        if (consumerBusyNow() === true && !pastAckCeiling()) {
           startIdleWindow();
           return;
         }
         closePendingNonSuccess(sessionId, pending);
       };
       // O prazo só começa quando a entrega sai de `queued` (M3).
+      // F-1634: com aceite pendente a espera tem teto — ver
+      // SUCCESS_ACK_DELIVERY_CEILING_MS.
+      const deliveryDeadline = awaitAck
+        ? Date.now() + SUCCESS_ACK_DELIVERY_CEILING_MS
+        : null;
       const awaitDelivery = (): void => {
         if (pendingNonSuccessBySession.get(sessionId) !== pending) return;
         let delivered = true;
@@ -287,6 +478,10 @@ export function scheduleAutoCloseAfterHandoff(
         } catch {
           // Ledger indisponível agora: não fecha; tenta de novo na próxima volta.
           delivered = false;
+        }
+        if (!delivered && deliveryDeadline !== null && Date.now() >= deliveryDeadline) {
+          startIdleWindow();
+          return;
         }
         if (!delivered) {
           pending.timer = setTimeout(awaitDelivery, Math.min(NON_SUCCESS_DELIVERY_POLL_MS, idleMs));
@@ -308,6 +503,34 @@ export function scheduleAutoCloseAfterHandoff(
 }
 
 /**
+ * F-1634: a entrega do `[NEXUS_REWORK]` falhou — devolve a rede de segurança.
+ *
+ * O ACK de `rework` cancela a rede ANTES de a nota ser entregue, porque o
+ * worker normalmente volta a trabalhar. Quando a entrega falha (sem nota,
+ * `injectPrompt` recusado, conversa não retomável), o worker fica ARMADO e sem
+ * prazo nenhum — e worker de missão é excluído da limpeza do guardião, então o
+ * pane de ~1 GB ficava aberto até a missão encerrar. Antes isto só alcançava
+ * partial/failed/blocked; o `success` do writer trouxe o caminho para o uso
+ * comum, então o conserto é obrigatório aqui.
+ *
+ * Idempotente: reagenda a mesma espera, e um pane que já fechou não reabre.
+ */
+export function restoreHandoffWaitAfterFailedRework(
+  sessionId: string | undefined,
+  handoffId: string,
+  paneIdOf: PaneIdOf,
+  close: ClosePane,
+  nonSuccess: NonSuccessCloseOptions,
+): void {
+  if (!sessionId || pendingNonSuccessBySession.has(sessionId)) return;
+  scheduleAutoCloseAfterHandoff(sessionId, 'success', paneIdOf, close, {
+    ...nonSuccess,
+    handoffId,
+    awaitAckOnSuccess: true,
+  });
+}
+
+/**
  * F-1409: o Maestro consumiu (ACK) a entrega não-success. `accepted` fecha o
  * worker armado; `rework` mantém o pane vivo para receber a nota (o braço
  * segue armado para a próxima entrega).
@@ -321,9 +544,21 @@ export function closeAfterNonSuccessHandoffAck(
   if (verdict === "rework") {
     // O writer volta a trabalhar: cancela a rede de segurança e, se o timer
     // já desarmou e agendou o close (setTimeout 0), cancela o close e rearma.
-    clearPendingNonSuccess(sessionId);
+    //
+    // F-1634 (revisão do Codex no PR 159): a rede cancelada é a DESTE handoff.
+    // Um worker pode ter duas rodadas entregues e não consumidas (payload novo
+    // depois de uma entrega já entregue abre rodada nova, F-239); limpar a
+    // espera da sessão sem conferir o handoff fazia um ACK da rodada antiga
+    // apagar a rede da rodada nova, e o pane ficava armado sem prazo nenhum.
+    // A espera que sobra defere o fechamento enquanto o worker produz saída
+    // (activityMark/isBusy), então a nota do rework não é interrompida.
+    if (pendingNonSuccessBySession.get(sessionId)?.handoffId === handoffId) {
+      clearPendingNonSuccess(sessionId);
+    }
+    // Só o close DESTE handoff é cancelado: o da rodada que ninguém devolveu
+    // continua valendo, senão o pane fica sem pendente e sem timer.
     const scheduled = scheduledNonSuccessCloseBySession.get(sessionId);
-    if (scheduled) {
+    if (scheduled && scheduled.handoffId === handoffId) {
       clearTimeout(scheduled.timer);
       scheduledNonSuccessCloseBySession.delete(sessionId);
       armAutoCloseOnHandoff(sessionId, scheduled.paneId);

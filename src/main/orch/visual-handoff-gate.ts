@@ -142,6 +142,19 @@ export function recordVisualHandoffEvidence(ctx: VisualHandoffContext, artifactI
   return result.changes === 1;
 }
 
+/**
+ * F-1635: a entrega tem uma captura do navegador que o MAIN verificou?
+ *
+ * Só o terceiro formato do veredito é evidência. Uma tarefa NÃO visual volta
+ * `{ required: false, verified: true }` — `verified` ali quer dizer "nada a
+ * exigir", não "captura observada". Ler só `verified` daria evidência visual a
+ * todo handoff de código e desligaria o sinal de verificação do Jev.
+ */
+export function visualEvidenceVerified(verdict: VisualHandoffVerdict | undefined): boolean {
+  return verdict?.required === true && verdict.verified === true &&
+    typeof verdict.artifactId === 'string' && verdict.artifactId.length > 0;
+}
+
 export async function checkVisualHandoff(ctx: VisualHandoffContext, options: {
   manager?: ProjectRuntimeManager | null;
   task?: VisualPlannedTask | null;

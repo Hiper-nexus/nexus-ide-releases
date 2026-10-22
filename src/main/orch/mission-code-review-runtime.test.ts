@@ -217,3 +217,41 @@ describe('Main candidate reviewer ownership', () => {
     }
   });
 });
+
+// F-1631: `isReviewing` é a prova que autoriza preservar as verificações
+// mecânicas de um candidato (a suíte inteira, com E2E, levava minutos e era
+// refeita sobre código idêntico quando o juiz passava dos 5 min do TTL).
+// Precisa ser estreita: só juiz VIVO, no candidato EXATO, antes do veredito.
+describe('isReviewing', () => {
+  it('cobre o juiz vivo E o veredito pronto ainda não consumido', async () => {
+    const f = fixture();
+    expect(f.runtime.isReviewing(f.input.scope, f.input.mission.id)).toBe(false);
+    await f.runtime.ensure(f.input);
+    expect(f.runtime.isReviewing(f.input.scope, f.input.mission.id)).toBe(true);
+    expect(f.runtime.isReviewing(f.input.scope, f.input.mission.id, f.input.candidate.fingerprint)).toBe(true);
+
+    expect((await f.submit()).accepted).toBe(true);
+    // Revisão do Codex no PR 159: a passada que CONSOME o veredito roda
+    // pruneStates + runMechanical antes de ensureIndependentReview. Se o
+    // veredito pronto não protegesse o cache, a suíte rodaria mais uma vez
+    // sobre o candidato inalterado — o defeito que este método evita.
+    expect(f.runtime.isReviewing(f.input.scope, f.input.mission.id)).toBe(true);
+
+    // Deixa de proteger quando a missão sai de running.
+    f.revoke();
+    expect(f.runtime.isReviewing(f.input.scope, f.input.mission.id)).toBe(false);
+  });
+
+  it('não vale para outro candidato nem para juiz que saiu', async () => {
+    const f = fixture();
+    await f.runtime.ensure(f.input);
+    expect(f.runtime.isReviewing(f.input.scope, f.input.mission.id, 'outro-fingerprint')).toBe(false);
+    f.live.clear();
+    expect(f.runtime.isReviewing(f.input.scope, f.input.mission.id)).toBe(false);
+  });
+
+  it('missão sem revisão aberta nunca autoriza preservar verificação', () => {
+    const f = fixture();
+    expect(f.runtime.isReviewing(f.input.scope, 'outra-missao')).toBe(false);
+  });
+});

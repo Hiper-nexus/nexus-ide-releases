@@ -209,6 +209,28 @@ describe('evidência visual no handoff', () => {
     expect(prompt).toContain('Nunca invente screenshots');
   });
 
+  // F-1636: "ambiente necessário falhou" virava `partial` sem o worker tentar
+  // servir a entrega — e `partial` custa uma devolução inteira. O pane tem
+  // terminal: subir o preview é trabalho dele, não ferramenta indisponível.
+  it('manda subir o preview antes de declarar o ambiente indisponível', () => {
+    const prompt = withHandoffContract('Implemente o frontend.', adapter);
+    expect(prompt).toContain('suba o preview');
+    expect(prompt.indexOf('suba o preview')).toBeLessThan(
+      prompt.indexOf('registre a validação como não verificada'),
+    );
+  });
+
+  // F-1636: achado em campo construindo uma landing page nesta sessão. A
+  // captura tirada logo depois de rolar pegou a página EM BRANCO, porque a
+  // animação de entrada levava 900 ms. Um worker seguindo o contrato
+  // produziria essa captura enganosa e reportaria defeito que não existe — ou
+  // seria devolvido por "evidência ruim".
+  it('manda esperar o movimento assentar antes de capturar', () => {
+    const prompt = withHandoffContract('Implemente o frontend.', adapter);
+    expect(prompt).toMatch(/anima(ção|ções)/i);
+    expect(prompt.indexOf('assentar')).toBeGreaterThan(-1);
+  });
+
   it('não acrescenta orientação visual a trabalho de backend', () => {
     const prompt = withHandoffContract('Implemente cache LRU no serviço de sessões.', adapter);
     expect(prompt).not.toContain('Validação visual de interface ou jogo');

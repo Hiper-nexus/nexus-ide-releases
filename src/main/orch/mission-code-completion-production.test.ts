@@ -8,6 +8,7 @@ import { testProjectScope } from './__tests__/scope-fixture';
 import { assertMcpInvocationCurrent, type McpToolInvocation } from './mcp-protocol';
 import { armedAutoClosePaneId, disarmAutoCloseOnHandoff, scheduleAutoCloseAfterHandoff } from './pane-close-scopes';
 import { admitAgentSpawnSync, primeSystemMemoryCacheForTest } from './pane-admission';
+import { CHECK_TTL_MS, CHECK_TTL_UNDER_REVIEW_MS, mechanicalChecksStillValid } from './mission-code-completion-production';
 
 const state = vi.hoisted(() => ({
   mission: undefined as Mission | undefined, scope: undefined as ProjectExecutionScope | undefined,
@@ -172,12 +173,48 @@ describe('Main code completion production ports', () => {
     expect(state.spawn).toHaveBeenCalledTimes(2); expect(state.live.size).toBe(1);
   });
 
-  it('cache hits never renew the original five-minute expiry', async () => {
+  // F-1631: a invariante preservada continua sendo "acerto de cache não RENOVA
+  // o prazo" — `cached.at` nunca é reescrito. O que mudou é a JANELA: enquanto
+  // o juiz independente lê o MESMO candidato, o resultado mecânico é
+  // preservado. Em campo o juiz frontier passa dos 5 min, e a tentativa
+  // seguinte reexecutava typecheck + audit + suíte (com E2E) sobre código
+  // idêntico byte a byte — repetidas vezes na mesma missão.
+  it('expira as verificações em cinco minutos quando nenhum juiz lê o candidato', async () => {
     vi.useFakeTimers();
     await run(); expect(state.checks).toHaveBeenCalledOnce();
+    state.live.clear();
     await vi.advanceTimersByTimeAsync(4 * 60_000); await run();
     expect(state.checks).toHaveBeenCalledOnce();
+    state.live.clear();
     await vi.advanceTimersByTimeAsync(61_000); await run();
+    expect(state.checks).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserva as verificações enquanto o juiz independente lê o mesmo candidato', async () => {
+    vi.useFakeTimers();
+    await run(); expect(state.checks).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(10 * 60_000); await run();
+    expect(state.checks).toHaveBeenCalledOnce();
+  });
+
+  // Revisão do Codex no PR 159: a passada que CONSOME o veredito roda
+  // pruneStates + runMechanical ANTES de ensureIndependentReview. Com o
+  // veredito pronto deixando de proteger o cache, a suíte rodava mais uma vez
+  // sobre o candidato inalterado — justamente no caso que o fix mira.
+  it('veredito pronto depois do TTL não faz a suíte rodar de novo', async () => {
+    vi.useFakeTimers();
+    await run(); expect(state.checks).toHaveBeenCalledOnce();
+    // O juiz frontier leva mais que o TTL comum e então registra o veredito.
+    await vi.advanceTimersByTimeAsync(8 * 60_000);
+    expect((await record()).accepted).toBe(true);
+    await run();
+    expect(state.checks).toHaveBeenCalledOnce();
+  });
+
+  it('tem teto: nem a revisão em voo preserva as verificações para sempre', async () => {
+    vi.useFakeTimers();
+    await run(); expect(state.checks).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(CHECK_TTL_UNDER_REVIEW_MS + 1_000); await run();
     expect(state.checks).toHaveBeenCalledTimes(2);
   });
 
@@ -367,5 +404,33 @@ describe('F-430 — review submission spend is ledger, not review authority', ()
       missionId: state.mission!.id, sessionId: 'maestro', providerId: state.route!.adapterId, role: 'orchestrator', readOnly: false } as never,
     { verdict: 'approve', summary: 'Own verdict', findings: [] });
     expect(result.accepted).toBe(false); expect(state.events).toHaveLength(0);
+  });
+});
+
+// F-1631: o cache das verificações mecânicas é chaveado pelo candidato EXATO
+// (fingerprint + headSha + base + cobertura + caminhos exigidos). Enquanto o
+// juiz independente lê esse mesmo candidato, refazer typecheck + audit +
+// suíte não pode produzir informação nova sobre o código — só gasta o relógio
+// da missão. Em campo o juiz frontier leva mais que os 5 min do TTL, então a
+// tentativa seguinte reexecutava a suíte inteira sobre código idêntico byte a
+// byte, repetidas vezes ("faz teste, volta, faz teste").
+describe('mechanicalChecksStillValid', () => {
+  it('mantém o resultado enquanto o juiz lê o mesmo candidato, depois do TTL comum', () => {
+    expect(mechanicalChecksStillValid({ ageMs: CHECK_TTL_MS + 1, reviewInFlight: false })).toBe(false);
+    expect(mechanicalChecksStillValid({ ageMs: CHECK_TTL_MS + 1, reviewInFlight: true })).toBe(true);
+  });
+
+  it('respeita o TTL comum quando ninguém está revisando', () => {
+    expect(mechanicalChecksStillValid({ ageMs: CHECK_TTL_MS - 1, reviewInFlight: false })).toBe(true);
+    expect(mechanicalChecksStillValid({ ageMs: CHECK_TTL_MS, reviewInFlight: false })).toBe(false);
+  });
+
+  it('tem teto: revisão em voo não preserva o resultado para sempre', () => {
+    expect(mechanicalChecksStillValid({ ageMs: CHECK_TTL_UNDER_REVIEW_MS - 1, reviewInFlight: true })).toBe(true);
+    expect(mechanicalChecksStillValid({ ageMs: CHECK_TTL_UNDER_REVIEW_MS, reviewInFlight: true })).toBe(false);
+  });
+
+  it('idade negativa (relógio para trás) nunca valida o cache', () => {
+    expect(mechanicalChecksStillValid({ ageMs: -1, reviewInFlight: true })).toBe(false);
   });
 });
