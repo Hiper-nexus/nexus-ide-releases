@@ -847,7 +847,7 @@ describe('F-645: a conta que é o login nativo tem um dono só da linhagem', () 
 
     expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('match');
     // Run nativo: sem env de escopo, a CLI renova o próprio store — e no
-    // perfil nativo de verdade, sem herdar config dir/token do Main (F-1637).
+    // perfil nativo de verdade, sem herdar config dir/token do Main (F-1642).
     expect(deps.probeClaudeCliUsage).toHaveBeenCalledWith({ nativeProfile: true });
     expect(deps.probeClaudeIdentity).toHaveBeenLastCalledWith(
       oauthBlob('a-native-renewed'), 'a@example.test',
@@ -930,7 +930,7 @@ describe('renovação morta veta failover no escuro', () => {
     expect(deps.keychainWrites).toEqual([]);
   });
 
-  it('Reserva só no cofre: o spawn renova pelo refresh token e prova a conta no token novo (F-1637)', async () => {
+  it('Reserva só no cofre: o spawn renova pelo refresh token e prova a conta no token novo (F-1642)', async () => {
     // Antes o spawn só tentava renovar com escopo gerenciado ou login nativo;
     // a conta só no cofre ia direto para "expirou — entre novamente".
     const a = addSecondary('Conta B', 'b@example.test', oauthBlob('expired'));
@@ -1100,7 +1100,7 @@ describe('renovação morta veta failover no escuro', () => {
       expect(deps.refreshBlob).not.toHaveBeenCalled();
     });
 
-    // F-1637: conta b "Em uso" e "conectado" no painel, pane recusado com
+    // F-1642: conta b "Em uso" e "conectado" no painel, pane recusado com
     // "A sessão de “conta b” expirou". O escopo tinha access token vencido
     // pelo relógio e refresh token vivo; o run da CLI não renovou nem recusou.
     // A cota (F-1416) chamou isso de leitura indisponível; o spawn chamava de
@@ -1118,7 +1118,7 @@ describe('renovação morta veta failover no escuro', () => {
       expect(listAccountInfos().find((i) => i.id === a.id)?.needsRelogin).toBe(false);
     });
 
-    // Revisão independente do F-1637: o relógio não prova de QUEM é o token.
+    // Revisão independente do F-1642: o relógio não prova de QUEM é o token.
     // Só a linhagem que o cofre provou para esta conta pode abrir sem prova.
     it('escopo com linhagem diferente da do cofre nunca abre como renovável', async () => {
       const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-vault', 1_000));

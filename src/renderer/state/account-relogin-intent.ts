@@ -17,7 +17,7 @@ interface AccountReloginIntentState {
 }
 
 /**
- * F-1637: o pane que não subiu pede o «Entrar novamente» de uma conta. Quem
+ * F-1642: o pane que não subiu pede o «Entrar novamente» de uma conta. Quem
  * abre o login continua sendo o `AccountsManager` — guardar a sessão atual,
  * baseline e `cliLoginProvedNewSession` moram lá, num caminho só.
  */

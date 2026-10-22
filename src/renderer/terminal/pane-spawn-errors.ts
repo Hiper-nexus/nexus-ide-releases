@@ -10,7 +10,7 @@ import { parseAccountReloginRequest, type AccountReloginRequest } from '../../sh
  */
 const paneSpawnErrors = new Map<string, string>();
 /**
- * F-1637: a conta que a recusa disse precisar de login. Anda junto do erro da
+ * F-1642: a conta que a recusa disse precisar de login. Anda junto do erro da
  * MESMA tentativa — gravar um erro sem conta apaga a conta da anterior.
  */
 const paneSpawnRelogins = new Map<string, AccountReloginRequest>();

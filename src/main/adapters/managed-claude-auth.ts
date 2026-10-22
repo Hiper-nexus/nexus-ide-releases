@@ -137,7 +137,7 @@ export function managedClaudeAuthHasCredential(
 }
 
 /**
- * F-1637: o store que a CLI do escopo usa foi lido de verdade? No macOS a CLI
+ * F-1642: o store que a CLI do escopo usa foi lido de verdade? No macOS a CLI
  * lê o item de Keychain do escopo e ignora o arquivo-espelho; com o item
  * presente e a leitura negada ou travada, a CLI também diz "not logged in", e
  * isso não prova nada sobre a sessão da conta. Mesma régua da cota.

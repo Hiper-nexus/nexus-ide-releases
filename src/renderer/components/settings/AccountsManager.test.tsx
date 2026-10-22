@@ -105,9 +105,9 @@ describe('AccountsManager', () => {
     vi.restoreAllMocks();
   });
 
-  // F-1637: o cartão "Não subiu" do pane pede o login de uma conta. Quem
+  // F-1642: o cartão "Não subiu" do pane pede o login de uma conta. Quem
   // atende é o mesmo «Entrar novamente» desta linha, com as mesmas guardas.
-  describe('pedido de login vindo do pane (F-1637)', () => {
+  describe('pedido de login vindo do pane (F-1642)', () => {
     const contaB = () => account({ id: 'acct-b', label: 'conta b', email: 'b@example.com', needsRelogin: true });
     const native = () => account({ id: 'acct-native', label: 'conta adm', active: false });
 

@@ -5,7 +5,7 @@ import {
   parseAccountReloginRequest,
 } from './account-relogin';
 
-describe('pedido de re-login do pane (F-1637)', () => {
+describe('pedido de re-login do pane (F-1642)', () => {
   it('aceita o rótulo inteiro que a conta permite (128) e recusa o que foge do contrato', () => {
     const ok = { adapterId: 'claude', accountId: 'acct-b', accountLabel: 'c'.repeat(128) };
     expect(parseAccountReloginRequest(ok)).toEqual(ok);

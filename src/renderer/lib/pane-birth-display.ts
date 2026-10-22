@@ -103,7 +103,7 @@ export interface PaneBirthInput {
  */
 const FAILURE_CATEGORIES: ReadonlyArray<readonly [RegExp, string]> = [
   [/sessão do grok expirou|grok login/i, 'Grok precisa de login'],
-  // F-1637: recusa do spawn Claude que se resolve entrando de novo na conta.
+  // F-1642: recusa do spawn Claude que se resolve entrando de novo na conta.
   [/sessão de “[^”]{1,128}” expirou|pertence a outra conta claude/i, 'A conta precisa entrar de novo'],
   [/não deu para confirmar a sessão de “/i, 'A sessão da conta não foi confirmada — tente de novo'],
   [/não instalado|not installed|cli_missing|binary unavailable/i, 'A CLI não está instalada'],

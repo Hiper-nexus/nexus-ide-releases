@@ -439,7 +439,7 @@ export function AccountsManager({
     if (renamingId) renameInputRef.current?.focus();
   }, [renamingId]);
 
-  // F-1637: o pane que não subiu pediu o login de uma conta desta CLI. Atende
+  // F-1642: o pane que não subiu pediu o login de uma conta desta CLI. Atende
   // pelo MESMO «Entrar novamente» da linha (guarda a sessão atual, baseline,
   // prova do login novo) — só a instância cheia do painel, uma vez por pedido.
   const pendingRelogin = useAccountReloginIntentStore((s) => s.pending);

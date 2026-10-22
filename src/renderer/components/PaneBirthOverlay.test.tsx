@@ -206,7 +206,7 @@ describe('PaneBirthOverlay', () => {
     act(() => clearPaneSpawnError(PANE.id));
   });
 
-  // F-1637: "A sessão de “conta b” expirou" deixava o operador sem caminho
+  // F-1642: "A sessão de “conta b” expirou" deixava o operador sem caminho
   // no próprio pane. A recusa que se resolve com login vira um botão.
   it('conta que precisa de login oferece «Entrar novamente» nela, com um clique', () => {
     act(() => {

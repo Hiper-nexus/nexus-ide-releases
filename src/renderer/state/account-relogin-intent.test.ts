@@ -11,7 +11,7 @@ const CONTA_B = { adapterId: 'claude', accountId: 'acct-b', accountLabel: 'conta
 
 afterEach(() => useAccountReloginIntentStore.setState({ pending: null }));
 
-describe('pedido de login vindo do pane (F-1637)', () => {
+describe('pedido de login vindo do pane (F-1642)', () => {
   it('é atendido uma vez só, e só pela CLI dele', () => {
     const store = useAccountReloginIntentStore.getState();
     store.request(CONTA_B, 1_000);

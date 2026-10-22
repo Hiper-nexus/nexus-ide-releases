@@ -1088,7 +1088,7 @@ export function ProvidersPanel() {
     setSelectedId((prev) => pickDefaultSelection(visible, prev));
   }, [visible]);
 
-  // F-1637: o pane pediu o login de uma conta — abre a CLI dela, na aba onde
+  // F-1642: o pane pediu o login de uma conta — abre a CLI dela, na aba onde
   // ela mora, para o AccountsManager atender o pedido.
   const pendingRelogin = useAccountReloginIntentStore((s) => s.pending);
   useEffect(() => {

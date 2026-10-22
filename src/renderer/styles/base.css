@@ -2094,7 +2094,7 @@ body {
   white-space: normal;
 }
 
-/* F-1637: recusa que se resolve entrando de novo na conta. O card continua
+/* F-1642: recusa que se resolve entrando de novo na conta. O card continua
    sem roubar clique do terminal; só o botão recebe ponteiro. */
 .pane-birth--failed.pane-birth--actionable {
   grid-template-areas:

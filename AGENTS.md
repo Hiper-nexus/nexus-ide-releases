@@ -332,7 +332,7 @@ saber isto antes de mexer:
   Escopo gerenciado vencido com OUTRA linhagem, mais velha que o cofre, não
   bloqueia essa cura (a cota cai para o passo 3); com a mesma linhagem, a CLI
   continua sendo a única que renova.
-- **Spawn e cota usam a mesma régua de re-login (F-1637).** Um run da CLI que
+- **Spawn e cota usam a mesma régua de re-login (F-1642).** Um run da CLI que
   não renovou NÃO prova sessão morta. Sem prova, o escopo gerenciado abre o
   pane como `renewable` (blob fixado, a CLI do pane renova) só com o MESMO
   refresh token que o cofre provou para a conta, fora de outro store e sem

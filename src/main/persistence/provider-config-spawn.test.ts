@@ -2126,7 +2126,7 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     expect(spawnDeps.prepareAccount).not.toHaveBeenCalled();
   });
 
-  // F-1637: o pane da conta em uso abre com o token que só o relógio venceu;
+  // F-1642: o pane da conta em uso abre com o token que só o relógio venceu;
   // a recusa sobra para quando a conta precisa mesmo de login, e nomeia ela.
   it.each([
     ['renewable', true],

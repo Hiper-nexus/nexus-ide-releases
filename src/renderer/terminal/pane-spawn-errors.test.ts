@@ -30,7 +30,7 @@ describe('pane spawn errors', () => {
     expect(takePaneSpawnError('pane-2')).toBe('segundo');
   });
 
-  it('guarda a conta a reautenticar só junto do erro da mesma tentativa (F-1637)', () => {
+  it('guarda a conta a reautenticar só junto do erro da mesma tentativa (F-1642)', () => {
     const relogin = { adapterId: 'claude', accountId: 'acct-b', accountLabel: 'conta b' };
     recordPaneSpawnError('pane-3', 'A sessão de “conta b” expirou', relogin);
     expect(peekPaneSpawnRelogin('pane-3')).toEqual(relogin);

@@ -600,7 +600,7 @@ async function renewNativeClaudeAuthThroughCli(accountId: string): Promise<Claud
 }
 
 /**
- * F-1637: o spawn provou que a conta precisa de login (a CLI recusou, ou não
+ * F-1642: o spawn provou que a conta precisa de login (a CLI recusou, ou não
  * há refresh token no prazo). Sem isto o painel seguia "Em uso" e
  * "conectado" enquanto todo pane morria com "expirou" — a linha nunca
  * oferecia «Entrar novamente». Mesmo cooldown de auth que a sonda de cota usa.
@@ -636,7 +636,7 @@ export function claudeAccountIsNativeLogin(
 }
 
 /**
- * Veredito de identidade do spawn Claude. `renewable` (F-1637): access token
+ * Veredito de identidade do spawn Claude. `renewable` (F-1642): access token
  * vencido pelo relógio, refresh token no prazo, linhagem só desta conta e no
  * escopo cuja CLI a renova. Ninguém provou sessão morta, então o pane abre e
  * a CLI dele renova sob o próprio lock — a mesma régua da cota (F-1416).
@@ -690,7 +690,7 @@ export async function verifyManagedClaudeAccountForSpawn(
     }
   }
   if (result === 'auth-expired' && !nativeLogin) {
-    // F-1637: Reserva só no cofre, ou escopo com OUTRA linhagem mais velha
+    // F-1642: Reserva só no cofre, ou escopo com OUTRA linhagem mais velha
     // que o cofre: quem renova é o cofre, por HTTP, com as guardas de linhagem
     // de `ensureFreshClaudeSubscription` (nunca o login nativo nem linhagem
     // compartilhada) e prova da conta no token novo antes de gravá-lo. Um

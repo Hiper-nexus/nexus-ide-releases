@@ -272,7 +272,7 @@ describe('claudeBlobIsRenewable (F-1416)', () => {
   });
 });
 
-describe('claudeAccessTokenExpired (F-1637)', () => {
+describe('claudeAccessTokenExpired (F-1642)', () => {
   const blob = (expiresAt?: unknown) =>
     JSON.stringify({ claudeAiOauth: { accessToken: 'a', ...(expiresAt === undefined ? {} : { expiresAt }) } });
 

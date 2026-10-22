@@ -2126,7 +2126,7 @@ export async function prepareProviderSpawnAuthoritative(
       const identity = await verifyManagedClaudeAccountForSpawn(account.id, (blob) => {
         verifiedClaudeBlob = blob;
       });
-      // F-1637: `renewable` é token vencido só pelo relógio, que a CLI do pane
+      // F-1642: `renewable` é token vencido só pelo relógio, que a CLI do pane
       // renova; recusar ali era pedir login de uma conta que não o precisava.
       if (identity !== 'match' && identity !== 'renewable') {
         // Expirada ou de outra conta: as duas se resolvem entrando de novo

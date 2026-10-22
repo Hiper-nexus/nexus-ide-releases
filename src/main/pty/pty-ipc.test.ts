@@ -1216,7 +1216,7 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });
 
-  it('F-1637: recusa que pede login devolve a conta ao renderer, para o cartão oferecer «Entrar novamente»', async () => {
+  it('F-1642: recusa que pede login devolve a conta ao renderer, para o cartão oferecer «Entrar novamente»', async () => {
     const relogin = { adapterId: 'claude', accountId: 'acct-b', accountLabel: 'conta b' };
     providerDeps.prepareProviderSpawnAuthoritative.mockResolvedValueOnce({
       ok: false, error: 'A sessão de “conta b” expirou', relogin,

@@ -123,7 +123,7 @@ export function PaneBirthOverlay({ pane }: { pane: PaneModel }) {
     : display.slow
       ? 'pane-birth--slow'
       : '';
-  // F-1637: a conta precisa de login de verdade — o caminho é um clique, o
+  // F-1642: a conta precisa de login de verdade — o caminho é um clique, o
   // mesmo «Entrar novamente» do painel de contas, nunca um logout.
   const reloginAction = display.failed && relogin ? relogin : null;
 

@@ -650,7 +650,7 @@ export type SpawnResult =
       error: string;
       code?: LicenseErrorCode;
       blockedReason?: LicenseDenialReason;
-      /** F-1637: a conta que precisa de login; o cartão do pane oferece «Entrar novamente». */
+      /** F-1642: a conta que precisa de login; o cartão do pane oferece «Entrar novamente». */
       relogin?: AccountReloginRequest;
     };
 

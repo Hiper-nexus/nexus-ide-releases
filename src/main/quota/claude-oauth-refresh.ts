@@ -72,7 +72,7 @@ export function claudeBlobIsRenewable(blob: string, now: number): boolean {
 }
 
 /**
- * F-1637: access token com `expiresAt` conhecido e já vencido pelo relógio.
+ * F-1642: access token com `expiresAt` conhecido e já vencido pelo relógio.
  * Distingue "venceu" de "o provedor recusou um token no prazo" (401/403, que
  * também vem de escopo OAuth sem `user:profile`) — só o primeiro, sem refresh
  * token no prazo, prova sessão morta.

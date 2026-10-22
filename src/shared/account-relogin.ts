@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * F-1637: a conta que o spawn provou precisar de login. Viaja do Main até o
+ * F-1642: a conta que o spawn provou precisar de login. Viaja do Main até o
  * cartão "Não subiu" do pane, que oferece o mesmo «Entrar novamente» do
  * painel de contas, com um clique. Só ids e o rótulo que o operador deu à
  * conta: nunca e-mail, token, fingerprint ou caminho de credencial.
