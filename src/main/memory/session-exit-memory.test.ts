@@ -97,8 +97,8 @@ describe('session-exit memory distillation', () => {
     expect(await distillSessionExitMemory(
       { sessionId: 'pty-session-1', agent: agent({ scope }) },
       { getStores: () => { throw new Error('runtime unavailable'); } },
-    )).toMatchObject({ retained: false, reason: 'store-unavailable' });
-    expect(recordSkip).toHaveBeenCalledWith(scope, 'store-unavailable');
+    )).toMatchObject({ retained: false, reason: 'store-unavailable', detail: 'handoffs.other' });
+    expect(recordSkip).toHaveBeenCalledWith(scope, 'store-unavailable:handoffs.other');
 
     expect(await distillSessionExitMemory(
       { sessionId: 'pty-session-1', agent: agent({ scope }) },
@@ -107,9 +107,49 @@ describe('session-exit memory distillation', () => {
     expect(recordSkip).toHaveBeenCalledWith(scope, 'trivial');
     expect(getWorkspaceMemoryStore(scope).stats().retention.skips).toMatchObject({
       'flag-off': 1,
-      'store-unavailable': 1,
+      'store-unavailable:handoffs.other': 1,
       trivial: 1,
     });
+  });
+
+  it('store-unavailable diz ONDE e POR QUÊ em categoria, nunca o texto do erro', async () => {
+    const recordSkip = vi.spyOn(trustedMemory, 'recordMemoryRetentionSkip');
+    const failWith = (message: string) => () => { throw new Error(`${message} /Users/op/secret-project`); };
+    const cases: Array<[string, string]> = [
+      ['project store scope identity collision', 'handoffs.scope-collision'],
+      ['workspace memory requires configureWorkspaceMemory({ baseDir }) outside Electron', 'handoffs.not-configured'],
+      ['workspace memory store is closed', 'handoffs.closed'],
+      ['SQLITE_BUSY: database is locked', 'handoffs.busy'],
+    ];
+    for (const [message, detail] of cases) {
+      const outcome = await distillSessionExitMemory(
+        { sessionId: 'pty-session-1', agent: agent({ scope }) },
+        { getStores: failWith(message) },
+      );
+      expect(outcome).toEqual({ retained: false, reason: 'store-unavailable', detail });
+      expect(recordSkip).toHaveBeenLastCalledWith(scope, `store-unavailable:${detail}`);
+    }
+    for (const call of recordSkip.mock.calls) {
+      expect(String(call[1])).not.toMatch(/Users|secret|locked|Electron/);
+    }
+  });
+
+  it('store-unavailable separa o banco de memória do recall', async () => {
+    const recordSkip = vi.spyOn(trustedMemory, 'recordMemoryRetentionSkip');
+    const store = getWorkspaceMemoryStore(scope);
+    vi.spyOn(store, 'recall').mockImplementation(() => { throw new Error('SQLITE_BUSY: database is locked'); });
+    expect(await distillSessionExitMemory(
+      { sessionId: 'pty-session-1', agent: agent({ scope }) },
+      { getStores: () => stores([handoff('h-1', 'Slice shipped.')]), distill: approve },
+    )).toEqual({ retained: false, reason: 'store-unavailable', detail: 'recall.busy' });
+    expect(recordSkip).toHaveBeenLastCalledWith(scope, 'store-unavailable:recall.busy');
+
+    disposeWorkspaceMemoryStores();
+    configureWorkspaceMemory(undefined as never);
+    expect(await distillSessionExitMemory(
+      { sessionId: 'pty-session-1', agent: agent({ scope }) },
+      { getStores: () => stores([handoff('h-1', 'Slice shipped.')]), distill: approve },
+    )).toEqual({ retained: false, reason: 'store-unavailable', detail: 'memory-store.not-configured' });
   });
 
   it('F-768: retém o resumo aprovado de um handoff não verificado, com procedência explícita', async () => {

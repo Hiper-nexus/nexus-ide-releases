@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { recordJevDecision } from '../jev/jev-decision-log';
+import { recordJevSkip } from '../jev/jev-decision-log';
 import { clampUtf8TextPrefix } from '../../shared/utf8-byte-limits';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import type { ProjectExecutionScope } from '../../shared/types';
@@ -756,8 +756,8 @@ export function recordMemoryRetentionSkip(
   scope: ProjectExecutionScope | null | undefined,
   reason: string,
 ): void {
-  recordJevDecision({ surface: 'memoryDistill', model: 'unavailable', questions: [],
-    probabilities: {}, decision: `skip:${reason}`, inputTokens: null, usd: null });
+  // Local skip: no request left the machine, so the panel never counts it as a consultation.
+  recordJevSkip({ surface: 'memoryDistill', reason });
   countMemoryRetentionSkip(scope, reason);
 }
 

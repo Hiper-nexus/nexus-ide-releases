@@ -25,6 +25,12 @@ const DIGEST_MAX_HANDOFFS = 3;
 
 const SESSION_DIGEST_SOURCE = 'trusted:session-digest';
 
+/** Etapa em que o banco faltou: handoffs da sessão, banco de memória, dedupe/recall ou a retenção. */
+export type StoreUnavailableStage = 'handoffs' | 'memory-store' | 'recall' | 'retain' | 'distiller';
+
+/** Causa categórica de um banco indisponível — nunca o texto do erro. */
+export type StoreFailureCause = 'scope-collision' | 'not-configured' | 'closed' | 'busy' | 'other';
+
 export interface SessionDigestOutcome {
   readonly retained: boolean;
   readonly reason:
@@ -35,8 +41,28 @@ export interface SessionDigestOutcome {
     | 'dedupe'
     | 'jev-skip'
     | 'ok';
+  /**
+   * Só em `store-unavailable`: `<etapa>.<causa>`. O diário mostrava 119
+   * `store-unavailable` sem dizer qual banco nem por quê; a categoria basta
+   * para separar colisão de escopo (F-1006), banco fechado e lock do SQLite.
+   */
+  readonly detail?: `${StoreUnavailableStage}.${StoreFailureCause}`;
   /** Id da linha anterior substituída, quando houve supersede. */
   readonly supersededId?: string;
+}
+
+/**
+ * Lê só a FORMA do erro para escolher uma categoria. O texto em si (caminhos,
+ * ids, SQL) nunca sai daqui: o diário do Jev e o contador do workspace guardam
+ * apenas o rótulo.
+ */
+export function storeFailureCause(error: unknown): StoreFailureCause {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/scope identity collision/i.test(message)) return 'scope-collision';
+  if (/requires configure/i.test(message)) return 'not-configured';
+  if (/\bis closed\b|not open/i.test(message)) return 'closed';
+  if (/SQLITE_BUSY|database is locked/i.test(message)) return 'busy';
+  return 'other';
 }
 
 interface SessionHandoffRow {
@@ -100,9 +126,16 @@ export async function distillSessionExitMemory(
   deps: SessionExitMemoryDeps = {},
 ): Promise<SessionDigestOutcome> {
   const scope = memoryScopeFor(input.agent);
-  const skip = (reason: Exclude<SessionDigestOutcome['reason'], 'ok'>): SessionDigestOutcome => {
+  const skip = (
+    reason: Exclude<SessionDigestOutcome['reason'], 'ok' | 'store-unavailable'>,
+  ): SessionDigestOutcome => {
     recordMemoryRetentionSkip(scope, reason);
     return { retained: false, reason };
+  };
+  const storeUnavailable = (stage: StoreUnavailableStage, error: unknown): SessionDigestOutcome => {
+    const detail = `${stage}.${storeFailureCause(error)}` as const;
+    recordMemoryRetentionSkip(scope, `store-unavailable:${detail}`);
+    return { retained: false, reason: 'store-unavailable', detail };
   };
   if (!scope) return skip('no-scope');
   if (
@@ -123,8 +156,8 @@ export async function distillSessionExitMemory(
       sessionIds: [input.sessionId],
       includeDelivered: true,
     });
-  } catch {
-    return skip('store-unavailable');
+  } catch (error) {
+    return storeUnavailable('handoffs', error);
   }
 
   const delivered = handoffs.filter(
@@ -147,8 +180,8 @@ export async function distillSessionExitMemory(
   let store: ReturnType<typeof getWorkspaceMemoryStore>;
   try {
     store = getWorkspaceMemoryStore(scope);
-  } catch {
-    return skip('store-unavailable');
+  } catch (error) {
+    return storeUnavailable('memory-store', error);
   }
   // Saídas simultâneas com o mesmo conteúdo: só a primeira vai ao Jev (o FTS
   // ainda não vê a linha que ela vai gravar).
@@ -156,6 +189,7 @@ export async function distillSessionExitMemory(
   if (pending.has(digest)) return skip('dedupe');
   pending.add(digest);
   pendingDigests.set(store, pending);
+  let stage: StoreUnavailableStage = 'recall';
   try {
     // Dedupe contra o top-3 do FTS5 do próprio workspace.
     const hits = store.recall({
@@ -173,6 +207,7 @@ export async function distillSessionExitMemory(
     const stale = missionId
       ? store.latestActiveWithLine(SESSION_DIGEST_SOURCE, `Mission: ${missionId}`)
       : null;
+    stage = 'retain';
     const result = await distillMemoryWithRetry(
       scope,
       {
@@ -196,8 +231,8 @@ export async function distillSessionExitMemory(
       reason: 'ok',
       ...(stale ? { supersededId: stale } : {}),
     };
-  } catch {
-    return skip('store-unavailable');
+  } catch (error) {
+    return storeUnavailable(stage, error);
   } finally {
     pending.delete(digest);
     if (pending.size === 0) pendingDigests.delete(store);
@@ -213,8 +248,11 @@ let ensureDisposer: (() => void) | null = null;
 export function ensureSessionExitMemoryDistiller(): void {
   if (ensureDisposer) return;
   ensureDisposer = tapSessionExit((sessionId, agent) => {
-    void distillSessionExitMemory({ sessionId, agent }).catch(() => {
-      recordMemoryRetentionSkip(memoryScopeFor(agent), 'store-unavailable');
+    void distillSessionExitMemory({ sessionId, agent }).catch((error: unknown) => {
+      recordMemoryRetentionSkip(
+        memoryScopeFor(agent),
+        `store-unavailable:distiller.${storeFailureCause(error)}`,
+      );
     });
   });
 }

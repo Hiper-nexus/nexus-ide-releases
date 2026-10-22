@@ -2111,7 +2111,15 @@ O que mudou — e o que NÃO mudou:
   (exceção estreita à doutrina 09/09: é assinatura de sequestro, não
   cerimônia); tudo o mais → passa. Read-only e o conjunto isento
   (`GUARD_EXEMPT_TOOLS`: handoff_*, heartbeat, clarify, waits, reads, judge,
-  rank, tool_pick, route_*, pane_close — F-709) nunca são julgados. Args vão compactados
+  rank, tool_pick, route_*, pane_close — F-709) nunca são julgados.
+  `git_add`/`git_commit` (`ISOLATED_WRITER_GUARD_EXEMPT_TOOLS`) só são isentos
+  quando `isIsolatedWriterContext(ctx)` vale — o MESMO predicado do handler,
+  que confina a chamada à worktree e à branch `nexus/…` do registro (F-563);
+  no checkout de coordenação, na worktree compartilhada da aba ou do
+  orquestrador seguem julgados. Em 4 semanas o guard deu 1.057 respostas
+  (1.056 pass, 1 confirm, 0 deny), 22,6% do gasto, ~0,35 s por efeito.
+  `memory_retain` NÃO é isento: o texto retido volta ao contexto de workers
+  futuros e a quarentena do F-808 só cobre sessão exposta à web. Args vão compactados
   (string > 300 chars vira `<N chars>`, JSON ≤ 2 KB, redigidos) e NUNCA
   entram no decision log. Cache de veredito por sessão+args por 60 s.
   Limiar 0.35 medido em 17/09 com jev-1.13.0 (`git push --force main` numa missão de login
@@ -2731,6 +2739,19 @@ O que mudou — e o que NÃO mudou:
   CLI, mesmo modo, ≥20 s parado pelo status semântico) só no pane do operador
   e na missão da aba; o Jev (`helperReuse`) escolhe ou `none`, aceita ≥ 0,7.
   Título do pane entra no critério só como caminho do state, nunca como texto.
+  Só pane DESARMADO é candidato, e o braço padrão fechava o helper no próprio
+  `success`: a superfície nasceu inoperante (zero disparo em 4 semanas). Agora o
+  braço padrão desses dois casos leva `reuseHold` (`shouldHoldHelperForReuse`):
+  entrega `success` (ou ACK aceito) deixa o pane vivo e desarmado por
+  `HELPER_REUSE_HOLD_MS` (3 min) e então fecha — F-572 vale, a janela tem prazo
+  fixo e a rede de segurança não ganha janela extra. Reuso, `rework` ou braço
+  novo cancelam a janela; pane que voltou a trabalhar nela é re-armado, não
+  fechado; janela com menos de 30 s fica fora dos candidatos.
+  `autoCloseOnHandoff: true` explícito, writer isolado e licença com teto de
+  agentes (Trial: a janela seguraria uma vaga e o próximo spawn de outra CLI
+  cairia em `license_agent_limit`) não ganham janela.
+  Sem candidato, o diário grava `kind: 'skip'` `no-candidate:<categoria>`
+  (`scanIdleHelperCandidates`: armed, not-idle, too-recent…), nunca id ou texto.
 
 ## Missão que morre e volta: o que o trace mostra (F-187/F-211/F-212/F-213)
 

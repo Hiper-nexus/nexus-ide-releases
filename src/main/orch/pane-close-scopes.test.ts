@@ -14,10 +14,13 @@ import {
   SUCCESS_ACK_IDLE_CLOSE_MS,
   SUCCESS_ACK_TOTAL_CEILING_MS,
   CONSUMER_BUSY_POLL_MS,
+  HELPER_REUSE_HOLD_MS,
+  reuseHoldRemainingMs,
   selectScopedPaneCloseTargets,
   scheduleAutoCloseAfterHandoff,
   shouldArmAutoCloseOnHandoff,
   shouldAutoCloseAfterHandoff,
+  shouldHoldHelperForReuse,
 } from "./pane-close-scopes";
 
 // Paridade Overclock (gap e): fechamento por ESCOPO explícito — o chamador
@@ -790,5 +793,197 @@ describe("F-1409 (revisão Grok): rework vence o close agendado; one-shot por sa
     // Nova janela sem saída nenhuma: fecha (não reagenda para sempre).
     await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS + 1);
     expect(close).toHaveBeenCalledWith("pane-g", "sess-g");
+  });
+});
+
+// F-197 × F-572: o helper que entrega bem ficava armado até o submit e fechava
+// na hora, então `helperReuse` nunca via candidato (só panes desarmados entram).
+// A janela de reuso deixa o pane vivo e desarmado por um prazo curto e fixo;
+// passado o prazo ele fecha — os helpers não empilham.
+describe("F-197: janela de reuso do helper, com prazo (F-572)", () => {
+  const paneOf = (sessionId: string) => sessionId === "sess-r" ? "pane-r" : null;
+  const closer = () => vi.fn(async (_paneId: string, _sessionId: string) => true);
+
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => {
+    disarmAutoCloseOnHandoff("sess-r", "pane-r");
+    vi.useRealTimers();
+  });
+
+  it("success não fecha na hora: fica desarmado (candidato) e fecha no fim da janela", async () => {
+    const close = closer();
+    armAutoCloseOnHandoff("sess-r", "pane-r", { reuseHold: true });
+    scheduleAutoCloseAfterHandoff("sess-r", "success", paneOf, close, undefined, { isBusy: () => false });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(close).not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId("sess-r", "pane-r")).toBeNull();
+    expect(reuseHoldRemainingMs("sess-r", "pane-r")).toBe(HELPER_REUSE_HOLD_MS);
+    expect(reuseHoldRemainingMs("sess-r", "pane-outro")).toBeNull();
+    await vi.advanceTimersByTimeAsync(HELPER_REUSE_HOLD_MS - 1);
+    expect(close).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledWith("pane-r", "sess-r");
+    expect(reuseHoldRemainingMs("sess-r", "pane-r")).toBeNull();
+  });
+
+  it("reuso dentro da janela re-arma o braço e cancela o fechamento", async () => {
+    const close = closer();
+    armAutoCloseOnHandoff("sess-r", "pane-r", { reuseHold: true });
+    scheduleAutoCloseAfterHandoff("sess-r", "success", paneOf, close);
+    await vi.advanceTimersByTimeAsync(60_000);
+    armAutoCloseOnHandoff("sess-r", "pane-r", { reuseHold: true });
+    await vi.advanceTimersByTimeAsync(HELPER_REUSE_HOLD_MS * 2);
+    expect(close).not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId("sess-r", "pane-r")).toBe("pane-r");
+    expect(reuseHoldRemainingMs("sess-r", "pane-r")).toBeNull();
+    // A próxima entrega do mesmo helper abre outra janela, com o mesmo prazo.
+    scheduleAutoCloseAfterHandoff("sess-r", "success", paneOf, close);
+    await vi.advanceTimersByTimeAsync(HELPER_REUSE_HOLD_MS);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("autoCloseOnHandoff:false no reuso (desarme) cancela a janela e mantém o pane", async () => {
+    const close = closer();
+    armAutoCloseOnHandoff("sess-r", "pane-r", { reuseHold: true });
+    scheduleAutoCloseAfterHandoff("sess-r", "success", paneOf, close);
+    disarmAutoCloseOnHandoff("sess-r", "pane-r");
+    await vi.advanceTimersByTimeAsync(HELPER_REUSE_HOLD_MS * 2);
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("pane que voltou a trabalhar na janela não é fechado: volta a ficar armado", async () => {
+    const close = closer();
+    let busy = false;
+    armAutoCloseOnHandoff("sess-r", "pane-r", { reuseHold: true });
+    scheduleAutoCloseAfterHandoff("sess-r", "success", paneOf, close, undefined, { isBusy: () => busy });
+    busy = true;
+    await vi.advanceTimersByTimeAsync(HELPER_REUSE_HOLD_MS);
+    expect(close).not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId("sess-r", "pane-r")).toBe("pane-r");
+    busy = false;
+    scheduleAutoCloseAfterHandoff("sess-r", "success", paneOf, close, undefined, { isBusy: () => busy });
+    await vi.advanceTimersByTimeAsync(HELPER_REUSE_HOLD_MS);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("sonda de ocupado que lança conta como ocupado: nunca fecha no escuro", async () => {
+    const close = closer();
+    armAutoCloseOnHandoff("sess-r", "pane-r", { reuseHold: true });
+    scheduleAutoCloseAfterHandoff("sess-r", "success", paneOf, close, undefined, {
+      isBusy: () => { throw new Error("pty gone"); },
+    });
+    await vi.advanceTimersByTimeAsync(HELPER_REUSE_HOLD_MS);
+    expect(close).not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId("sess-r", "pane-r")).toBe("pane-r");
+  });
+
+  it("pane que sumiu na janela não é fechado de novo", async () => {
+    const close = closer();
+    let current: string | null = "pane-r";
+    armAutoCloseOnHandoff("sess-r", "pane-r", { reuseHold: true });
+    scheduleAutoCloseAfterHandoff("sess-r", "success", () => current, close);
+    current = null;
+    await vi.advanceTimersByTimeAsync(HELPER_REUSE_HOLD_MS);
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("braço por pane (ACK pendente) também leva a janela", async () => {
+    const close = closer();
+    armAutoCloseOnHandoffForPane("pane-r", { reuseHold: true });
+    scheduleAutoCloseAfterHandoff("sess-r", "success", paneOf, close);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(close).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(HELPER_REUSE_HOLD_MS);
+    expect(close).toHaveBeenCalledWith("pane-r", "sess-r");
+  });
+
+  it("sem janela (braço comum) o success continua fechando na hora", async () => {
+    const close = closer();
+    armAutoCloseOnHandoff("sess-r", "pane-r");
+    scheduleAutoCloseAfterHandoff("sess-r", "success", paneOf, close);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(close).toHaveBeenCalledWith("pane-r", "sess-r");
+    expect(reuseHoldRemainingMs("sess-r", "pane-r")).toBeNull();
+  });
+
+  it("partial/failed/blocked não abrem janela de reuso", async () => {
+    const close = closer();
+    armAutoCloseOnHandoff("sess-r", "pane-r", { reuseHold: true });
+    scheduleAutoCloseAfterHandoff("sess-r", "failed", paneOf, close);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reuseHoldRemainingMs("sess-r", "pane-r")).toBeNull();
+    expect(armedAutoClosePaneId("sess-r", "pane-r")).toBe("pane-r");
+  });
+
+  it("ACK aceito de um success que aguardava o Maestro entra na janela", async () => {
+    const close = closer();
+    armAutoCloseOnHandoff("sess-r", "pane-r", { reuseHold: true });
+    scheduleAutoCloseAfterHandoff("sess-r", "success", paneOf, close, {
+      handoffId: "hoff-r", awaitAckOnSuccess: true, isBusy: () => false,
+    });
+    expect(closeAfterNonSuccessHandoffAck("sess-r", "hoff-r", "accepted")).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(close).not.toHaveBeenCalled();
+    expect(reuseHoldRemainingMs("sess-r", "pane-r")).toBe(HELPER_REUSE_HOLD_MS);
+    await vi.advanceTimersByTimeAsync(HELPER_REUSE_HOLD_MS);
+    expect(close).toHaveBeenCalledWith("pane-r", "sess-r");
+  });
+
+  it("rework do handoff em janela cancela o fechamento e devolve o braço", async () => {
+    const close = closer();
+    armAutoCloseOnHandoff("sess-r", "pane-r", { reuseHold: true });
+    scheduleAutoCloseAfterHandoff("sess-r", "success", paneOf, close, {
+      handoffId: "hoff-r", awaitAckOnSuccess: true, isBusy: () => false,
+    });
+    closeAfterNonSuccessHandoffAck("sess-r", "hoff-r", "accepted");
+    expect(closeAfterNonSuccessHandoffAck("sess-r", "hoff-r", "rework")).toBe(false);
+    await vi.advanceTimersByTimeAsync(HELPER_REUSE_HOLD_MS * 2);
+    expect(close).not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId("sess-r", "pane-r")).toBe("pane-r");
+  });
+
+  it("a rede de segurança (Maestro que nunca acusa) fecha direto, sem janela extra", async () => {
+    const close = closer();
+    armAutoCloseOnHandoff("sess-r", "pane-r", { reuseHold: true });
+    scheduleAutoCloseAfterHandoff("sess-r", "success", paneOf, close, {
+      handoffId: "hoff-r", awaitAckOnSuccess: true, isBusy: () => false, isDelivered: () => true,
+    });
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_IDLE_CLOSE_MS - 1);
+    expect(close).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2);
+    expect(close).toHaveBeenCalledWith("pane-r", "sess-r");
+    expect(reuseHoldRemainingMs("sess-r", "pane-r")).toBeNull();
+  });
+});
+
+describe("shouldHoldHelperForReuse", () => {
+  const base = {
+    explicit: undefined,
+    operatorHand: false,
+    missionId: undefined,
+    role: undefined,
+    operatorOpened: undefined,
+    tabMission: false,
+    isolatedWriter: false,
+  };
+
+  it("helper da mão do operador sem missão e worker da missão da aba ganham a janela", () => {
+    expect(shouldHoldHelperForReuse({ ...base, operatorHand: true })).toBe(true);
+    expect(shouldHoldHelperForReuse({ ...base, missionId: "m1", role: "worker", tabMission: true })).toBe(true);
+  });
+
+  it("worker de missão comum, orquestrador e mão do operador na missão não ganham", () => {
+    expect(shouldHoldHelperForReuse({ ...base, missionId: "m1", role: "worker" })).toBe(false);
+    expect(shouldHoldHelperForReuse({ ...base, missionId: "m1", role: "orchestrator", tabMission: true })).toBe(false);
+    expect(shouldHoldHelperForReuse({
+      ...base, missionId: "m1", role: "worker", tabMission: true, operatorOpened: true,
+    })).toBe(false);
+  });
+
+  it("autoCloseOnHandoff explícito e writer isolado (nunca candidato) não ganham", () => {
+    expect(shouldHoldHelperForReuse({ ...base, operatorHand: true, explicit: true })).toBe(false);
+    expect(shouldHoldHelperForReuse({ ...base, operatorHand: true, explicit: false })).toBe(false);
+    expect(shouldHoldHelperForReuse({ ...base, operatorHand: true, isolatedWriter: true })).toBe(false);
   });
 });

@@ -105,6 +105,42 @@ export function shouldArmAutoCloseOnHandoff(input: {
   );
 }
 
+/**
+ * F-197: who keeps a short reuse window after a good delivery. `helperReuse`
+ * only considers idle, UNARMED helpers of the same owner, so with the arm
+ * closing the pane right at the success it never had a candidate. The window
+ * is limited to where reuse can happen at all (operator hand without mission,
+ * worker of the tab mission) and to the default arm: an explicit
+ * `autoCloseOnHandoff` asked for exactly "close on delivery", and an isolated
+ * writer is never a reuse candidate.
+ */
+export function shouldHoldHelperForReuse(input: {
+  readonly explicit: boolean | undefined;
+  readonly operatorHand: boolean;
+  readonly missionId: string | undefined;
+  readonly role: string | undefined;
+  readonly operatorOpened: boolean | undefined;
+  readonly tabMission: boolean;
+  readonly isolatedWriter: boolean;
+}): boolean {
+  if (input.explicit !== undefined || input.isolatedWriter) return false;
+  if (input.operatorHand && input.missionId === undefined) return true;
+  return (
+    input.missionId !== undefined &&
+    input.tabMission &&
+    input.role === "worker" &&
+    input.operatorOpened !== true
+  );
+}
+
+/**
+ * F-197 × F-572: how long a helper that delivered well stays alive and
+ * unarmed so the next request of the same owner can reuse it. Fixed and short
+ * on purpose: a pane costs ~1 GB, so after the window it closes exactly as it
+ * used to right after the submit.
+ */
+export const HELPER_REUSE_HOLD_MS = 3 * 60_000;
+
 /** A short notification alone must not destroy the pane's only complete report. */
 export function assertAutoCloseReportPreserved(
   sessionId: string | undefined,
@@ -216,7 +252,84 @@ interface PendingNonSuccessClose {
   readonly handoffId: string;
   readonly paneIdOf: PaneIdOf;
   readonly close: ClosePane;
+  /** F-197: a `success` waiting for the Maestro's verdict (only these open a reuse window). */
+  readonly awaitAck: boolean;
+  readonly isBusy?: (sessionId: string) => boolean;
   timer?: ReturnType<typeof setTimeout>;
+}
+
+interface ReuseHold {
+  readonly paneId: string;
+  /** Delivery that opened the window: a `rework` of it cancels the close. */
+  readonly handoffId?: string;
+  readonly deadline: number;
+  readonly timer: ReturnType<typeof setTimeout>;
+}
+
+/** F-197: helpers alive and unarmed inside their reuse window, by session. */
+const reuseHoldBySession = new Map<string, ReuseHold>();
+
+function clearReuseHold(sessionId: string): ReuseHold | undefined {
+  const hold = reuseHoldBySession.get(sessionId);
+  if (!hold) return undefined;
+  clearTimeout(hold.timer);
+  reuseHoldBySession.delete(sessionId);
+  return hold;
+}
+
+/**
+ * Keeps the helper unarmed for HELPER_REUSE_HOLD_MS, then closes it. A pane
+ * that went back to work inside the window (someone typed into it) is not
+ * killed: it is armed again, so its next delivery closes it. A busy probe that
+ * throws counts as busy — never close in the dark.
+ */
+function startReuseHold(
+  sessionId: string,
+  paneId: string,
+  paneIdOf: PaneIdOf,
+  close: ClosePane,
+  options: { readonly handoffId?: string; readonly isBusy?: (sessionId: string) => boolean },
+): void {
+  clearReuseHold(sessionId);
+  const timer = setTimeout(() => {
+    if (reuseHoldBySession.get(sessionId)?.timer !== timer) return;
+    reuseHoldBySession.delete(sessionId);
+    if (paneIdOf(sessionId) !== paneId) return;
+    let busy = false;
+    try {
+      busy = options.isBusy?.(sessionId) === true;
+    } catch {
+      busy = true;
+    }
+    if (busy) {
+      armAutoCloseOnHandoff(sessionId, paneId, { reuseHold: true });
+      return;
+    }
+    void Promise.resolve().then(() => close(paneId, sessionId)).catch((error) =>
+      console.warn(`[handoff] auto-close do pane ${paneId} falhou:`, error),
+    );
+  }, HELPER_REUSE_HOLD_MS);
+  reuseHoldBySession.set(sessionId, {
+    paneId,
+    ...(options.handoffId === undefined ? {} : { handoffId: options.handoffId }),
+    deadline: Date.now() + HELPER_REUSE_HOLD_MS,
+    timer,
+  });
+}
+
+/**
+ * F-197: how much of the reuse window is left for this exact pane; `null`
+ * when the pane is not in one. `helperReuse` skips a window about to close so
+ * the prompt never lands in a pane that is being shut down.
+ */
+export function reuseHoldRemainingMs(
+  sessionId: string,
+  paneId: string,
+  now: number = Date.now(),
+): number | null {
+  const hold = reuseHoldBySession.get(sessionId);
+  if (!hold || hold.paneId !== paneId) return null;
+  return Math.max(hold.deadline - now, 0);
 }
 
 /** Entrega partial/failed/blocked de worker armado aguardando o Maestro, por sessão. */
@@ -238,6 +351,8 @@ const scheduledNonSuccessCloseBySession = new Map<
      */
     readonly handoffId: string;
     readonly timer: ReturnType<typeof setTimeout>;
+    /** F-197: o braço que o rework devolve mantém a janela de reuso que tinha. */
+    readonly reuseHold: boolean;
   }
 >();
 
@@ -248,15 +363,30 @@ function clearPendingNonSuccess(sessionId: string): void {
   pendingNonSuccessBySession.delete(sessionId);
 }
 
-function closePendingNonSuccess(sessionId: string, pending: PendingNonSuccessClose): void {
+function closePendingNonSuccess(
+  sessionId: string,
+  pending: PendingNonSuccessClose,
+  via: "ack" | "safety-net",
+): void {
   clearPendingNonSuccess(sessionId);
   if (armedAutoClosePaneId(sessionId, pending.paneId) !== pending.paneId) return;
+  const reuseHold = armedForReuseHold(sessionId, pending.paneId);
   disarmAutoCloseOnHandoff(sessionId, pending.paneId);
+  // F-197: só o `success` ACEITO abre a janela de reuso. A rede de segurança
+  // já esperou o prazo dela inteiro: fecha direto (F-572).
+  if (via === "ack" && pending.awaitAck && reuseHold) {
+    startReuseHold(sessionId, pending.paneId, pending.paneIdOf, pending.close, {
+      handoffId: pending.handoffId,
+      ...(pending.isBusy ? { isBusy: pending.isBusy } : {}),
+    });
+    return;
+  }
   const timer = closeArmedPaneSoon(sessionId, pending.paneId, pending.paneIdOf, pending.close);
   scheduledNonSuccessCloseBySession.set(sessionId, {
     paneId: pending.paneId,
     handoffId: pending.handoffId,
     timer,
+    reuseHold,
   });
 }
 
@@ -354,12 +484,19 @@ export function missionWriterAwaitsHandoffAck(input: {
   return input.readOnly !== true;
 }
 
+/** F-197: sonda para a janela de reuso quando o chamador não passa `nonSuccess`. */
+export interface ReuseHoldOptions {
+  /** O helper voltou a trabalhar dentro da janela? Então não fecha: volta a ficar armado. */
+  readonly isBusy?: (sessionId: string) => boolean;
+}
+
 export function scheduleAutoCloseAfterHandoff(
   sessionId: string | undefined,
   status: string,
   paneIdOf: PaneIdOf,
   close: ClosePane,
   nonSuccess?: NonSuccessCloseOptions,
+  reuse?: ReuseHoldOptions,
 ): void {
   if (!sessionId) return;
   const paneId = paneIdOf(sessionId);
@@ -462,7 +599,7 @@ export function scheduleAutoCloseAfterHandoff(
           startIdleWindow();
           return;
         }
-        closePendingNonSuccess(sessionId, pending);
+        closePendingNonSuccess(sessionId, pending, "safety-net");
       };
       // O prazo só começa quando a entrega sai de `queued` (M3).
       // F-1634: com aceite pendente a espera tem teto — ver
@@ -490,7 +627,8 @@ export function scheduleAutoCloseAfterHandoff(
         startIdleWindow();
       };
       const pending: PendingNonSuccessClose = {
-        paneId: armedPaneId, handoffId, paneIdOf, close,
+        paneId: armedPaneId, handoffId, paneIdOf, close, awaitAck,
+        ...(nonSuccess.isBusy ? { isBusy: nonSuccess.isBusy } : {}),
       };
       pendingNonSuccessBySession.set(sessionId, pending);
       awaitDelivery();
@@ -498,7 +636,16 @@ export function scheduleAutoCloseAfterHandoff(
     return;
   }
   clearPendingNonSuccess(sessionId);
+  const reuseHold = armedForReuseHold(sessionId, paneId);
   disarmAutoCloseOnHandoff(sessionId, paneId);
+  if (reuseHold) {
+    const isBusy = reuse?.isBusy ?? nonSuccess?.isBusy;
+    startReuseHold(sessionId, armedPaneId, paneIdOf, close, {
+      ...(nonSuccess?.handoffId === undefined ? {} : { handoffId: nonSuccess.handoffId }),
+      ...(isBusy ? { isBusy } : {}),
+    });
+    return;
+  }
   closeArmedPaneSoon(sessionId, armedPaneId, paneIdOf, close);
 }
 
@@ -561,13 +708,20 @@ export function closeAfterNonSuccessHandoffAck(
     if (scheduled && scheduled.handoffId === handoffId) {
       clearTimeout(scheduled.timer);
       scheduledNonSuccessCloseBySession.delete(sessionId);
-      armAutoCloseOnHandoff(sessionId, scheduled.paneId);
+      armAutoCloseOnHandoff(sessionId, scheduled.paneId, { reuseHold: scheduled.reuseHold });
+    }
+    // F-197: o `success` aceito que está na janela de reuso volta a trabalhar
+    // pela nota: a janela não pode fechar o writer no meio do rework.
+    const hold = reuseHoldBySession.get(sessionId);
+    if (hold && hold.handoffId === handoffId) {
+      clearReuseHold(sessionId);
+      armAutoCloseOnHandoff(sessionId, hold.paneId, { reuseHold: true });
     }
     return false;
   }
   const pending = pendingNonSuccessBySession.get(sessionId);
   if (!pending || pending.handoffId !== handoffId) return false;
-  closePendingNonSuccess(sessionId, pending);
+  closePendingNonSuccess(sessionId, pending, "ack");
   return true;
 }
 
@@ -577,12 +731,30 @@ export function closeAfterNonSuccessHandoffAck(
  * sozinho por um braço fantasma.
  */
 const armedBySession = new Map<string, string>();
+/** F-197: braços (por sessão / por pane) cuja entrega boa abre a janela de reuso. */
+const reuseHoldArmedSessions = new Set<string>();
+const reuseHoldArmedPanes = new Set<string>();
+
+export interface AutoCloseArmOptions {
+  /**
+   * F-197: depois de uma entrega boa, o pane fica HELPER_REUSE_HOLD_MS vivo e
+   * desarmado (candidato a reuso) antes de fechar. Ausente = mantém o que o
+   * braço já tinha (o rework devolve o braço sem saber como ele nasceu).
+   */
+  readonly reuseHold?: boolean;
+}
 
 export function armAutoCloseOnHandoff(
   sessionId: string,
   paneId: string,
+  options: AutoCloseArmOptions = {},
 ): void {
+  // Um braço novo (o reuso que entregou a tarefa nova, o rework) vence a
+  // janela em curso: o pane voltou a ter dono e trabalho.
+  clearReuseHold(sessionId);
   armedBySession.set(sessionId, paneId);
+  if (options.reuseHold === true) reuseHoldArmedSessions.add(sessionId);
+  else if (options.reuseHold === false) reuseHoldArmedSessions.delete(sessionId);
 }
 
 /**
@@ -592,8 +764,19 @@ export function armAutoCloseOnHandoff(
  */
 const armedByPane = new Set<string>();
 
-export function armAutoCloseOnHandoffForPane(paneId: string): void {
+export function armAutoCloseOnHandoffForPane(
+  paneId: string,
+  options: AutoCloseArmOptions = {},
+): void {
   armedByPane.add(paneId);
+  if (options.reuseHold === true) reuseHoldArmedPanes.add(paneId);
+  else if (options.reuseHold === false) reuseHoldArmedPanes.delete(paneId);
+}
+
+/** O braço que vale (o da sessão, senão o do pane) pede janela de reuso? */
+function armedForReuseHold(sessionId: string, paneId: string | null | undefined): boolean {
+  if (armedBySession.has(sessionId)) return reuseHoldArmedSessions.has(sessionId);
+  return Boolean(paneId && armedByPane.has(paneId) && reuseHoldArmedPanes.has(paneId));
 }
 
 export function disarmAutoCloseOnHandoff(
@@ -601,8 +784,15 @@ export function disarmAutoCloseOnHandoff(
   paneId?: string | null,
 ): void {
   armedBySession.delete(sessionId);
-  if (paneId) armedByPane.delete(paneId);
+  reuseHoldArmedSessions.delete(sessionId);
+  if (paneId) {
+    armedByPane.delete(paneId);
+    reuseHoldArmedPanes.delete(paneId);
+  }
   clearPendingNonSuccess(sessionId);
+  // Desarmar (inclusive `autoCloseOnHandoff:false` no reuso) também desiste
+  // da janela: o pane fica aberto, como pediu quem desarmou.
+  clearReuseHold(sessionId);
 }
 
 export function armedAutoClosePaneId(

@@ -27,6 +27,8 @@ import {
   armAutoCloseOnHandoff,
   armedAutoClosePaneId,
   disarmAutoCloseOnHandoff,
+  HELPER_REUSE_HOLD_MS,
+  reuseHoldRemainingMs,
 } from "./pane-close-scopes";
 import {
   armDeliveryContract,
@@ -280,6 +282,22 @@ describe("workspace handoff", () => {
     await vi.runAllTimersAsync();
     expect(close).toHaveBeenCalledWith("pane-child", "child");
     expect(armedAutoClosePaneId("child")).toBeNull();
+  });
+
+  it("F-197: helper com janela de reuso fica vivo e desarmado e fecha no fim da janela", async () => {
+    caller("parent");
+    const child = caller("child");
+    const close = vi.spyOn(panes, "requestPaneClose").mockResolvedValue(true);
+    armAutoCloseOnHandoff("child", "pane-child", { reuseHold: true });
+    vi.useFakeTimers();
+
+    expect(await tool("submit").handler({ ...args, fullText: "Relatório completo: implementação em result.ts, validação executada e resultados conferidos." }, child)).toMatchObject({ delivered: true });
+    await vi.advanceTimersByTimeAsync(HELPER_REUSE_HOLD_MS - 1);
+    expect(close).not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId("child")).toBeNull();
+    expect(reuseHoldRemainingMs("child", "pane-child")).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(close).toHaveBeenCalledWith("pane-child", "child");
   });
 
   it("não fecha o pane se outra sessão o ocupou após o handoff", async () => {
