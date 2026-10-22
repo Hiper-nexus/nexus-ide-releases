@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
-import { DESIGN_CHARTER } from './design-charter';
+import { DESIGN_CHARTER, UI_KIT_BRIEF_LINE } from './design-charter';
 import { composeDesignCharter } from './design-profile';
 import { operatorDesignContext } from './workspace-design-rule';
 
@@ -101,5 +101,23 @@ describe('the two paths that actually deliver it', () => {
     );
 
     expect(text).toBeNull();
+  });
+});
+
+describe('the discovery step is the one where the Jev decides', () => {
+  // Review 22/10 (P0-3): the charter and the skill sent agents to
+  // `nexus_ui_kit_catalog({task})` first — read-only, offline rule only — so
+  // the Jev never decided in a real mission. The judged door is add({task}).
+  it('sends an agent that does not know the slug to nexus_ui_kit_add({task})', () => {
+    expect(DESIGN_CHARTER).toContain('nexus_ui_kit_add({task})');
+    expect(DESIGN_CHARTER.indexOf('nexus_ui_kit_add({task})')).toBeLessThan(
+      DESIGN_CHARTER.indexOf('nexus_ui_kit_catalog'),
+    );
+    expect(DESIGN_CHARTER).toMatch(/nexus_ui_kit_catalog` only LISTS/);
+  });
+
+  it('the short brief line carries the same door', () => {
+    expect(UI_KIT_BRIEF_LINE).toContain('nexus_ui_kit_add({task})');
+    expect(UI_KIT_BRIEF_LINE).toContain('nexus_ui_kit_recipe');
   });
 });
