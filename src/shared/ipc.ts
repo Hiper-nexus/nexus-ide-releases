@@ -52,9 +52,17 @@ export const spawnRequestSchema = z.object({
   rendererWaitMs: z.number().nonnegative().optional().catch(undefined),
 });
 
+/**
+ * Teto de UM envio de entrada humana ao PTY (tecla, colagem). O xterm entrega
+ * a colagem inteira num único onData; a lane crua e a do operador usam o
+ * mesmo teto, senão colar um arquivo num pane governado não tinha por onde
+ * entrar.
+ */
+export const PTY_INPUT_MAX_CHARS = 1_000_000;
+
 export const writeSchema = z.object({
   sessionId: z.string().min(1).max(128),
-  data: z.string().max(1_000_000),
+  data: z.string().max(PTY_INPUT_MAX_CHARS),
 });
 
 export const resizeSchema = z

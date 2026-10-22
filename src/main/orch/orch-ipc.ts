@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { ORCH_CHANNELS } from "../../shared/orch-channels";
+import { PTY_INPUT_MAX_CHARS } from "../../shared/ipc";
 import {
   missionEngineCommandSchema,
   missionPrepareRequestSchema,
@@ -471,14 +472,17 @@ function rendererAsyncAuthorityFence(
 
 
 /**
- * Teclado do operador num pane de missão. O teto é digitação e edição de
- * linha — um prompt de kickoff não cabe aqui, e é essa a intenção: o operador
- * conversa com o agente, não injeta contrato por fora do gate.
+ * Teclado e colagem do operador num pane governado (missão, ou papel de
+ * worker/orchestrator sem missão). O teto é o da lane crua: o xterm manda a
+ * colagem inteira num único envio, e o antigo teto de 4.096 recusava colar um
+ * arquivo aqui enquanto a lane crua recusa pane governado por design ("o main
+ * recusou a digitação neste pane"). Injeção orquestrada (kickoff, handoff)
+ * não passa por aqui: entra pela lane main-owned com recibo.
  */
 export const paneOperatorInputSchema = z
   .object({
     sessionId: z.string().min(1).max(128),
-    data: z.string().min(1).max(4_096),
+    data: z.string().min(1).max(PTY_INPUT_MAX_CHARS),
   })
   .strict();
 
