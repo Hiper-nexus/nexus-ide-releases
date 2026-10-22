@@ -523,6 +523,55 @@ saber isto antes de mexer:
 - Run `npm run typecheck` after any source change.
 - The build chain (`premake` / `prepackage`) enforces typecheck, renderer-sink
   security, and native checks before build or package.
+- **Marcador de atalho deliberado: `ponytail:`.** Esta é a palavra do projeto, e
+  o ponytail 5 manda declará-la aqui (o 5.1 trocou o padrão para `shortcut:`).
+  Um atalho com teto conhecido leva um comentário `ponytail: <o teto>, <quando
+  subir>`; ~30 comentários no código já usam essa palavra e não serão
+  renomeados.
+
+## Ponytail é o pontapé inicial de todo trabalho de código (21/10/2026)
+
+- O ruleset vive em `src/main/orch/ponytail.ts` (`PONYTAIL_RULES`, v5.3.2, MIT,
+  cópia de `.agents/rules/ponytail.md` do upstream com UM desvio: o marcador
+  acima). Ele chega ao agente por TRÊS caminhos, e os três precisam andar
+  juntos quando o upstream mudar:
+  1. **Contrato do worker** (`worker-handoff-contract.ts`): injetado no prompt
+     de todo worker de squad quando "Código enxuto" está ligado (padrão: sim) e
+     `charterTierForWorker` devolve `lean: true`. Scout, architect, pane-meta e
+     pane somente-leitura NÃO recebem (entregam texto, não diff) e o revisor
+     também não — a escada de diff é para quem escreve, não para quem julga.
+  2. **Skill espelhada** (`skill-mirror.ts`, `GENERATED_PONYTAIL_SKILL`): corpo
+     inline, não asset de `assets/skills/`, então NÃO passa por
+     `bundle-skills.mjs`. A tabela de níveis diz que o nível se troca em
+     palavras: o Nexus embarca o ruleset, não as hooks nem os comandos
+     `/ponytail` do upstream, e prometer o comando seria mandar usar o que não
+     existe.
+  3. **Lembrete no hook de delegação** (`hook-delegate-endpoint.ts`,
+     `LEAN_CODE_REMINDER`): uma linha no pane do operador, 1× a cada 30 min por
+     sessão. Com conselho do Jev, quem decide é ele (`writesCode ≥ 0,6`). SEM
+     conselho nenhum — sem credencial, Jev desligado, fora do ar ou estourando
+     os 2,5 s — decide o pré-filtro `isCodeRequest` (mesmo molde do pré-filtro
+     de navegador): verbo de escrita ou de edição (criar, corrigir, editar,
+     mudar, alterar, add, change, modify…), em português ou inglês, SÓ com
+     contexto de código: marcador forte (`STRONG_CODE_CONTEXT_PATTERN`:
+     função, componente, endpoint, `crase`, arquivo `.ts`, `.json`…) basta; o
+     ambíguo (teste, bug, API, commit, branch) só conta se o pedido não for um
+     texto (mensagem, relatório, resumo, PRD…). Uma ORDEM de refatorar
+     ("refatore o checkout", "please refactor…") basta sozinha; "explique a
+     refatoração" e "do not refactor" não.
+     "Escreva o PRD", "write a commit message" e "crie um bug report" ficam
+     calados. Antes o silêncio do Jev valia como "não é código" e o pane
+     ficava só com a skill instalada.
+     Prompt que já traz `# Ponytail` não recebe de novo. Verbo negado ("do not
+     delete…", "não altere…") não conta. "stop ponytail", "normal mode" ou
+     "modo normal" desligam o lembrete naquela sessão até "start ponytail",
+     como a skill promete.
+- Medido pelo autor contra o MESMO agente sem a skill (Opus 5.5, 39 tarefas, 5
+  runs cada): −53% de código, −41% de tempo, −26% de custo, −45% de tokens de
+  saída, 98% da lógica de risco com teste (sem ela, 68%).
+- `toEqual({})` NÃO é mais prova de que um canal do hook ficou calado: os canais
+  estáticos (ponytail, dica de navegador, design, memória) disparam sem o Jev.
+  Teste de um canal afirma a ausência do texto DELE, não o payload vazio.
 
 ## Project Skills
 

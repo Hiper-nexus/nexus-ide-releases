@@ -2955,9 +2955,14 @@ describe('leader-drift — o relive do Maestro religa a missão à sessão nova'
       `pty-${maestro.id}-new`,
     );
     expect(bindPaneMission).toHaveBeenCalledWith(maestro.id, missionId);
+    // Depois do bind só falta o import() dinâmico do espelho, que no Vitest
+    // resolve o caminho por RPC ao processo principal. No runner do CI, com a
+    // suíte inteira em paralelo, isso passou de 1 s (falhou na main 0.76.414 e
+    // no PR #160 com o rebind e o bind já feitos); o prazo padrão media a fila
+    // do Vitest, não o código.
     await vi.waitFor(() => {
       expect(reflectLeadershipMock).toHaveBeenCalled();
-    });
+    }, { timeout: 10_000 });
   });
 
   it('vínculo só no índice paneMissions (sem pane.missionId) também religa', async () => {

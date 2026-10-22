@@ -100,9 +100,9 @@ const DESIGN_CHARTER_HEADING = '# Design Charter';
  * regras completas vivem na skill.
  */
 export const LEAN_CODE_REMINDER =
-  '[Nexus · Jev] Pedido de código: siga a skill ponytail — entenda o fluxo, ' +
-  'reuse o que já existe, nada de abstração que ninguém pediu, o menor diff ' +
-  'correto e um teste pequeno que falhe se a lógica quebrar.';
+  '[Nexus] Pedido de código: siga a skill ponytail — mapeie tudo que a mudança ' +
+  'alcança, reuse o que já existe, nada de abstração que ninguém pediu, o menor ' +
+  'diff correto, um teste pequeno, e feche dizendo o que pulou e o risco.';
 
 /**
  * Pré-filtro barato (regex, sem chamada ao Jev) para pedidos de página/
@@ -122,6 +122,56 @@ function isBrowserRequest(prompt: string): boolean {
     BROWSER_REQUEST_PATTERN.test(prompt) ||
     (BROWSER_EXTRACT_PATTERN.test(prompt) && WEB_CONTEXT_PATTERN.test(prompt))
   );
+}
+
+/**
+ * Pré-filtro barato (regex, sem chamada ao Jev) para pedido de código, no mesmo
+ * molde do de navegador acima. Sem ele, o pane "+" de quem não tem credencial
+ * do Jev — ou com o Jev desligado, fora do ar ou estourando os 2,5 s — nunca
+ * ouve falar da ponytail: a skill fica só instalada, à espera de o modelo
+ * decidir usá-la. Verbo de ESCRITA só: ler, explicar e analisar não entram. E
+ * só com contexto de código: "escreva o PRD", "crie um resumo" e "ajuste o
+ * texto" também são escrita. Uma ordem de refatorar basta sozinha. É heurística
+ * de reserva: com o Jev no ar, quem decide é ele.
+ */
+const CODE_WRITE_VERBS =
+  'implement(a|e|ar)?|corrij(a|ir)|corrigir|conserta(r)?|arrum(a|ar)?|ajust(a|e|ar)|escrev(a|er)|cri(a|e|ar)|adicion(a|e|ar)|remov(a|er)|apag(a|ue|ar)|migra(r)?|renomei(a|e)|renomear|edit(a|e|ar)|mud(a|e|ar)|alter(a|e|ar)|modifi(ca|que|car)|fa[cç]a|fazer|fix|implement|rewrite|rename|migrate|add|create|delete|remove|update|write|build|edit|change|modify|make';
+const CODE_WRITE_VERB_PATTERN = new RegExp(`\\b(${CODE_WRITE_VERBS})\\b`, 'iu');
+/**
+ * Verbo proibido não é pedido: "do not delete this handler; explain…" e "não
+ * altere a função; apenas explique" saem do texto antes da busca pelo verbo.
+ */
+const NEGATED_CODE_WRITE_VERB_PATTERN = new RegExp(
+  `\\b(?:do not|don'?t|never|n[aã]o|nunca|sem)\\s+(?:${CODE_WRITE_VERBS})\\b`,
+  'giu',
+);
+/**
+ * Refatorar é de código por definição, mas só como ORDEM: no começo da frase
+ * ou depois de "please/pode/vamos". "Explain the refactor", "do not
+ * refactor" e "a refatoração" ficam de fora; `(?!\p{L})` impede casar
+ * "refatora" dentro de "refatoração" (o `\b` não vê o "ç" como letra).
+ */
+const REFACTOR_COMMAND_PATTERN =
+  /(?:^|[.;!?:]\s*|\b(?:please|can you|could you|let'?s|por favor|pode|podes|vamos)\s+)(?:refator(?:e|a|ar)|refactor)(?!\p{L})/iu;
+/** Marcador que só aparece em código: basta com o verbo. */
+const STRONG_CODE_CONTEXT_PATTERN =
+  /\b(c[oó]digo|code|fun[cç][aã]o|function|m[eé]todo|method|classe|class|componentes?|components?|endpoint|rota|route|handler|hook|m[oó]dulo|module|script|query|schema|migra[cç][aã]o|migration|valida[cç][aã]o|validation|vari[aá]vel|variable|import|lint|typecheck|banco de dados|database|sql|regex|frontend|backend)\b|`[^`]+`|\b[\w-]+\.(tsx?|jsx?|mjs|cjs|json|vue|svelte|py|go|rs|java|kt|swift|rb|php|cs|cpp|hpp|css|scss|html|xml|sql|sh|ya?ml|toml|gradle|tf)\b|\b(src|lib|app)\//iu;
+/**
+ * Marcador ambíguo: também nomeia texto ("commit message", "bug report",
+ * "API summary", "relatório de testes"). Só conta quando o pedido não é um
+ * desses textos.
+ */
+const WEAK_CODE_CONTEXT_PATTERN =
+  /\b(testes?|tests?|bug|api|branch|commit|reposit[oó]rio|repo)\b/iu;
+const TEXT_ARTIFACT_PATTERN =
+  /\b(message|mensagem|report|relat[oó]rio|summary|resumo|e-?mail|prd|post|artigo|article|documenta[cç][aã]o|readme|changelog|release notes|ata|apresenta[cç][aã]o)\b/iu;
+
+function isCodeRequest(prompt: string): boolean {
+  const text = prompt.trim();
+  if (REFACTOR_COMMAND_PATTERN.test(text)) return !TEXT_ARTIFACT_PATTERN.test(text);
+  if (!CODE_WRITE_VERB_PATTERN.test(text.replace(NEGATED_CODE_WRITE_VERB_PATTERN, ' '))) return false;
+  return STRONG_CODE_CONTEXT_PATTERN.test(prompt) ||
+    (WEAK_CODE_CONTEXT_PATTERN.test(prompt) && !TEXT_ARTIFACT_PATTERN.test(prompt));
 }
 
 export const BROWSER_TOOL_HINT =
@@ -150,6 +200,28 @@ export const MAESTRO_TURN_REMINDER =
 
 const maestroRemindedAt = new Map<string, number>();
 const leanRemindedAt = new Map<string, number>();
+/**
+ * Sessões em que o operador desligou a ponytail ("stop ponytail", "normal
+ * mode", como a skill promete) até religar ("start ponytail"). Sem isto o
+ * lembrete voltava no pedido seguinte e desfazia o pedido do operador.
+ */
+const leanOptedOut = new Set<string>();
+const LEAN_OPT_OUT_MAX_SESSIONS = 512;
+const PONYTAIL_OPT_OUT_PATTERN = /\b(?:stop ponytail|normal mode|modo normal|pare (?:a|o) ponytail|desligue (?:a|o) ponytail)\b/iu;
+const PONYTAIL_OPT_IN_PATTERN = /\b(?:start ponytail|ponytail on|ligue (?:a|o) ponytail|volte (?:a|à|ao) ponytail)\b/iu;
+
+function updateLeanOptOut(sessionId: string, prompt: string): void {
+  if (PONYTAIL_OPT_IN_PATTERN.test(prompt)) {
+    leanOptedOut.delete(sessionId);
+    return;
+  }
+  if (!PONYTAIL_OPT_OUT_PATTERN.test(prompt)) return;
+  if (leanOptedOut.size >= LEAN_OPT_OUT_MAX_SESSIONS) {
+    const oldest = leanOptedOut.values().next().value;
+    if (oldest !== undefined) leanOptedOut.delete(oldest);
+  }
+  leanOptedOut.add(sessionId);
+}
 const designRemindedAt = new Map<string, number>();
 const doctrineDeliveredAt = new Map<string, number>();
 const businessModelDeliveredAt = new Map<string, { hash: string; at: number }>();
@@ -197,6 +269,7 @@ function claimLeanReminder(sessionId: string, now: number): boolean {
 export function __resetLeanRemindersForTests(): void {
   maestroRemindedAt.clear();
   leanRemindedAt.clear();
+  leanOptedOut.clear();
   designRemindedAt.clear();
   doctrineDeliveredAt.clear();
   businessModelDeliveredAt.clear();
@@ -869,11 +942,18 @@ export async function handleHookDelegateRequest(
       markReminded(browserHintDeliveredAt, ctx.sessionId, now);
       parts.push(BROWSER_TOOL_HINT);
     }
+    // Com conselho, quem decide é o Jev (um "não é código" dele vale). Sem
+    // conselho nenhum, o pré-filtro decide: silêncio ali deixava o pedido de
+    // código sem a ponytail, que é o pontapé inicial de todo trabalho de código.
+    const writesCode = advice
+      ? advice.writesCode >= LEAN_REMINDER_MIN_WRITES_CODE
+      : isCodeRequest(prompt);
+    if (ctx.sessionId) updateLeanOptOut(ctx.sessionId, prompt);
     if (
-      advice &&
-      advice.writesCode >= LEAN_REMINDER_MIN_WRITES_CODE &&
+      writesCode &&
       !prompt.includes(PONYTAIL_RULES_HEADING) &&
       ctx.sessionId &&
+      !leanOptedOut.has(ctx.sessionId) &&
       claimLeanReminder(ctx.sessionId, now)
     ) {
       parts.push(LEAN_CODE_REMINDER);

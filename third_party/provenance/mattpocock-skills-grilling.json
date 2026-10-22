@@ -4,9 +4,10 @@
   "license": "MIT",
   "copyright": "Copyright (c) 2026 Matt Pocock",
   "licenseFile": "third_party/licenses/mattpocock-skills-MIT.txt",
-  "importedAt": "2026-07-17",
+  "importedAt": "2026-10-21",
   "type": "vendored-verbatim",
   "originalPath": "skills/productivity/grilling/SKILL.md",
   "nexusPath": "src/main/orch/skill-mirror.ts (GENERATED_GRILLING_SKILL)",
-  "notes": "Skill de entrevista (uma pergunta por vez; fatos do ambiente, decisões do usuário) embutida inline no skill-mirror para o squad de planejamento. Conteúdo verbatim."
+  "notes": "Skill de entrevista embutida inline no skill-mirror para o squad de planejamento. Conteúdo verbatim. Desde a importação de 2026-10-21 o upstream trabalha a árvore de decisões em rodadas: a cada rodada pergunta toda a fronteira (decisões cujos pré-requisitos já estão resolvidos), numerada e com a resposta recomendada. A importação de 2026-07-17 era a versão de uma pergunta por vez. Fatos vêm do ambiente; decisões, do usuário.",
+  "previousImportedAt": "2026-07-17"
 }
