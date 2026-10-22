@@ -114,12 +114,40 @@ describe('cli install recipes', () => {
       .toBe('npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code');
   });
 
-  it('installs Muse via official Homebrew cask', () => {
-    const recipe = cliInstallRecipeFor('muse', 'darwin');
-    expect(recipe?.kind).toBe('argv');
-    if (recipe?.kind === 'argv') {
-      expect(recipe.argv).toEqual(['brew', 'install', '--cask', 'muse-code']);
-    }
+  it('F-1648: installs Muse on a Mac with bash but no Node/npm or Homebrew', () => {
+    const selected = selectInstallRecipe(cliInstallRecipeCandidates('muse', 'darwin'), runner => runner === 'bash');
+    expect(selected).toMatchObject({ ok: true, recipe: {
+      kind: 'script', runner: 'bash', scriptUrl: 'https://dev.meta.ai/install.sh',
+      env: { MUSE_LOGIN: '0', MUSE_NO_MODIFY_PATH: '1' },
+    } });
+  });
+
+  it('F-1648: prefers native Muse even when Homebrew is available', () => {
+    const selected = selectInstallRecipe(cliInstallRecipeCandidates('muse', 'darwin'), () => true);
+    expect(selected).toMatchObject({ ok: true, recipe: { kind: 'script', runner: 'bash' } });
+  });
+
+  it('F-1648: keeps the official Muse cask as backup when bash is absent', () => {
+    const selected = selectInstallRecipe(cliInstallRecipeCandidates('muse', 'darwin'), runner => runner === 'brew');
+    expect(selected).toMatchObject({ ok: true, recipe: {
+      kind: 'argv', argv: ['brew', 'install', '--cask', 'muse-code'],
+    } });
+  });
+
+  it('F-1648: preserves no-login/no-profile-write settings in confirmation and manual install', () => {
+    const recipe = cliInstallRecipeFor('muse', 'darwin')!;
+    expect(describeInstallRecipe(recipe)).toContain('MUSE_LOGIN="0"');
+    expect(describeInstallRecipe(recipe)).toContain('MUSE_NO_MODIFY_PATH="1"');
+    expect(cliInstallCommandFor('muse', 'darwin')).toBe(
+      "curl -fsSL https://dev.meta.ai/install.sh | 'env' 'MUSE_LOGIN=0' 'MUSE_NO_MODIFY_PATH=1' 'bash'",
+    );
+  });
+
+  it('F-1648: reports only bash/Homebrew prerequisites when neither runner exists', () => {
+    const selected = selectInstallRecipe(cliInstallRecipeCandidates('muse', 'darwin'), () => false);
+    expect(selected).toMatchObject({ ok: false, missingRunnerHints: [
+      expect.stringContaining('bash'), expect.stringContaining('Homebrew'),
+    ] });
   });
 
   it('never invents recipes for CLIs without a verified channel', () => {
