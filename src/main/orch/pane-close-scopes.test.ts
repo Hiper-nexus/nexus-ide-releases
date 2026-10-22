@@ -484,6 +484,44 @@ describe("F-1409: entrega não-success fecha no ACK ou na rede de segurança", (
     expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
   });
 
+  // F-1634 (revisão do Codex no PR 159): um worker pode ter DUAS rodadas
+  // entregues e não consumidas — payload novo depois de uma entrega já
+  // entregue abre rodada nova (F-239). O ramo de `rework` limpava a espera da
+  // sessão SEM conferir o handoff, então um ACK da rodada ANTIGA cancelava a
+  // rede de segurança da rodada NOVA e o pane ficava armado sem prazo. O
+  // defeito é anterior a esta mudança, mas ela o leva ao caso comum: antes só
+  // partial/failed/blocked criavam espera, agora o `success` também.
+  it("rework de uma rodada antiga não cancela a rede de segurança da nova", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "rodada-1", awaitAckOnSuccess: true,
+    });
+    // Rodada nova do mesmo worker, antes de o Maestro consumir a primeira.
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "rodada-2", awaitAckOnSuccess: true,
+    });
+
+    // O Maestro devolve a rodada ANTIGA.
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "rodada-1", "rework")).toBe(false);
+
+    // A rede da rodada 2 sobrevive: o pane não fica armado para sempre.
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_IDLE_CLOSE_MS + 1_000);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
+  it("rework da rodada em espera continua cancelando a rede dela", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "rodada-1", awaitAckOnSuccess: true,
+    });
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "rodada-1", "rework")).toBe(false);
+    await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS * 2);
+    expect(close).not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId("sess-w")).toBe("pane-w");
+  });
+
   it("sem awaitAckOnSuccess (helper do operador, sem missão) success fecha já", async () => {
     const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
     armAutoCloseOnHandoff("sess-w", "pane-w");

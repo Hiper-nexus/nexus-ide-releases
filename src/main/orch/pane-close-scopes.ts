@@ -393,7 +393,17 @@ export function closeAfterNonSuccessHandoffAck(
   if (verdict === "rework") {
     // O writer volta a trabalhar: cancela a rede de segurança e, se o timer
     // já desarmou e agendou o close (setTimeout 0), cancela o close e rearma.
-    clearPendingNonSuccess(sessionId);
+    //
+    // F-1634 (revisão do Codex no PR 159): a rede cancelada é a DESTE handoff.
+    // Um worker pode ter duas rodadas entregues e não consumidas (payload novo
+    // depois de uma entrega já entregue abre rodada nova, F-239); limpar a
+    // espera da sessão sem conferir o handoff fazia um ACK da rodada antiga
+    // apagar a rede da rodada nova, e o pane ficava armado sem prazo nenhum.
+    // A espera que sobra defere o fechamento enquanto o worker produz saída
+    // (activityMark/isBusy), então a nota do rework não é interrompida.
+    if (pendingNonSuccessBySession.get(sessionId)?.handoffId === handoffId) {
+      clearPendingNonSuccess(sessionId);
+    }
     const scheduled = scheduledNonSuccessCloseBySession.get(sessionId);
     if (scheduled) {
       clearTimeout(scheduled.timer);
