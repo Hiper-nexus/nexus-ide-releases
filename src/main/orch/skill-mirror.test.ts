@@ -84,7 +84,9 @@ describe('ensureSkillsForCli', () => {
     ensureSkillsForCli('codex', { home, sourceDirs: [], allowedSkills: ['rea'], targetDirs: [target], includeCliTarget: false });
     const helper = path.join(target, 'rea', 'scripts', 'rea-static.mjs');
     expect(fs.existsSync(helper)).toBe(true);
-    const workspace = tmpRoot();
+    // O helper recusa caminho com link no meio; no macOS o tmpdir passa por
+    // /var -> /private/var, então o workspace entra pelo caminho real.
+    const workspace = fs.realpathSync(tmpRoot());
     const result = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
       execFile(process.execPath, [helper, 'status', '--workspace', workspace, '--runtime', path.join(workspace, 'missing-runtime')],
         { windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024 },
