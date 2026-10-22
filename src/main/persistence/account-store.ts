@@ -689,17 +689,22 @@ export async function verifyManagedClaudeAccountForSpawn(
       result = await probeClaudeCredentialIdentity(credential, account.email);
     }
   }
-  if (result === 'auth-expired' && !nativeLogin &&
-      await ensureFreshClaudeSubscription(accountId)) {
+  if (result === 'auth-expired' && !nativeLogin) {
     // F-1637: Reserva só no cofre, ou escopo com OUTRA linhagem mais velha
     // que o cofre: quem renova é o cofre, por HTTP, com as guardas de linhagem
     // de `ensureFreshClaudeSubscription` (nunca o login nativo nem linhagem
-    // compartilhada) e prova da conta no token novo antes de gravá-lo.
-    originalSaved = getSecret(CRED_PREFIX + accountId);
-    credential = managed
-      ? freshestClaudeCredential(await readManagedClaudeAuthAsync(accountId), originalSaved)
-      : originalSaved;
-    result = await probeClaudeCredentialIdentity(credential, account.email);
+    // compartilhada) e prova da conta no token novo antes de gravá-lo. Um
+    // irmão que publicou a renovação enquanto esta verificação corria também
+    // conta: o token novo é provado aqui de novo.
+    const refreshed = await ensureFreshClaudeSubscription(accountId);
+    const vaultNow = getSecret(CRED_PREFIX + accountId);
+    if (refreshed || vaultNow !== originalSaved) {
+      originalSaved = vaultNow;
+      credential = managed
+        ? freshestClaudeCredential(await readManagedClaudeAuthAsync(accountId), originalSaved)
+        : originalSaved;
+      result = await probeClaudeCredentialIdentity(credential, account.email);
+    }
   }
   if (result === 'auth-expired') {
     const expiry = expiredClaudeSpawnVerdict(accountId, credential, originalSaved, managed, refusedLineage);
@@ -1084,7 +1089,12 @@ export function prepareAccountForSpawn(
   }
 }
 
-const claudeRefreshInFlight = new Set<string>();
+/**
+ * Uma renovação por conta, compartilhada: quem chega com ela em voo (sweeper,
+ * spawn, cota) espera o MESMO resultado em vez de desistir — o spawn recusava
+ * como "expirou" enquanto o irmão estava a um passo de gravar o token novo.
+ */
+const claudeRefreshInFlight = new Map<string, Promise<boolean>>();
 
 /**
  * Última falha de renovação por conta (só tentativas reais, nunca skips).
@@ -1196,8 +1206,23 @@ export async function ensureFreshClaudeSubscription(
   const blob = getSecret(CRED_PREFIX + accountId);
   if (typeof blob !== 'string' || !blob) return false;
   if (!options.force && !claudeBlobNeedsRefresh(blob, now)) return false;
-  if (claudeRefreshInFlight.has(accountId)) return false;
-  claudeRefreshInFlight.add(accountId);
+  const inFlight = claudeRefreshInFlight.get(accountId);
+  if (inFlight) return inFlight;
+  const run = refreshClaudeVaultLineage(account, blob, now, refreshImpl, options)
+    .finally(() => claudeRefreshInFlight.delete(accountId));
+  claudeRefreshInFlight.set(accountId, run);
+  return run;
+}
+
+/** O corpo da renovação HTTP do cofre; `ensureFreshClaudeSubscription` a serializa por conta. */
+async function refreshClaudeVaultLineage(
+  account: Account,
+  blob: string,
+  now: number,
+  refreshImpl: ((blob: string, now: number) => Promise<string | null>) | undefined,
+  options: { force?: boolean },
+): Promise<boolean> {
+  const accountId = account.id;
   try {
     // Refresh rotates an opaque grant. Prove the current access token belongs
     // to this account before touching that grant. An expired access token
@@ -1244,8 +1269,6 @@ export async function ensureFreshClaudeSubscription(
   } catch {
     markClaudeRefreshFailed(account);
     return false;
-  } finally {
-    claudeRefreshInFlight.delete(accountId);
   }
 }
 

@@ -947,6 +947,46 @@ describe('renovação morta veta failover no escuro', () => {
     expect(deps.keychainWrites).toEqual([]);
   });
 
+  // Revisão do PR #165 (P1): com a renovação da Reserva já em voo (sweeper
+  // ou pane irmão), o spawn recusava como "expirou" em vez de esperá-la.
+  it('spawn com renovação já em voo espera por ela, com um refresh só', async () => {
+    const a = addSecondary('Conta B', 'b@example.test', oauthBlob('expired'));
+    deps.needsRefresh.mockImplementation((blob) =>
+      blob === oauthBlob('renewed') ? null : { refreshToken: 'refresh-expired' });
+    let release!: (value: string | null) => void;
+    deps.refreshBlob.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    deps.probeClaudeIdentity.mockImplementation(async (blob) =>
+      blob === oauthBlob('renewed') ? 'match' : 'auth-expired');
+    const verified = vi.fn();
+
+    const sweep = ensureFreshClaudeSubscription(a.id);
+    await vi.waitFor(() => expect(deps.refreshBlob).toHaveBeenCalledTimes(1));
+    const spawn = verifyManagedClaudeAccountForSpawn(a.id, verified);
+    release(oauthBlob('renewed'));
+
+    expect(await sweep).toBe(true);
+    expect(await spawn).toBe('match');
+    expect(verified).toHaveBeenCalledWith(oauthBlob('renewed'));
+    expect(deps.refreshBlob).toHaveBeenCalledTimes(1);
+  });
+
+  it('renovação que um irmão publicou durante a verificação é usada, não recusada', async () => {
+    const a = addSecondary('Conta B', 'b@example.test', oauthBlob('expired'));
+    deps.needsRefresh.mockImplementation((blob) =>
+      blob === oauthBlob('renewed') ? null : { refreshToken: 'refresh-expired' });
+    deps.probeClaudeIdentity
+      .mockImplementationOnce(async () => {
+        deps.secrets.set(`acctcred:${a.id}`, oauthBlob('renewed')); // o irmão terminou agora
+        return 'auth-expired';
+      })
+      .mockImplementation(async (blob) => (blob === oauthBlob('renewed') ? 'match' : 'auth-expired'));
+    const verified = vi.fn();
+
+    expect(await verifyManagedClaudeAccountForSpawn(a.id, verified)).toBe('match');
+    expect(verified).toHaveBeenCalledWith(oauthBlob('renewed'));
+    expect(deps.refreshBlob).not.toHaveBeenCalled();
+  });
+
   it('o login nativo nunca é renovado por HTTP pelo spawn, e a CLI roda no perfil nativo', async () => {
     const a = addClaudeAccount('Conta Nativa', 'nativa@example.test', oauthBlob('native-expired'));
     deps.needsRefresh.mockReturnValue({ refreshToken: 'refresh-native-expired' });
