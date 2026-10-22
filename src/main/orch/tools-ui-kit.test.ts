@@ -181,3 +181,38 @@ describe('a project the kits cannot serve', () => {
     expect(service.runShadcnCommand).not.toHaveBeenCalled();
   });
 });
+
+describe('a monorepo package, by name from the list Main reads', () => {
+  function monorepo(): void {
+    fs.writeFileSync(path.join(project.root, 'package.json'), JSON.stringify({ workspaces: ['apps/*'] }));
+    fs.mkdirSync(path.join(project.root, 'apps', 'web'), { recursive: true });
+    fs.writeFileSync(path.join(project.root, 'apps', 'web', 'package.json'), '{}');
+  }
+
+  it('runs in the package the agent named', async () => {
+    monorepo();
+
+    await tool('nexus_ui_kit_run').handler({ command: 'info', workspace: 'apps/web' }, ctx);
+
+    expect(service.runShadcnCommand.mock.calls[0]?.[0].cwd).toBe(path.join(project.root, 'apps', 'web'));
+  });
+
+  it('refuses a directory the project does not declare, naming the ones it does', async () => {
+    monorepo();
+
+    await expect(
+      tool('nexus_ui_kit_run').handler({ command: 'info', workspace: '../elsewhere' }, ctx),
+    ).rejects.toThrow(/declares apps\/web/);
+    expect(service.runShadcnCommand).not.toHaveBeenCalled();
+  });
+
+  it('lists the packages in the catalog', async () => {
+    monorepo();
+
+    const out = (await tool('nexus_ui_kit_catalog').handler({ kit: 'boardui' }, ctx)) as {
+      workspaces?: string[];
+    };
+
+    expect(out.workspaces).toEqual(['apps/web']);
+  });
+});

@@ -53,6 +53,13 @@ rejected.
 5. **Style it.** Apply the contract's tokens, then finish the states
    (hover/focus/empty/error) with **impeccable**.
 
+### Monorepos
+
+The kit runs at the project root unless you name a package: pass
+`workspace: "apps/web"` (any entry from the `workspaces` list the catalog
+returns) to `nexus_ui_kit_add`, `nexus_ui_kit_recipe` or `nexus_ui_kit_run`.
+A directory the project does not declare as a workspace is refused.
+
 ### When the receipt says nothing was written
 
 - `alreadyPresent`: the files existed and were NOT overwritten. Use them, or
@@ -62,6 +69,12 @@ rejected.
   BoardUI with `kit: 'boardui'`.
 - `PROJECT_BUSY`: another kit install is still running in this project. Wait,
   check the files it wrote, retry only what is missing.
+- `refusal: "framework_unsupported"`: the project is not React for the web
+  (Vue, Svelte, Angular, Expo…). Use that framework's port or write it with
+  the design contract.
+- `SHARED_NODE_MODULES`: this worktree's `node_modules` is a link to another
+  checkout. Give it its own install first (remove the link only, then the
+  project install), or install in the main checkout.
 
 ## Which kit
 

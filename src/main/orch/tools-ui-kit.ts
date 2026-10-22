@@ -1,5 +1,6 @@
 import type { McpToolDef } from './mcp-protocol';
 import { executionScopeFor } from './gate';
+import { listUiKitWorkspaces, resolveUiKitWorkspace } from '../ui-kit/ui-kit-workspaces';
 import { num, requireStr, str, strArray } from './tool-util';
 import { UI_KIT_IDS, type UiKitId } from '../ui-kit/ui-kit-cli';
 import {
@@ -77,9 +78,18 @@ import {
  *   configures that in the project; an agent does not get to aim a write.
  */
 
-function cwdFor(ctx: Parameters<McpToolDef['handler']>[1]): string {
-  return executionScopeFor(ctx).rootRealPath;
+function cwdFor(ctx: Parameters<McpToolDef['handler']>[1], args: Record<string, unknown> = {}): string {
+  // A monorepo package the PROJECT declares, by name from Main's own list —
+  // never a free path (see the header on destinations).
+  return resolveUiKitWorkspace(executionScopeFor(ctx).rootRealPath, str(args, 'workspace'));
 }
+
+const WORKSPACE_PROPERTY = {
+  type: 'string',
+  description:
+    'Monorepo package to run in (e.g. apps/web), from the `workspaces` the ' +
+    'catalog lists. Omit for the project root.',
+} as const;
 
 function parseKit(args: Record<string, unknown>, fallback: UiKitId = 'shadcn'): UiKitId {
   const raw = str(args, 'kit');
@@ -194,7 +204,7 @@ export function buildUiKitTools(): McpToolDef[] {
           },
         },
       },
-      handler: async (args) => {
+      handler: async (args, ctx) => {
         const kit = parseKit(args);
         const query = str(args, 'query');
         // An unreadable cache (NO_CACHE_ROOT, a damaged entry) must not take
@@ -268,8 +278,15 @@ export function buildUiKitTools(): McpToolDef[] {
           };
         }
 
+        let workspaces: readonly string[] = [];
+        try {
+          workspaces = listUiKitWorkspaces(executionScopeFor(ctx).rootRealPath);
+        } catch {
+          workspaces = [];
+        }
         return {
           kit,
+          ...(workspaces.length > 0 ? { workspaces } : {}),
           items: items.map((entry) => ({
             slug: entry.slug,
             label: entry.label,
@@ -374,12 +391,13 @@ export function buildUiKitTools(): McpToolDef[] {
               'Resolved against the live catalog; `items` wins if both are given.',
           },
           overwrite: { type: 'boolean' },
+          workspace: WORKSPACE_PROPERTY,
         },
       },
       handler: async (args, ctx, invocation) => {
         const named = assertNamedItems(strArray(args, 'items'));
         const task = str(args, 'task');
-        const cwd = cwdFor(ctx);
+        const cwd = cwdFor(ctx, args);
         // A caller who names a kit keeps it; `parseKit` defaults to shadcn, so
         // the pick only gets to choose when nothing was named.
         const namedKit = str(args, 'kit') ? parseKit(args) : undefined;
@@ -491,6 +509,7 @@ export function buildUiKitTools(): McpToolDef[] {
           },
           kit: { type: 'string', enum: [...UI_KIT_IDS] },
           dryRun: { type: 'boolean' },
+          workspace: WORKSPACE_PROPERTY,
         },
         required: ['recipe'],
       },
@@ -504,7 +523,7 @@ export function buildUiKitTools(): McpToolDef[] {
           );
         }
         const kit = parseKit(args);
-        const cwd = cwdFor(ctx);
+        const cwd = cwdFor(ctx, args);
         if (kit === 'shadcn' && args.dryRun !== true) {
           const refused = shadcnProjectNotReady(cwd);
           if (refused) {
@@ -617,12 +636,13 @@ export function buildUiKitTools(): McpToolDef[] {
           from: { type: 'string' },
           to: { type: 'string' },
           component: { type: 'string' },
+          workspace: WORKSPACE_PROPERTY,
         },
         required: ['command'],
       },
       handler: async (args, ctx, invocation) => {
         const command = buildRunCommand(args);
-        const cwd = cwdFor(ctx);
+        const cwd = cwdFor(ctx, args);
         if (command.kind === 'init') {
           const unfit = projectNotFitForKit(cwd, 'shadcn');
           if (unfit) return { ok: false, command: 'init', ...agentInstallReceipt(unfit, { kit: 'shadcn', items: [] }) };
@@ -696,6 +716,7 @@ export function buildUiKitTools(): McpToolDef[] {
         properties: {
           tool: { type: 'string', enum: [...BOARDUI_MCP_TOOLS] },
           args: { type: 'object', description: 'Arguments for that tool.' },
+          workspace: WORKSPACE_PROPERTY,
         },
         required: ['tool'],
       },
@@ -721,7 +742,7 @@ export function buildUiKitTools(): McpToolDef[] {
         }
         // After the refusal: resolving the scope is work, and a refusal should
         // not depend on it.
-        const cwd = cwdFor(ctx);
+        const cwd = cwdFor(ctx, args);
         assertStillCurrent(invocation);
         // Never take a key from a model, and never hand one back.
         if (tool === 'license_status') {
