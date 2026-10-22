@@ -208,7 +208,17 @@ const pendingNonSuccessBySession = new Map<string, PendingNonSuccessClose>();
  */
 const scheduledNonSuccessCloseBySession = new Map<
   string,
-  { readonly paneId: string; readonly timer: ReturnType<typeof setTimeout> }
+  {
+    readonly paneId: string;
+    /**
+     * F-1634 (2ª rodada do Codex no PR 159): de QUAL handoff é este close.
+     * Sem o id, um rework de rodada antiga cancelava o close já agendado da
+     * rodada nova e só rearmava o pane — sem pendente e sem timer, ele ficava
+     * aberto sem prazo nenhum.
+     */
+    readonly handoffId: string;
+    readonly timer: ReturnType<typeof setTimeout>;
+  }
 >();
 
 function clearPendingNonSuccess(sessionId: string): void {
@@ -223,7 +233,11 @@ function closePendingNonSuccess(sessionId: string, pending: PendingNonSuccessClo
   if (armedAutoClosePaneId(sessionId, pending.paneId) !== pending.paneId) return;
   disarmAutoCloseOnHandoff(sessionId, pending.paneId);
   const timer = closeArmedPaneSoon(sessionId, pending.paneId, pending.paneIdOf, pending.close);
-  scheduledNonSuccessCloseBySession.set(sessionId, { paneId: pending.paneId, timer });
+  scheduledNonSuccessCloseBySession.set(sessionId, {
+    paneId: pending.paneId,
+    handoffId: pending.handoffId,
+    timer,
+  });
 }
 
 /** Estados em que o worker ainda trabalha — a rede de segurança espera. */
@@ -404,8 +418,10 @@ export function closeAfterNonSuccessHandoffAck(
     if (pendingNonSuccessBySession.get(sessionId)?.handoffId === handoffId) {
       clearPendingNonSuccess(sessionId);
     }
+    // Só o close DESTE handoff é cancelado: o da rodada que ninguém devolveu
+    // continua valendo, senão o pane fica sem pendente e sem timer.
     const scheduled = scheduledNonSuccessCloseBySession.get(sessionId);
-    if (scheduled) {
+    if (scheduled && scheduled.handoffId === handoffId) {
       clearTimeout(scheduled.timer);
       scheduledNonSuccessCloseBySession.delete(sessionId);
       armAutoCloseOnHandoff(sessionId, scheduled.paneId);

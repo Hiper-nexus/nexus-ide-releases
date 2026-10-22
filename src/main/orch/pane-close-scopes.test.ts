@@ -510,6 +510,41 @@ describe("F-1409: entrega não-success fecha no ACK ou na rede de segurança", (
     expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
   });
 
+  // F-1634 (2ª rodada do Codex no PR 159): a minha correção anterior guardou
+  // só o mapa de PENDENTES. Quando a rodada nova já passou de pendente para o
+  // close AGENDADO, um rework da rodada antiga ainda cancelava esse close e
+  // apenas rearmava o pane — sem pendente e sem timer, ele ficava aberto sem
+  // prazo nenhum. O `handoffId` agora viaja no agendado e é conferido.
+  it("rework de rodada antiga não cancela o close JÁ AGENDADO da nova", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "rodada-2", awaitAckOnSuccess: true,
+    });
+    // Janela de ociosidade expira e o close vai para o AGENDADO (delay 0).
+    // Avanço síncrono para parar exatamente nesse estado, sem rodar o timer 0.
+    vi.advanceTimersByTime(SUCCESS_ACK_IDLE_CLOSE_MS);
+
+    // Rework da rodada ANTIGA, que nem tem pendente.
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "rodada-1", "rework")).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
+  it("rework da rodada agendada ainda vence a corrida e preserva o pane (Grok #1)", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "rodada-1", awaitAckOnSuccess: true,
+    });
+    vi.advanceTimersByTime(SUCCESS_ACK_IDLE_CLOSE_MS);
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "rodada-1", "rework")).toBe(false);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(close).not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId("sess-w")).toBe("pane-w");
+  });
+
   it("rework da rodada em espera continua cancelando a rede dela", async () => {
     const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
     armAutoCloseOnHandoff("sess-w", "pane-w");
