@@ -1250,4 +1250,15 @@ CREATE INDEX IF NOT EXISTS usage_events_token_snapshot_idx ON usage_events(
   pane_id, json_extract(metadata_json, '$.displayPaneId'), occurred_at, id
 );`,
     }),
+    // Revisão 22/10: a captura visual amarra o candidato (conteúdo da árvore
+    // relativo ao HEAD da captura). NULL em candidate_observed_at = linha de
+    // antes desta versão ou observação que não terminou: não prova o candidato.
+    createProjectMigration({
+      id: '057-visual-evidence-candidate', schemaVersion: 57, appVersion: '0.76.409',
+      sql: `ALTER TABLE visual_handoff_evidence ADD COLUMN candidate_observed_at INTEGER;
+      ALTER TABLE visual_handoff_evidence ADD COLUMN candidate_base TEXT
+        CHECK (candidate_base IS NULL OR length(candidate_base) IN (40, 64));
+      ALTER TABLE visual_handoff_evidence ADD COLUMN candidate_fingerprint TEXT
+        CHECK (candidate_fingerprint IS NULL OR length(candidate_fingerprint) = 64);`,
+    }),
   ]);

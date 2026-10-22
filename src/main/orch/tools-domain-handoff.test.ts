@@ -398,9 +398,15 @@ describe("handoff MCP stop receipt", () => {
   it('marks a visual assignment partial despite success prose and a claimed PNG', async () => {
     const ctx = { ...context(), visualTask: visualTaskRequirement('Corrija o bug no layout responsivo da tela de login.') };
     mocks.submit.mockReturnValue(handoff('nexus-trusted'));
-    const result = await submitTool().handler({ status: 'success', summary: 'Interface pronta e validada.',
+    const submission = { status: 'success', summary: 'Interface pronta e validada.',
       artifacts: [{ path: '/tmp/claimed.png', kind: 'screenshot' }],
-    }, ctx, invocation());
+    };
+    // Revisão 22/10: como o portão de regressão, UMA devolução com o caminho
+    // da captura antes de rebaixar; nada é gravado na devolução.
+    await expect(submitTool().handler(submission, ctx, invocation()))
+      .rejects.toThrow(/portão visual \(devolução 1\/1\)[\s\S]*nexus_preview_start[\s\S]*nexus_browser_responsive/);
+    expect(mocks.submit).not.toHaveBeenCalled();
+    const result = await submitTool().handler(submission, ctx, invocation());
     expect(mocks.submit.mock.calls[0]![0]).toMatchObject({ status: 'partial' });
     expect(mocks.submit.mock.calls[0]![0].summary).toContain('verificação visual pendente');
     expect(result).toMatchObject({ status: 'partial', visualVerification: { required: true, verified: false } });

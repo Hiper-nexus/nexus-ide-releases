@@ -5,19 +5,33 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { createScopedBrowserArtifactStore } from '../browser/browser-artifact-store';
 import { testProjectScope } from './__tests__/scope-fixture';
-import { checkVisualHandoff, recordVisualHandoffEvidence, visualTaskRequirement, visualTaskAtSpawn, visualEvidenceVerified } from './visual-handoff-gate';
+import { ProcessGitRunner } from '../runtime/git-command';
+import {
+  __resetVisualHandoffBouncesForTests, checkVisualHandoff, recordVisualHandoffEvidence, visualCandidateBindingsSettled,
+  visualHandoffSendBack, visualTaskRequirement, visualTaskAtSpawn, visualEvidenceVerified, VISUAL_CAPTURE_STALE_REASON,
+} from './visual-handoff-gate';
 
 let dir: string;
 let manager: ProjectRuntimeManager;
 const scope = testProjectScope();
 const context = () => ({ scope, executionScope: scope, sessionId: 'worker-session', missionId: 'mission',
   workerIncarnationId: 'incarnation', visualTask: { since: 1000, id: 'assignment-a' } });
+// The candidate the fake checkout shows right now; a test "edits" it by reassigning.
+let candidate: string;
+const observeCandidate = vi.fn(async () => ({ base: 'b'.repeat(40), fingerprint: candidate }));
+const deps = { servedFromCandidate: () => true, observeCandidate };
 beforeEach(() => {
+  candidate = 'a'.repeat(64);
+  observeCandidate.mockClear();
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'visual-handoff-'));
   manager = new ProjectRuntimeManager({ baseDir: dir, appVersion: 'test' });
   manager.open(scope).db.prepare("INSERT INTO missions (id,title,status,created_at,updated_at) VALUES ('mission','UI','running',1,1)").run();
 });
-afterEach(() => { manager.closeAll(); fs.rmSync(dir, { recursive: true, force: true }); });
+afterEach(async () => {
+  await visualCandidateBindingsSettled();
+  manager.closeAll();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
 
 it('F-1271: o bloco <business-model> montado na frente não torna visual uma tarefa de backend', () => {
   const block = '<business-model fonte="modelo e referências locais · jev">\nInvariantes da tarefa:\n' +
@@ -80,7 +94,7 @@ it('F-1362: tarefa de UI embrulhada em XML continua exigindo a captura', async (
   const visualTask = visualTaskRequirement(wrapped, 1000);
   expect(visualTask).toEqual({ since: 1000, id: expect.any(String) });
   expect(visualTaskRequirement('<instructions>Crie a tela de login com layout responsivo.</instructions>', 1000)).toBeDefined();
-  expect(await checkVisualHandoff({ ...context(), visualTask }, { manager })).toMatchObject({ required: true, verified: false });
+  expect(await checkVisualHandoff({ ...context(), visualTask }, { manager, observeCandidate })).toMatchObject({ required: true, verified: false });
   // O contexto montado pelo Nexus continua fora da classificação.
   const memory = '<workspace-memory phase="execution">\n- O PAINEL usa layout, cabeçalho e tema escuro.\n</workspace-memory>';
   expect(visualTaskRequirement(`${memory}\n\nCorrigir bug na API de estoque.`, 1000)).toBeUndefined();
@@ -94,31 +108,74 @@ it('derives a visual requirement from the assigned task, not from a completion c
 });
 it.each(['Corrija o bug no layout responsivo da tela de login.', 'Corrija o botão que não funciona na interface do dashboard.'])
   ('requires a capture for a UI bug: %s', assignment => expect(visualTaskRequirement(assignment, 1000)).toEqual({ since: 1000, id: expect.any(String) }));
+// Revisão 22/10: o pedido de bug de UI chega RELATADO, sem verbo de reparo e
+// com um único substantivo de UI ("o modal … não fecha"). O quórum do
+// isUiWorkText e a regra de verbo da autoridade de design o perdiam, e o
+// worker que corrigia a tela nunca era cobrado pela captura.
+it.each([
+  'O modal de login não fecha no mobile',
+  'Erro de hidratação na página de preços',
+  'O menu dropdown não abre no Safari',
+  'O botão de enviar some no celular',
+  'Texto cortado no cabeçalho do dashboard',
+  'O formulário de cadastro não envia no iPhone',
+  'The checkout modal does not close on mobile',
+  'hydration mismatch no checkout',
+])('review 22/10: a reported UI defect requires a capture: %s', assignment => {
+  expect(visualTaskRequirement(assignment, 1000)).toEqual({ since: 1000, id: expect.any(String) });
+});
+it.each([
+  'Corrigir o erro 500 na API de login',
+  'O token de login não expira no backend',
+  'corrigir o bug da tela de erro que trava o backend',
+  'Melhorar a performance do dashboard',
+  'O cron de backup não roda no servidor',
+  'Calcular a hidratação diária recomendada do usuário',
+  'Documente por que o modal de login não fecha no mobile',
+  'O endpoint de usuários não responde no staging',
+])('review 22/10: backend or document text near UI words requires no capture: %s', assignment => {
+  expect(visualTaskRequirement(assignment, 1000)).toBeUndefined();
+});
 it('preserves an already classified nonvisual task instead of reclassifying appended instructions', () => {
   const initialPrompt = 'Crie a tela de login com layout responsivo.';
   expect(visualTaskAtSpawn({ role: 'worker', visualTask: undefined, initialPrompt })).toBeUndefined();
   expect(visualTaskAtSpawn({ role: 'worker', initialPrompt })).toEqual({ since: expect.any(Number), id: expect.any(String) });
   expect(visualTaskAtSpawn({ role: 'orchestrator', initialPrompt })).toBeUndefined();
 });
+// Revisão 22/10: o leitor de uma tarefa de UI (mapeamento, revisão) entrega
+// achados, não tela renderizada; cobrá-lo rebaixava todo leitor a partial.
+// F-1318: isolatedWriter vence o rótulo readOnly — esse pane escreve.
+it('review 22/10: a read-only lane is never charged, but a writer labeled readOnly is (F-1318)', () => {
+  const initialPrompt = 'Crie a tela de login com layout responsivo.';
+  const visualTask = { since: 1, id: 'explicit-assignment' };
+  expect(visualTaskAtSpawn({ role: 'worker', readOnly: true, initialPrompt })).toBeUndefined();
+  expect(visualTaskAtSpawn({ role: 'worker', readOnly: true, visualTask, initialPrompt })).toBeUndefined();
+  expect(visualTaskAtSpawn({ role: 'worker', executionMode: 'read_only', visualTask, initialPrompt })).toBeUndefined();
+  expect(visualTaskAtSpawn({ role: 'worker', readOnly: true, isolatedWriter: true, initialPrompt }))
+    .toEqual({ since: expect.any(Number), id: expect.any(String) });
+  expect(visualTaskAtSpawn({ role: 'worker', readOnly: true, executionMode: 'isolated_worktree', visualTask, initialPrompt }))
+    .toBe(visualTask);
+  expect(visualTaskAtSpawn({ role: 'worker', readOnly: false, visualTask, initialPrompt })).toBe(visualTask);
+});
 it('a declared screenshot path or convincing summary cannot satisfy missing Main evidence', async () => {
-  expect(await checkVisualHandoff(context(), { manager })).toMatchObject({ required: true, verified: false });
-  expect(await checkVisualHandoff({ ...context(), visualTask: undefined }, { manager })).toEqual({ required: false, verified: true });
+  expect(await checkVisualHandoff(context(), { manager, observeCandidate })).toMatchObject({ required: true, verified: false });
+  expect(await checkVisualHandoff({ ...context(), visualTask: undefined }, { manager, observeCandidate })).toEqual({ required: false, verified: true });
 });
 it('requires the exact worker generation, execution root, assignment time and current image bytes', async () => {
   const store = createScopedBrowserArtifactStore(manager, scope);
   const image = store.recordScreenshot({ paneId: 'browser-pane', missionId: 'mission', png: Buffer.from('fixture-png'),
     width: 1, height: 1, url: 'http://localhost:3000', title: 'UI', capturedAt: 1100 });
-  expect(recordVisualHandoffEvidence(context(), image.id, manager)).toBe(true);
-  expect(await checkVisualHandoff(context(), { manager })).toMatchObject({ verified: true, artifactId: image.id });
-  expect(await checkVisualHandoff({ ...context(), workerIncarnationId: 'other' }, { manager })).toMatchObject({ verified: false });
-  expect(await checkVisualHandoff({ ...context(), executionScope: { ...scope, rootRealPath: '/other' } }, { manager })).toMatchObject({ verified: false });
-  expect(await checkVisualHandoff({ ...context(), visualTask: { since: 1200, id: 'assignment-b' } }, { manager })).toMatchObject({ verified: false });
+  expect(recordVisualHandoffEvidence(context(), image.id, manager, deps)).toBe(true);
+  expect(await checkVisualHandoff(context(), { manager, observeCandidate })).toMatchObject({ verified: true, artifactId: image.id });
+  expect(await checkVisualHandoff({ ...context(), workerIncarnationId: 'other' }, { manager, observeCandidate })).toMatchObject({ verified: false });
+  expect(await checkVisualHandoff({ ...context(), executionScope: { ...scope, rootRealPath: '/other' } }, { manager, observeCandidate })).toMatchObject({ verified: false });
+  expect(await checkVisualHandoff({ ...context(), visualTask: { since: 1200, id: 'assignment-b' } }, { manager, observeCandidate })).toMatchObject({ verified: false });
   fs.writeFileSync(image.path, 'tampered');
-  expect(await checkVisualHandoff(context(), { manager })).toMatchObject({ verified: false });
+  expect(await checkVisualHandoff(context(), { manager, observeCandidate })).toMatchObject({ verified: false });
 });
 
 it('requires evidence from a sealed visual task even without a spawn hint', async () => {
-  expect(await checkVisualHandoff({ ...context(), visualTask: undefined }, { manager,
+  expect(await checkVisualHandoff({ ...context(), visualTask: undefined }, { manager, observeCandidate,
     task: { plannedTitle: 'Corrija o bug da tela de login', plannedDetail: 'Layout responsivo com formulário.', task: { createdAt: 1000 } },
   })).toMatchObject({ required: true, verified: false });
 });
@@ -127,42 +184,162 @@ it('does not let another worker or mission claim an existing capture', async () 
   const store = createScopedBrowserArtifactStore(manager, scope);
   const image = store.recordScreenshot({ paneId: 'browser-pane', missionId: 'mission', png: Buffer.from('fixture'),
     width: 1, height: 1, url: 'http://localhost', title: 'UI', capturedAt: 1100 });
-  expect(recordVisualHandoffEvidence(context(), image.id, manager)).toBe(true);
-  expect(recordVisualHandoffEvidence({ ...context(), sessionId: 'other' }, image.id, manager)).toBe(false);
-  expect(recordVisualHandoffEvidence({ ...context(), missionId: 'other' }, image.id, manager)).toBe(false);
-  expect(await checkVisualHandoff({ ...context(), sessionId: 'other' }, { manager })).toMatchObject({ verified: false });
+  expect(recordVisualHandoffEvidence(context(), image.id, manager, deps)).toBe(true);
+  expect(recordVisualHandoffEvidence({ ...context(), sessionId: 'other' }, image.id, manager, deps)).toBe(false);
+  expect(recordVisualHandoffEvidence({ ...context(), missionId: 'other' }, image.id, manager, deps)).toBe(false);
+  expect(await checkVisualHandoff({ ...context(), sessionId: 'other' }, { manager, observeCandidate })).toMatchObject({ verified: false });
+});
+
+// Revisão 22/10: a captura prova o build DESTE worker no candidato que ela
+// mostrou. Página pública não é evidência; edição depois da captura (rodada de
+// rework incluída) pede captura nova; commitar a mesma árvore não.
+describe('review 22/10: a capture is bound to the preview and to the candidate', () => {
+  const shot = (url = 'http://127.0.0.1:4567/') => createScopedBrowserArtifactStore(manager, scope).recordScreenshot({
+    paneId: 'browser-pane', missionId: 'mission', png: Buffer.from(`fixture ${Math.random()}`), width: 1, height: 1,
+    url, title: 'UI', capturedAt: 1100 });
+
+  it('a page that is not served from this checkout is not evidence', async () => {
+    const served = vi.fn(() => false);
+    const image = shot('https://example.com/');
+    expect(recordVisualHandoffEvidence(context(), image.id, manager, { ...deps, servedFromCandidate: served })).toBe(false);
+    expect(served).toHaveBeenCalledWith('https://example.com/', scope);
+    expect(await checkVisualHandoff(context(), { manager, observeCandidate })).toMatchObject({ verified: false });
+  });
+
+  it('an edit after the capture needs a fresh capture of the current build', async () => {
+    const first = shot();
+    expect(recordVisualHandoffEvidence(context(), first.id, manager, deps)).toBe(true);
+    expect(await checkVisualHandoff(context(), { manager, observeCandidate })).toMatchObject({ verified: true, artifactId: first.id });
+    candidate = 'c'.repeat(64); // rework: the worker changed the code
+    expect(await checkVisualHandoff(context(), { manager, observeCandidate }))
+      .toEqual({ required: true, verified: false, reason: VISUAL_CAPTURE_STALE_REASON });
+    const second = shot();
+    expect(recordVisualHandoffEvidence(context(), second.id, manager, deps)).toBe(true);
+    expect(await checkVisualHandoff(context(), { manager, observeCandidate })).toMatchObject({ verified: true, artifactId: second.id });
+    // The candidate is measured against the HEAD recorded at capture time.
+    expect(observeCandidate).toHaveBeenLastCalledWith(scope, 'b'.repeat(40));
+  });
+
+  // Revisão 22/10: o artifact só levava {artifactId, sha256} e ninguém além do
+  // worker via a imagem. O juiz recebe o caminho da imagem verificada e a
+  // instrução de abri-la antes de aceitar.
+  it('the verified verdict tells the judge where the verified image is and to look at it', async () => {
+    const image = shot('http://127.0.0.1:4567/precos');
+    expect(recordVisualHandoffEvidence(context(), image.id, manager, deps)).toBe(true);
+    const verdict = await checkVisualHandoff(context(), { manager, observeCandidate });
+    expect(verdict).toMatchObject({ required: true, verified: true, artifactId: image.id, sha256: image.sha256,
+      path: image.path, url: 'http://127.0.0.1:4567/precos', width: 1, height: 1, capturedAt: 1100 });
+    expect(verdict.required && verdict.verified && verdict.reviewHint).toContain(image.path);
+    expect(verdict.required && verdict.verified && verdict.reviewHint).toMatch(/antes de aceitar/);
+  });
+
+  it('the check waits for a capture-time observation still running', async () => {
+    let release!: () => void;
+    const slow = vi.fn(() => new Promise<{ base: string; fingerprint: string }>((resolve) => {
+      release = () => resolve({ base: 'b'.repeat(40), fingerprint: candidate });
+    }));
+    const image = shot();
+    expect(recordVisualHandoffEvidence(context(), image.id, manager, { ...deps, observeCandidate: slow })).toBe(true);
+    const verdict = checkVisualHandoff(context(), { manager, observeCandidate });
+    await Promise.resolve();
+    release();
+    expect(await verdict).toMatchObject({ verified: true, artifactId: image.id });
+  });
+
+  it('a row recorded before the binding existed does not prove the candidate', async () => {
+    const image = shot();
+    manager.open(scope).db.prepare(`INSERT INTO visual_handoff_evidence
+      (artifact_id, mission_id, session_id, worker_incarnation_id, execution_root, captured_at, assignment_id)
+      VALUES (?, 'mission', 'worker-session', 'incarnation', ?, 1100, 'assignment-a')`).run(image.id, scope.rootRealPath);
+    expect(await checkVisualHandoff(context(), { manager, observeCandidate }))
+      .toEqual({ required: true, verified: false, reason: VISUAL_CAPTURE_STALE_REASON });
+  });
+
+  it('with a real checkout: committing the captured tree keeps the capture, a later edit does not', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'visual-candidate-')));
+    try {
+      const git = new ProcessGitRunner();
+      const run = (...args: string[]) => git.run(root, args).stdout.trim();
+      fs.writeFileSync(path.join(root, 'page.html'), '<h1>v1</h1>\n');
+      run('init', '-q');
+      run('config', 'user.name', 'Nexus Test');
+      run('config', 'user.email', 'test@example.invalid');
+      run('add', '--', 'page.html');
+      run('commit', '-qm', 'Base');
+      const ctx = { ...context(), executionScope: { ...scope, rootRealPath: root } };
+      fs.writeFileSync(path.join(root, 'page.html'), '<h1>v2</h1>\n');
+      fs.writeFileSync(path.join(root, 'modal.css'), '.modal { display: none; }\n');
+      const image = shot();
+      expect(recordVisualHandoffEvidence(ctx, image.id, manager, { servedFromCandidate: () => true })).toBe(true);
+      await visualCandidateBindingsSettled();
+      run('add', '-A', '--', '.');
+      run('commit', '-qm', 'Fix modal');
+      expect(await checkVisualHandoff(ctx, { manager })).toMatchObject({ verified: true, artifactId: image.id });
+      fs.writeFileSync(path.join(root, 'modal.css'), '.modal { display: block; }\n');
+      expect(await checkVisualHandoff(ctx, { manager })).toMatchObject({ verified: false, reason: VISUAL_CAPTURE_STALE_REASON });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('review 22/10: one send-back before a visual delivery becomes partial', () => {
+  const pending = { required: true, verified: false, reason: 'falta a captura' } as const;
+  const verified = { required: true, verified: true, artifactId: 'browser-x', sha256: 'f'.repeat(64) } as const;
+  beforeEach(() => __resetVisualHandoffBouncesForTests());
+
+  it('sends back once per assignment with the capture recipe, then lets the partial through', () => {
+    const message = visualHandoffSendBack(context(), pending);
+    expect(message).toContain('devolução 1/1');
+    expect(message).toContain('falta a captura');
+    expect(message).toMatch(/nexus_preview_start[\s\S]*nexus_browser_open[\s\S]*nexus_browser_responsive/);
+    expect(visualHandoffSendBack(context(), pending)).toBeNull();
+    // A transport replay of the partial is not bounced again.
+    expect(visualHandoffSendBack(context(), pending)).toBeNull();
+    // Another assignment of the same worker gets its own send-back.
+    expect(visualHandoffSendBack({ ...context(), visualTask: { since: 2000, id: 'assignment-b' } }, pending)).not.toBeNull();
+  });
+
+  it('a verified capture resets it, and nothing is sent back without a return channel or a requirement', () => {
+    expect(visualHandoffSendBack(context(), pending)).not.toBeNull();
+    expect(visualHandoffSendBack(context(), verified)).toBeNull();
+    expect(visualHandoffSendBack(context(), pending)).not.toBeNull();
+    expect(visualHandoffSendBack({ ...context(), sessionId: 'pty' }, pending, { returnable: false })).toBeNull();
+    expect(visualHandoffSendBack(context(), { required: false, verified: true })).toBeNull();
+    expect(visualHandoffSendBack(context(), undefined)).toBeNull();
+  });
 });
 
 it.each([2000, 500])('refuses an earlier task capture after reassignment at clock %s', async since => {
   const ctx = { ...context(), visualTask: visualTaskRequirement('Crie a tela de login com layout responsivo.', 1000)! };
   const image = createScopedBrowserArtifactStore(manager, scope).recordScreenshot({ paneId: 'browser-pane',
     missionId: 'mission', png: Buffer.from('old assignment'), width: 1, height: 1, url: 'http://localhost', title: 'UI', capturedAt: 2000 });
-  expect(recordVisualHandoffEvidence(ctx, image.id, manager)).toBe(true);
+  expect(recordVisualHandoffEvidence(ctx, image.id, manager, deps)).toBe(true);
   ctx.visualTask = visualTaskRequirement('Crie a tela de login com layout responsivo.', since)!;
-  expect(await checkVisualHandoff(ctx, { manager })).toMatchObject({ required: true, verified: false });
+  expect(await checkVisualHandoff(ctx, { manager, observeCandidate })).toMatchObject({ required: true, verified: false });
 });
 
 it('keeps same-assignment evidence valid if the wall clock moves backward during capture', async () => {
   const ctx = context();
   const image = createScopedBrowserArtifactStore(manager, scope).recordScreenshot({ paneId: 'browser-pane',
     missionId: 'mission', png: Buffer.from('same assignment'), width: 1, height: 1, url: 'http://localhost', title: 'UI', capturedAt: 500 });
-  expect(recordVisualHandoffEvidence(ctx, image.id, manager)).toBe(true);
-  expect(await checkVisualHandoff(ctx, { manager })).toMatchObject({ required: true, verified: true });
+  expect(recordVisualHandoffEvidence(ctx, image.id, manager, deps)).toBe(true);
+  expect(await checkVisualHandoff(ctx, { manager, observeCandidate })).toMatchObject({ required: true, verified: true });
 });
 
 it('revokes an in-flight check if the assignment changes and propagates authority cancellation', async () => {
   const ctx = context();
   const image = createScopedBrowserArtifactStore(manager, scope).recordScreenshot({ paneId: 'browser-pane',
     missionId: 'mission', png: Buffer.from('fixture'), width: 1, height: 1, url: 'http://localhost', title: 'UI', capturedAt: 1100 });
-  recordVisualHandoffEvidence(ctx, image.id, manager);
+  recordVisualHandoffEvidence(ctx, image.id, manager, deps);
   const realOpen = fs.promises.open.bind(fs.promises);
   const open = vi.spyOn(fs.promises, 'open').mockImplementation(async (...args: Parameters<typeof fs.promises.open>) => {
     ctx.visualTask = { since: 1200, id: 'assignment-b' };
     return realOpen(...args);
   });
-  try { expect(await checkVisualHandoff(ctx, { manager })).toMatchObject({ verified: false }); }
+  try { expect(await checkVisualHandoff(ctx, { manager, observeCandidate })).toMatchObject({ verified: false }); }
   finally { open.mockRestore(); }
-  await expect(checkVisualHandoff(context(), { manager, assertCurrent: () => { throw new Error('stale authority'); } }))
+  await expect(checkVisualHandoff(context(), { manager, observeCandidate, assertCurrent: () => { throw new Error('stale authority'); } }))
     .rejects.toThrow('stale authority');
 });
 

@@ -428,6 +428,20 @@ describe('agent pane workspace confinement', () => {
     expect(stubs.requestPaneSpawn).toHaveBeenCalledWith(expect.objectContaining({ visualTask }));
   });
 
+  it('review 22/10: a read-only spawn of a UI task carries no visual assignment', async () => {
+    const memoryQuery = 'Crie a tela de login com layout responsivo.';
+    const uncharged = expect.not.objectContaining({ visualTask: expect.anything() });
+    await spawnPaneAndMaybePrompt({ adapterId: 'codex', scope, readOnly: true, memoryQuery });
+    expect(stubs.requestPaneSpawn).toHaveBeenNthCalledWith(1, uncharged);
+    await spawnPaneAndMaybePrompt({ adapterId: 'codex', scope, readOnly: true, memoryQuery,
+      visualTask: { id: 'explicit-assignment', since: 1 } });
+    expect(stubs.requestPaneSpawn).toHaveBeenNthCalledWith(2, uncharged);
+    // F-1318: o "leitor" que pediu worktree própria escreve e continua cobrado.
+    await spawnPaneAndMaybePrompt({ adapterId: 'codex', scope, readOnly: true, isolatedWriter: true, memoryQuery });
+    expect(stubs.requestPaneSpawn).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      visualTask: { since: expect.any(Number), id: expect.any(String) } }));
+  });
+
   it('F-736: PTY gravável não fecha o disjuntor do adapter (não prova que a CLI funciona)', async () => {
     // 02/10: o Qwen chegava ao writer-ready e morria no boot 3 s depois; o
     // sucesso registrado aqui zerava a contagem e o disjuntor nunca abria.

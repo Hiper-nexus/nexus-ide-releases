@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SystemInputWriter } from './operator-input-receipts';
 import { commitWorkerContinuation, workerContinuationBirthState, type WorkerContinuationBirthState } from './mission-pane-resume-ownership';
-import { createVisualTaskRequirement, visualTaskRequirement } from './visual-handoff-gate';
+import { createVisualTaskRequirement, isReadOnlyVisualLane, visualTaskRequirement } from './visual-handoff-gate';
 import { assertLicensedAgentCapacity, licensedAgentCount } from '../license-enforcement';
 import { licenseErrorFrom } from '../../shared/license-errors';
 import { withWorkspaceDesignRule } from './workspace-design-rule';
@@ -2146,7 +2146,7 @@ export async function spawnPaneAndMaybePrompt(
   // pty-manager's user-shell fallback to HOME.
   const safeOptions: SpawnToolOptions = {
     ...options,
-    visualTask: options.role === 'orchestrator' ? undefined : options.workerContinuation
+    visualTask: options.role === 'orchestrator' || isReadOnlyVisualLane(options) ? undefined : options.workerContinuation
       ? options.visualTask : options.visualTask
         ? createVisualTaskRequirement() : visualTaskRequirement(options.memoryQuery ?? options.prompt),
     model: effectiveModel,

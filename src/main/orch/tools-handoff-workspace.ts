@@ -1,5 +1,5 @@
 import { handoffStatusSchema } from "../../shared/orch-types";
-import { checkVisualHandoff } from './visual-handoff-gate';
+import { checkVisualHandoff, visualHandoffSendBack } from './visual-handoff-gate';
 import {
   embedTelemetryArtifact,
   sanitizeHandoffTelemetry,
@@ -106,6 +106,10 @@ export async function submitWorkspaceHandoff(
   const visual = declaredStatus === 'success' ? await checkVisualHandoff(ctx, {
     assertCurrent: () => assertMcpInvocationCurrent(invocation),
   }) : undefined;
+  // Revisão 22/10: uma devolução com o caminho da captura antes do partial.
+  const visualSendBack = verdict.kind !== 'exhausted' && regressionVerdict.kind !== 'exhausted'
+    ? visualHandoffSendBack(ctx, visual) : null;
+  if (visualSendBack) throw new Error(visualSendBack);
   const visualPending = visual?.required === true && !visual.verified;
   const status =
     verdict.kind === "exhausted" || regressionVerdict.kind === "exhausted"

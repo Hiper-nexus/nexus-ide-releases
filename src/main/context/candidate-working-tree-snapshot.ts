@@ -24,6 +24,15 @@ export interface WorkingTreeCandidateSnapshot {
   readonly source: 'git' | 'filesystem';
   readonly headSha: string | null;
   readonly fingerprint: string;
+  /**
+   * Review 22/10: the CONTENT of the candidate relative to the delta base, with
+   * no HEAD and no diff text. Against a fixed base it survives committing the
+   * same tree (an untracked file turning tracked keeps its path and bytes) and
+   * changes with any later edit — what a visual capture must be bound to.
+   * Optional only for hand-built snapshots; `captureWorkingTreeCandidate`
+   * always sets it.
+   */
+  readonly contentFingerprint?: string;
   readonly changedPaths: readonly string[];
   readonly deletedPaths: readonly string[];
   readonly untrackedPaths: readonly string[];
@@ -385,6 +394,8 @@ export async function captureWorkingTreeCandidate(input: {
     // Unchanged shape when nothing was left out, so existing fingerprints stay stable.
     fingerprint: sha256(canonicalJson({ headSha, diffHash: sha256(diff), changedPaths, deletedPaths, files,
       ...(unread.length > 0 ? { unread } : {}), ...(absent.length > 0 ? { absent } : {}) })),
+    contentFingerprint: sha256(canonicalJson({ base: headSha ? input.baseSha ?? headSha : null,
+      changedPaths, deletedPaths, files, unread, absent })),
     changedPaths: Object.freeze(changedPaths), deletedPaths: Object.freeze(deletedPaths),
     untrackedPaths: Object.freeze(untrackedPaths), diff, coveredPaths,
     ...(unreadPaths.length > 0 ? { unreadPaths } : {}),
