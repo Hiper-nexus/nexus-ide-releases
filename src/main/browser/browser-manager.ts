@@ -75,6 +75,7 @@ import {
 import {
   assessBrowserUrl,
   browserAddressesMatchPrivatePins,
+  browserBlockedTargetHint,
   browserNetworkTargetKey,
   normalizeBrowserUrl,
   redactBrowserUrl,
@@ -495,6 +496,12 @@ function assertEntryScope(
   }
 }
 
+/** The refusal keeps its reason and adds the route that works (P0-6). */
+function withBlockedTargetHint(kind: BrowserUrlBlockKind, reason: string, rawUrl: string): string {
+  const hint = browserBlockedTargetHint(kind, rawUrl);
+  return hint ? `${reason} — ${hint}` : reason;
+}
+
 class BrowserNavigationBlockedError extends Error {
   constructor(
     readonly kind: BrowserUrlBlockKind,
@@ -611,6 +618,13 @@ function configureSessionSecurity(entry: BrowserEntry): void {
             entry.loading = false;
             entry.error = `navigation blocked (${blockKind}): ${safeTargetLabel(details.url)}`;
             emitState(entry);
+          } else {
+            // A page calling its API on another local port used to fail with
+            // no trace: the agent saw an empty list and never learned why.
+            pushBrowserError(entry, {
+              kind: 'load',
+              message: `request blocked (${blockKind}): ${safeTargetLabel(details.url)}`,
+            });
           }
           callback({ cancel: true });
         })
@@ -639,10 +653,9 @@ async function prepareNavigation(
   try {
     normalized = normalizeBrowserUrl(rawUrl, { allowAboutBlank: true });
   } catch (err) {
-    throw new BrowserNavigationBlockedError(
-      'invalid-url',
-      err instanceof Error ? err.message : 'invalid browser URL',
-    );
+    const message = err instanceof Error ? err.message : 'invalid browser URL';
+    const kind: BrowserUrlBlockKind = message.includes('only allow') ? 'unsafe-scheme' : 'invalid-url';
+    throw new BrowserNavigationBlockedError(kind, withBlockedTargetHint(kind, message, rawUrl));
   }
   if (normalized === 'about:blank') return normalized;
 
@@ -672,7 +685,10 @@ async function prepareNavigation(
     }
   }
   if (!decision.allowed) {
-    throw new BrowserNavigationBlockedError(decision.kind, decision.reason);
+    throw new BrowserNavigationBlockedError(
+      decision.kind,
+      withBlockedTargetHint(decision.kind, decision.reason, rawUrl),
+    );
   }
   if (
     !allowedTargetMatchesPins(
@@ -682,7 +698,11 @@ async function prepareNavigation(
   ) {
     throw new BrowserNavigationBlockedError(
       'private-network',
-      'private target address changed; confirmation required',
+      withBlockedTargetHint(
+        'private-network',
+        'private target address changed; confirmation required',
+        rawUrl,
+      ),
     );
   }
   return decision.normalizedUrl;

@@ -96,7 +96,8 @@ const previewStartTool: McpToolDef = {
   description:
     'Serve a built static web app inside the active workspace on a Nexus-owned ' +
     '127.0.0.1 preview URL. Returns an opaque {id, url}; idempotent per project, ' +
-    'checkout and canonical directory.',
+    'checkout and canonical directory. This is the trusted way to look at your ' +
+    'own UI in nexus_browser_open (a dev server on localhost is refused).',
   inputSchema: {
     type: 'object',
     properties: { dir: { type: 'string' } },
@@ -136,7 +137,10 @@ const browserOpenTool: McpToolDef = {
   requiresConfirm: true,
   description:
     'Open an embedded browser pane at a confirmed URL. Nexus preview URLs are ' +
-    'the only private targets trusted automatically.',
+    'the only private targets trusted automatically: a local dev server ' +
+    '(localhost/127.0.0.1) or a file:// page is refused. To check your own UI, ' +
+    'build it, serve the build with nexus_preview_start({dir}), open the ' +
+    'returned URL here and run nexus_browser_responsive.',
   inputSchema: {
     type: 'object',
     properties: {

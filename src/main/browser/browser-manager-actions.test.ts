@@ -747,6 +747,29 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     destroyBrowser(PANE, scope);
   });
 
+  it('refuses a local dev server and names the preview path that works', async () => {
+    await boot();
+    await expect(loadBrowser(PANE, 'http://localhost:5173/', { scope }))
+      .rejects.toThrow(/private.*nexus_preview_start.*nexus_browser_open.*nexus_browser_responsive/s);
+    await expect(loadBrowser(PANE, 'file:///tmp/app/index.html', { scope }))
+      .rejects.toThrow(/nexus_preview_start/);
+    destroyBrowser(PANE, scope);
+  });
+
+  it('reports a subresource the policy blocked instead of dropping it silently', async () => {
+    await boot();
+    const onBeforeRequest = state.browserSession.webRequest.onBeforeRequest.mock.calls.at(-1)?.[1] as
+      (details: Record<string, unknown>, callback: (response: { cancel?: boolean }) => void) => void;
+    const cancelled = await new Promise<{ cancel?: boolean }>((resolve) => {
+      onBeforeRequest({ url: 'http://localhost:8787/api/clientes', resourceType: 'xhr' }, resolve);
+    });
+    expect(cancelled).toEqual({ cancel: true });
+    const read = await readBrowserPage(PANE, scope);
+    expect(read.errors.loadErrors).toBe(1);
+    expect(read.errors.items[0]?.message).toMatch(/blocked \(private-network\): http:\/\/localhost:8787/);
+    destroyBrowser(PANE, scope);
+  });
+
   it('runs the post-navigate visual check only with consent and never without the surface', async () => {
     await boot();
     const jev = vi.fn(async (_req: unknown) => ({
