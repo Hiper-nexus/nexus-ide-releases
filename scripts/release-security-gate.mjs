@@ -183,6 +183,49 @@ function runAudit(runCommand, args, label) {
   return { audit, total };
 }
 
+/**
+ * Whether the registry ANSWERED AN ERROR instead of a report.
+ *
+ * npm's legacy "quick audit" endpoint — the only one `--omit=dev` can use — is
+ * being retired and currently answers `400 Bad Request`, so a production-only
+ * audit cannot be obtained at all. That is a different thing from "the report
+ * is malformed", and it must not read as one: the payload then carries the
+ * registry's own error (`message` plus the `uri` it posted to) and no
+ * `metadata`.
+ */
+function auditEndpointAnswered(audit) {
+  if (!audit || typeof audit !== 'object') return true;
+  if (audit.metadata !== undefined) return true;
+  const message = typeof audit.message === 'string' ? audit.message : '';
+  const uri = typeof audit.uri === 'string' ? audit.uri : '';
+  return !(/\/-\/npm\/v1\/security\/audits/u.test(uri) || /audit/iu.test(message));
+}
+
+/**
+ * The production audit, or the FULL audit standing in for it.
+ *
+ * The full tree is a SUPERSET of the production tree, so zero vulnerabilities
+ * there is zero in production — the guarantee is unchanged, and a non-zero
+ * full audit still blocks the release. The substitution is written into the
+ * manifest (`productionAuditSource`) and into the stored report, never
+ * silent, and it happens ONLY when the registry answered an error.
+ */
+function auditProductionTree(runCommand, args, label) {
+  const result = runCommand(args);
+  const audit = parseJson(result.stdout, `audit ${label}`);
+  if (!auditEndpointAnswered(audit)) {
+    return { endpointUnavailable: true, detail: String(audit.message ?? '').slice(0, 300) };
+  }
+  const total = vulnerabilityTotal(audit);
+  if (result.status !== 0 || total !== 0) {
+    throw new Error(
+      `release bloqueada: ${label} tem ${total} ` +
+        `vulnerabilidade${total === 1 ? '' : 's'}`,
+    );
+  }
+  return { audit, total, endpointUnavailable: false };
+}
+
 function runSbom(runCommand, args, label) {
   const result = runCommand(args);
   if (result.status !== 0) {
@@ -239,7 +282,7 @@ export function buildReleaseSecurityArtifacts(options = {}) {
     throw new Error('security gate tag signature state is incoherent');
   }
 
-  const productionAudit = runAudit(
+  const productionAttempt = auditProductionTree(
     runCommand,
     ['audit', '--omit=dev', '--json'],
     'árvore de produção',
@@ -262,6 +305,25 @@ export function buildReleaseSecurityArtifacts(options = {}) {
     '--sbom-format=cyclonedx',
     '--sbom-type=application',
   ], 'da build toolchain');
+
+  // The full tree is a superset of production: when the production-only
+  // endpoint is gone, the toolchain report stands in for it, and its zero is
+  // the production zero. The report that gets stored says so out loud.
+  const productionAudit = productionAttempt.endpointUnavailable
+    ? {
+        audit: {
+          ...toolchainAudit.audit,
+          nexusProductionAuditSubstitution: {
+            reason:
+              'o endpoint de audit por árvore de produção respondeu erro; ' +
+              'este relatório é o da ÁRVORE COMPLETA, superconjunto da de produção',
+            registryDetail: productionAttempt.detail,
+          },
+        },
+        total: toolchainAudit.total,
+        source: 'full-tree-superset',
+      }
+    : { ...productionAttempt, source: 'production-tree' };
 
   fs.mkdirSync(outDir, { recursive: true, mode: 0o755 });
   const auditName = 'audit-production.json';
@@ -299,6 +361,7 @@ export function buildReleaseSecurityArtifacts(options = {}) {
     runtime,
     audit: {
       productionVulnerabilities: productionAudit.total,
+      productionAuditSource: productionAudit.source,
       buildToolchainVulnerabilities: toolchainAudit.total,
     },
     files: [

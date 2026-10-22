@@ -171,6 +171,113 @@ describe('manual release security artifacts', () => {
     expect(fs.existsSync(path.join(root, 'artifacts', 'security-manifest.json'))).toBe(true);
   });
 
+  it('stands in with the FULL audit when the production endpoint is retired', () => {
+    // npm's legacy quick-audit endpoint — the only one `--omit=dev` can use —
+    // is being retired and answers 400, so a production-only report cannot be
+    // obtained. The full tree is a superset: zero there is zero in production.
+    const root = tempRoot();
+    const clean = JSON.stringify({
+      auditReportVersion: 2,
+      vulnerabilities: {},
+      metadata: {
+        vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 },
+      },
+    });
+    const endpointError = JSON.stringify({
+      message:
+        '400 Bad Request - POST https://registry.npmjs.org/-/npm/v1/security/audits/quick - Bad Request',
+      method: 'POST',
+      uri: 'https://registry.npmjs.org/-/npm/v1/security/audits/quick',
+    });
+    const runCommand = vi.fn((args) => {
+      if (args[0] === 'audit') {
+        return {
+          status: 0,
+          stdout: args.includes('--omit=dev') ? endpointError : clean,
+          stderr: '',
+        };
+      }
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          bomFormat: 'CycloneDX',
+          specVersion: '1.5',
+          version: 1,
+          components: [],
+        }),
+        stderr: '',
+      };
+    });
+
+    const result = buildReleaseSecurityArtifacts({
+      root,
+      outDir: path.join(root, 'artifacts'),
+      runCommand,
+      commitSha: 'a'.repeat(40),
+      ...securityAuthority,
+      runtime: { node: 'v22.23.1', npm: '12.0.0' },
+      now: () => new Date('2026-10-22T00:00:00.000Z'),
+    });
+
+    expect(result.manifest.audit).toMatchObject({
+      productionVulnerabilities: 0,
+      productionAuditSource: 'full-tree-superset',
+      buildToolchainVulnerabilities: 0,
+    });
+    // The stored report says it is the substitution, not a production report.
+    const stored = JSON.parse(
+      fs.readFileSync(path.join(root, 'artifacts', 'audit-production.json'), 'utf8'),
+    );
+    expect(stored.nexusProductionAuditSubstitution?.reason).toMatch(/ÁRVORE COMPLETA/);
+    expect(stored.nexusProductionAuditSubstitution?.registryDetail).toMatch(/400 Bad Request/);
+  });
+
+  it('still blocks when the endpoint is retired AND the full tree is dirty', () => {
+    const root = tempRoot();
+    const endpointError = JSON.stringify({
+      message: '400 Bad Request - POST https://registry.npmjs.org/-/npm/v1/security/audits/quick',
+      uri: 'https://registry.npmjs.org/-/npm/v1/security/audits/quick',
+    });
+    const dirty = JSON.stringify({
+      auditReportVersion: 2,
+      vulnerabilities: {},
+      metadata: {
+        vulnerabilities: { info: 0, low: 0, moderate: 2, high: 0, critical: 0, total: 2 },
+      },
+    });
+    const runCommand = vi.fn((args) => {
+      if (args[0] === 'audit') {
+        return {
+          status: 0,
+          stdout: args.includes('--omit=dev') ? endpointError : dirty,
+          stderr: '',
+        };
+      }
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          bomFormat: 'CycloneDX',
+          specVersion: '1.5',
+          version: 1,
+          components: [],
+        }),
+        stderr: '',
+      };
+    });
+
+    expect(() =>
+      buildReleaseSecurityArtifacts({
+        root,
+        outDir: path.join(root, 'artifacts'),
+        runCommand,
+        commitSha: 'a'.repeat(40),
+        ...securityAuthority,
+        runtime: { node: 'v22.23.1', npm: '12.0.0' },
+        now: () => new Date('2026-10-22T00:00:00.000Z'),
+      }),
+    ).toThrow(/build toolchain tem 2 vulnerabilidades/);
+  });
+
   it('fails closed before generating an SBOM when production audit is nonzero', () => {
     const root = tempRoot();
     const runCommand = vi.fn(() => ({
