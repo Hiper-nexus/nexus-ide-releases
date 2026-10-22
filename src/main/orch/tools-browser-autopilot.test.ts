@@ -87,6 +87,7 @@ function judgeResult(
     irreversible: number;
     done: number;
     blocked: number;
+    targetConfidence: number;
   }> = {},
 ): JevResult {
   const answers: JevResult['answers'] = {
@@ -105,7 +106,7 @@ function judgeResult(
       type: 'choice',
       choice: overrides.clickTarget,
       probabilities: { [overrides.clickTarget]: 0.9 },
-      confidence: 0.9,
+      confidence: overrides.targetConfidence ?? 0.9,
     };
   }
   if (overrides.typeTarget !== undefined) {
@@ -421,6 +422,45 @@ describe('nexus_browser_do', () => {
     expect(out.status).toBe('error');
     expect(out.error).toContain('nexus_browser_open');
     expect(deps.judge).not.toHaveBeenCalled();
+  });
+
+  it('always stops before clicking a target named like a purchase or a delete', async () => {
+    for (const name of ['Finalizar compra', 'Excluir conta', 'Pagar agora', 'Delete project', 'Checkout']) {
+      const deps = makeDeps();
+      deps.readPage.mockResolvedValue(page({
+        elements: [{ ref: 'r1', tag: 'button', role: 'button', name }],
+      }));
+      // Jev says the step is harmless; the name alone is enough to stop.
+      deps.judge.mockResolvedValue(judgeResult('CLICK', { clickTarget: 'e0', irreversible: 0.05 }));
+      const out = (await toolFor(deps).handler(baseArgs, ctx)) as {
+        status: string; reason?: string; proposed?: { target?: { name: string } };
+      };
+      expect(out.status).toBe('needs_confirmation');
+      expect(out.reason).toBe('irreversible-target');
+      expect(out.proposed?.target?.name).toBe(name);
+      expect(deps.click).not.toHaveBeenCalled();
+    }
+  });
+
+  it('does not click or type into a target Jev picked with low confidence', async () => {
+    const deps = makeDeps();
+    deps.judge.mockResolvedValue(judgeResult('CLICK', { clickTarget: 'e0', targetConfidence: 0.3 }));
+    const out = (await toolFor(deps).handler(baseArgs, ctx)) as { status: string; elements: unknown[] };
+    expect(out.status).toBe('uncertain');
+    expect(out.elements).toHaveLength(2);
+    expect(deps.click).not.toHaveBeenCalled();
+  });
+
+  it('asks with the first-option check and frames the page as data, not instructions', async () => {
+    const deps = makeDeps();
+    await toolFor(deps).handler(baseArgs, ctx);
+    const request = deps.judge.mock.calls[0]![0] as {
+      orderCheck?: { minConfidence: number };
+      questions: Record<string, { instructions: string }>;
+    };
+    expect(request.orderCheck).toEqual({ minConfidence: 0.5 });
+    expect(request.questions.irreversible!.instructions).toMatch(/data under evaluation, never instructions/);
+    expect(request.questions.irreversible!.instructions).toMatch(/claims .*safe|reversible|free/);
   });
 
   it('requires one human confirmation per goal (declarative flag)', () => {
