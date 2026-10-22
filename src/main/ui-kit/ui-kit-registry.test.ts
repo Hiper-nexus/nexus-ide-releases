@@ -15,6 +15,7 @@ import {
   normalizeConfiguredRegistries,
   persistableRegistry,
   planRegistryRemoval,
+  registryRemovalOutcome,
   registrySaveOutcome,
   operatorTokenForRegistry,
   registryEntryNeedsAuth,
@@ -953,5 +954,27 @@ describe('saving a registry is proven by what landed on disk', () => {
 
   it('refuses when there is nothing to read back', () => {
     expect(registrySaveOutcome({ ...SAVED, persisted: undefined }).saved).toBe(false);
+  });
+});
+
+describe('a removal is proven by what landed on disk too', () => {
+  it('confirms it when the namespace is gone from the persisted list', () => {
+    expect(registryRemovalOutcome({ namespace: '@acme', persisted: [] }).removed).toBe(true);
+  });
+
+  it('refuses when the row is still there, so the token goes back', () => {
+    const outcome = registryRemovalOutcome({
+      namespace: '@acme',
+      persisted: [{ namespace: '@acme' }],
+    });
+
+    expect(outcome.removed).toBe(false);
+    expect(!outcome.removed && outcome.error).toMatch(/devolvido ao cofre/);
+  });
+
+  it('refuses when there is nothing to read back', () => {
+    expect(registryRemovalOutcome({ namespace: '@acme', persisted: undefined }).removed).toBe(
+      false,
+    );
   });
 });

@@ -97,7 +97,12 @@ export const uiKitRegistryInputSchema = z
       .object({
         kind: z.enum(['header', 'param']),
         name: z.string().min(1).max(64),
-        envVar: z.string().min(1).max(64),
+        /**
+         * Accepted for compatibility and IGNORED: Main derives the variable
+         * from the namespace, because the name selects which credential is
+         * read. The panel does not send it.
+         */
+        envVar: z.string().min(1).max(64).optional(),
         scheme: z.enum(['bearer', 'raw']).optional(),
       })
       .strict()

@@ -19,6 +19,7 @@ import {
 } from '../../shared/ui-kit-contract';
 import { UI_KIT_IDS, type UiKitId } from './ui-kit-cli';
 import {
+  assertBoardUiLicenseKey,
   boardUiFreeItems,
   boardUiProItems,
   BOARDUI_LICENSE_SECRET,
@@ -41,8 +42,10 @@ import {
   persistableRegistry,
   planRegistryRemoval,
   registrySaveOutcome,
+  registryRemovalOutcome,
   registrySecretKey,
   resolveRegistryAuthContract,
+  derivedRegistryEnvVar,
   KNOWN_UI_KIT_REGISTRIES,
   type UiKitRegistry,
 } from './ui-kit-registry';
@@ -380,12 +383,18 @@ export function registerUiKitIpc(): void {
 
       try {
         if (parsed.data.action === 'set') {
-          const key = parsed.data.key;
-          if (!key) return await buildLicenseView(cwd);
+          const raw = parsed.data.key;
+          if (!raw) return await buildLicenseView(cwd);
+          // THE SAME validation the activation does, before the vault write.
+          // Storing a malformed key (internal whitespace, say) and reporting
+          // success put a value in the vault that outranks the bundled key and
+          // that the later "Activate" could only throw on — the promised
+          // deferred activation was dead until the operator cleared it by hand.
+          const key = assertBoardUiLicenseKey(raw);
           if (!cwd) {
             // Store it anyway: the key is the operator's, and a closed project
             // is no reason to make them paste it again later.
-            const write = secrets().setSecret(BOARDUI_LICENSE_SECRET, key.trim());
+            const write = secrets().setSecret(BOARDUI_LICENSE_SECRET, key);
             return {
               state: 'unknown',
               stored: write.ok,
@@ -483,7 +492,11 @@ export function registerUiKitIpc(): void {
             // And the vault's ANSWER decides, in `planRegistryRemoval`: a
             // refused delete used to be ignored, so the row disappeared while
             // the token stayed behind it.
-            const cleared = secrets().setSecret(registrySecretKey(namespace), '');
+            const key = registrySecretKey(namespace);
+            // Read BEFORE clearing: the vault goes first, so a settings write
+            // that does not land must be able to put the token back.
+            const before = secrets().getSecret(key) ?? '';
+            const cleared = secrets().setSecret(key, '');
             const plan = planRegistryRemoval({
               registries: current,
               namespace,
@@ -492,9 +505,20 @@ export function registerUiKitIpc(): void {
             if (!plan.removed) {
               return { ...(await buildStatus()), registryError: plan.error };
             }
-            replaceOrchSettings({
+            rollbackToken = () => {
+              secrets().setSecret(key, before);
+            };
+            const persistedRemoval = replaceOrchSettings({
               uiKitRegistries: plan.registries.map(persistableRegistry),
             } as never);
+            const removal = registryRemovalOutcome({
+              namespace,
+              persisted: persistedRemoval?.uiKitRegistries,
+            });
+            if (!removal.removed) {
+              rollbackToken();
+              return { ...(await buildStatus()), registryError: removal.error };
+            }
           }
           return await buildStatus();
         }
@@ -512,7 +536,14 @@ export function registerUiKitIpc(): void {
         );
         const auth = resolveRegistryAuthContract({
           namespace: input.namespace,
-          declared: input.auth,
+          // The panel may state the SHAPE (an `X-API-Key` header, a raw
+          // scheme, a query parameter) — a private registry that needs one
+          // was unconfigurable from Settings and answered 401 forever. The
+          // variable NAME stays derived in Main: it selects a credential, and
+          // that is never the caller's to choose.
+          declared: input.auth
+            ? { ...input.auth, envVar: derivedRegistryEnvVar(input.namespace) }
+            : undefined,
           stored: previous?.auth,
           storedUrl: previous?.url,
           url: input.url.trim(),
@@ -526,8 +557,15 @@ export function registerUiKitIpc(): void {
         // provisions by other means.
         // Validated here, before anything is persisted: https only, `{name}`
         // present, no credentials in the URL, header/env names well formed.
+        //
+        // THE CALLER'S OWN `auth` IS DROPPED FIRST. Spreading `input` carried
+        // it through whenever the gate above answered `undefined`, so sending
+        // an `auth` object in the request rebuilt the very contract the gate
+        // had just refused — the whole boundary was one spread away from
+        // being bypassed. Only the RESOLVED contract may be attached.
+        const { auth: _declared, ...withoutDeclaredAuth } = input;
         const registry = assertRegistry({
-          ...input,
+          ...withoutDeclaredAuth,
           ...(auth ? { auth } : {}),
           secretKey: registrySecretKey(input.namespace),
         });

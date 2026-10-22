@@ -459,6 +459,35 @@ export function registrySaveOutcome(input: {
 }
 
 /**
+ * Whether the removal actually landed in the settings.
+ *
+ * The mirror of `registrySaveOutcome`, and for the same reason: the vault is
+ * cleared FIRST, so a settings write that does not land (it throws, or the
+ * merged object fails the schema and the previous list comes back) leaves the
+ * row on screen with its token already destroyed, and every later install
+ * fails until the operator types the credential again. The caller restores the
+ * token when this says no.
+ */
+export function registryRemovalOutcome(input: {
+  readonly namespace: string;
+  readonly persisted:
+    | readonly { readonly namespace: string }[]
+    | undefined;
+}): { readonly removed: true } | { readonly removed: false; readonly error: string } {
+  const namespace = input.namespace.trim();
+  const stillThere =
+    input.persisted === undefined ||
+    input.persisted.some((entry) => entry.namespace === namespace);
+  if (!stillThere) return { removed: true };
+  return {
+    removed: false,
+    error:
+      'as configurações não aceitaram a remoção; o registry continua na lista ' +
+      'e o token foi devolvido ao cofre',
+  };
+}
+
+/**
  * What removing a registry does, decided before anything is written.
  *
  * The vault goes FIRST and its answer decides: secure storage can refuse the

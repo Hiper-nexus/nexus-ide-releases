@@ -165,3 +165,91 @@ describe('saving a registry', () => {
     expect(view.registryError).toBeTruthy();
   });
 });
+
+describe('the removal does not destroy the token it could not remove', () => {
+  it('puts the token back when the settings write is dropped', async () => {
+    // The vault is cleared FIRST, so a list write that does not land used to
+    // leave the row on screen with its credential already gone — every later
+    // install failed until the operator typed it again.
+    store.refuseWrite = true;
+    const handle = await registryHandler();
+
+    const view = await handle(null, { action: 'remove', namespace: '@acme' });
+
+    expect(view.registryError).toBeTruthy();
+    expect(store.registries).toEqual([{ ...VENDOR }]);
+    expect(vault.entries.get(TOKEN_KEY)).toBe('tok-old');
+  });
+});
+
+describe('the caller cannot smuggle an auth contract past the gate', () => {
+  it('saves NO contract when the gate refused one', async () => {
+    // `{...input}` carried the caller's own `auth` through, so sending one
+    // rebuilt exactly the contract the host/preset gate had just refused —
+    // and the contract is what releases the vaulted token.
+    const handle = await registryHandler();
+
+    const view = await handle(null, {
+      action: 'set',
+      registry: {
+        namespace: '@acme',
+        url: 'https://elsewhere.test/r/{name}.json',
+        auth: { kind: 'header', name: 'Authorization' },
+      },
+    });
+
+    expect(view.registrySaved).toBe('@acme');
+    const saved = store.registries[0] as { namespace: string; auth?: unknown };
+    expect(saved.namespace).toBe('@acme');
+    expect(saved.auth).toBeUndefined();
+  });
+
+  it('keeps the SHAPE the panel stated when the gate allows a contract', async () => {
+    const handle = await registryHandler();
+
+    await handle(null, {
+      action: 'set',
+      registry: {
+        namespace: '@acme',
+        url: 'https://registry.acme.test/r/{name}.json',
+        auth: { kind: 'header', name: 'X-API-Key', scheme: 'raw' },
+      },
+      token: 'tok-api-key',
+    });
+
+    const saved = store.registries[0] as {
+      auth?: { kind: string; name: string; scheme?: string; envVar: string };
+    };
+    expect(saved.auth?.name).toBe('X-API-Key');
+    expect(saved.auth?.scheme).toBe('raw');
+    // The VARIABLE stays derived in Main: it selects a credential.
+    expect(saved.auth?.envVar).toBe('ACME_REGISTRY_TOKEN');
+  });
+});
+
+describe('a licence key is validated before it reaches the vault', () => {
+  it('refuses a malformed key with no project open, and stores nothing', async () => {
+    const ipc = await import('./ui-kit-ipc');
+    ipc.setUiKitVaultProvider(() => fakeVault);
+    ipc.registerUiKitIpc();
+    const handle = handlers.get(UI_KIT_CHANNELS.license)!;
+
+    const view = await handle(null, { action: 'set', key: 'suk live key' });
+
+    expect(view.stored).toBe(false);
+    expect(view.detail).toMatch(/whitespace|espaço|branco/i);
+    expect([...vault.entries.keys()].some((key) => key.includes('license'))).toBe(false);
+  });
+
+  it('stores a well-formed key with no project open', async () => {
+    const ipc = await import('./ui-kit-ipc');
+    ipc.setUiKitVaultProvider(() => fakeVault);
+    ipc.registerUiKitIpc();
+    const handle = handlers.get(UI_KIT_CHANNELS.license)!;
+
+    const view = await handle(null, { action: 'set', key: '  suk-well-formed-key  ' });
+
+    expect(view.stored).toBe(true);
+    expect([...vault.entries.values()]).toContain('suk-well-formed-key');
+  });
+});

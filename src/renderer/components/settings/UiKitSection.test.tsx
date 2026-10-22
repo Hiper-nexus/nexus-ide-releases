@@ -728,3 +728,95 @@ it('says why a registry would not go away', async () => {
     act(() => root.unmount());
   }
 });
+
+function pick(select: HTMLSelectElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(
+    HTMLSelectElement.prototype,
+    'value',
+  )?.set;
+  setter?.call(select, value);
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+it('submits a non-Bearer contract for a registry that needs one', async () => {
+  // A private registry on `X-API-Key` (or a raw value, or a query parameter)
+  // could not be configured from Settings at all: the form sent namespace,
+  // URL and token only, Main derived `Authorization: Bearer`, and the registry
+  // answered 401 forever with no UI able to say otherwise.
+  const api_ = api({ registry: vi.fn().mockResolvedValue(status({ registrySaved: '@acme' })) });
+  const { host, root } = await mount();
+  try {
+    await act(async () =>
+      typeInto(
+        host.querySelector<HTMLInputElement>('input[aria-label="Namespace do registry"]')!,
+        '@acme',
+      ),
+    );
+    await act(async () =>
+      typeInto(
+        host.querySelector<HTMLInputElement>('input[aria-label="URL do registry"]')!,
+        'https://registry.acme.test/r/{name}.json',
+      ),
+    );
+    await act(async () =>
+      typeInto(
+        host.querySelector<HTMLInputElement>(
+          'input[aria-label="Nome do cabeçalho ou parâmetro"]',
+        )!,
+        'X-API-Key',
+      ),
+    );
+    await act(async () =>
+      pick(
+        host.querySelector<HTMLSelectElement>('select[aria-label="Prefixo do cabeçalho"]')!,
+        'raw',
+      ),
+    );
+    await act(async () =>
+      [...host.querySelectorAll('button')]
+        .find((button) => button.textContent === 'Adicionar')!
+        .click(),
+    );
+
+    expect(api_.registry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'set',
+        registry: expect.objectContaining({
+          namespace: '@acme',
+          auth: { kind: 'header', name: 'X-API-Key', scheme: 'raw' },
+        }),
+      }),
+    );
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it('sends no contract at all when the operator names none', async () => {
+  const api_ = api({ registry: vi.fn().mockResolvedValue(status({ registrySaved: '@acme' })) });
+  const { host, root } = await mount();
+  try {
+    await act(async () =>
+      typeInto(
+        host.querySelector<HTMLInputElement>('input[aria-label="Namespace do registry"]')!,
+        '@acme',
+      ),
+    );
+    await act(async () =>
+      typeInto(
+        host.querySelector<HTMLInputElement>('input[aria-label="URL do registry"]')!,
+        'https://registry.acme.test/r/{name}.json',
+      ),
+    );
+    await act(async () =>
+      [...host.querySelectorAll('button')]
+        .find((button) => button.textContent === 'Adicionar')!
+        .click(),
+    );
+
+    const call = api_.registry.mock.calls[0]?.[0] as { registry?: { auth?: unknown } };
+    expect(call.registry?.auth).toBeUndefined();
+  } finally {
+    act(() => root.unmount());
+  }
+});

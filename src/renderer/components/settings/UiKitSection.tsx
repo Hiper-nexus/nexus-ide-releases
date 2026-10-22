@@ -48,6 +48,12 @@ export function UiKitSection() {
   const [registryNamespace, setRegistryNamespace] = useState('');
   const [registryUrl, setRegistryUrl] = useState('');
   const [registryToken, setRegistryToken] = useState('');
+  // The SHAPE of the credential, for a registry that does not take
+  // `Authorization: Bearer`. Empty name = the default contract, which is what
+  // almost every registry wants; Main derives the variable either way.
+  const [registryAuthKind, setRegistryAuthKind] = useState<'header' | 'param'>('header');
+  const [registryAuthName, setRegistryAuthName] = useState('');
+  const [registryAuthScheme, setRegistryAuthScheme] = useState<'bearer' | 'raw'>('bearer');
   const [exactSlug, setExactSlug] = useState('');
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [result, setResult] = useState<UiKitInstallView | null>(null);
@@ -177,9 +183,27 @@ export function UiKitSection() {
     setBusy('registry');
     setRegistryError(null);
     try {
+      const authName = registryAuthName.trim();
       const next = await window.nexus.uiKit.registry({
         action: 'set',
-        registry: { namespace, url },
+        registry: {
+          namespace,
+          url,
+          // Only when the operator states one: an `X-API-Key` header, a raw
+          // scheme, a query parameter. Without it Main derives the default
+          // Bearer contract, as before.
+          ...(authName
+            ? {
+                auth: {
+                  kind: registryAuthKind,
+                  name: authName,
+                  ...(registryAuthKind === 'header'
+                    ? { scheme: registryAuthScheme }
+                    : {}),
+                },
+              }
+            : {}),
+        },
         ...(registryToken.trim() ? { token: registryToken.trim() } : {}),
       });
       setStatus(next);
@@ -193,6 +217,9 @@ export function UiKitSection() {
         setRegistryNamespace('');
         setRegistryUrl('');
         setRegistryToken('');
+        setRegistryAuthKind('header');
+        setRegistryAuthName('');
+        setRegistryAuthScheme('bearer');
       } else {
         // Main refuses a URL that is not https, carries credentials, or has no
         // {name} placeholder — and it answers with the list it already had.
@@ -613,6 +640,42 @@ export function UiKitSection() {
         >
           {busy === 'registry' ? 'Salvando…' : 'Adicionar'}
         </button>
+      </div>
+      <div className="settings-row">
+        <p className="settings-list__detail">
+          Como o token viaja (em branco = <code>Authorization: Bearer</code>):
+        </p>
+        <select
+          className="settings-input"
+          value={registryAuthKind}
+          aria-label="Tipo do contrato do registry"
+          onChange={(event) =>
+            setRegistryAuthKind(event.target.value === 'param' ? 'param' : 'header')
+          }
+        >
+          <option value="header">Cabeçalho</option>
+          <option value="param">Parâmetro na URL</option>
+        </select>
+        <input
+          className="settings-input"
+          value={registryAuthName}
+          placeholder={registryAuthKind === 'header' ? 'X-API-Key' : 'api_key'}
+          aria-label="Nome do cabeçalho ou parâmetro"
+          onChange={(event) => setRegistryAuthName(event.target.value)}
+        />
+        {registryAuthKind === 'header' && (
+          <select
+            className="settings-input"
+            value={registryAuthScheme}
+            aria-label="Prefixo do cabeçalho"
+            onChange={(event) =>
+              setRegistryAuthScheme(event.target.value === 'raw' ? 'raw' : 'bearer')
+            }
+          >
+            <option value="bearer">Com prefixo Bearer</option>
+            <option value="raw">Valor cru</option>
+          </select>
+        )}
       </div>
       {registryError && (
         <div className="mkt-notice mkt-notice--danger" role="alert">
