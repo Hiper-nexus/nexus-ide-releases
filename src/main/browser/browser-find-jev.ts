@@ -83,6 +83,11 @@ export interface BrowserFindJevContext {
   url: string;
   sessionId?: string;
   missionId?: string;
+  /**
+   * Provider deadline. A click/fill waits on this answer before acting, so it
+   * passes a tighter one than the read-only `find` (no answer → candidates).
+   */
+  timeoutMs?: number;
 }
 
 export interface BrowserFindJevPick {
@@ -143,7 +148,7 @@ export async function pickBrowserFindElement(
         url: redactPageUrl(context.url),
       },
       questions: { element: buildFindTieBreakQuestion(candidates) },
-      timeoutMs: FIND_JEV_TIMEOUT_MS,
+      timeoutMs: context.timeoutMs ?? FIND_JEV_TIMEOUT_MS,
       retryOnTimeout: false,
       // F-1626: viés da 1ª opção reconferido só na faixa limítrofe.
       orderCheck: { minConfidence: FIND_JEV_MIN_CONFIDENCE },

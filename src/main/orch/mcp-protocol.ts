@@ -169,13 +169,56 @@ function rpcError(
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
+/** An MCP image block (base64 bytes + media type) a tool may attach. */
+export interface McpImageContent {
+  readonly data: string;
+  readonly mimeType: "image/png" | "image/jpeg" | "image/webp";
+}
+
+/**
+ * Symbol key: JSON.stringify and Electron IPC (structured clone) both skip it,
+ * so the bytes reach only the MCP content list — never the text block, the
+ * audit trail, the renderer or a voice transcript.
+ */
+const MCP_IMAGE_CONTENT = Symbol("nexus.mcpImageContent");
+
+/** Returns a copy of `payload` that also carries image blocks for tools/call. */
+export function withMcpImageContent<T extends Record<string, unknown>>(
+  payload: T,
+  images: readonly McpImageContent[],
+): T {
+  const copy = { ...payload };
+  Object.defineProperty(copy, MCP_IMAGE_CONTENT, { value: [...images], enumerable: false });
+  return copy;
+}
+
+function attachedImages(payload: unknown): readonly McpImageContent[] {
+  if (!payload || typeof payload !== "object") return [];
+  const images = (payload as Record<symbol, unknown>)[MCP_IMAGE_CONTENT];
+  return Array.isArray(images) ? (images as McpImageContent[]) : [];
+}
+
+type McpContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
+
 function toolText(payload: unknown): {
-  content: Array<{ type: "text"; text: string }>;
+  content: McpContentBlock[];
   isError?: boolean;
 } {
-  const text =
-    typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
-  return { content: [{ type: "text", text }] };
+  // Compact on purpose: indentation added 22–50% to every result the model
+  // reads (a click with read:true cost 6–7k tokens) and no client needs it.
+  const text = typeof payload === "string" ? payload : JSON.stringify(payload);
+  return {
+    content: [
+      { type: "text", text },
+      ...attachedImages(payload).map((image) => ({
+        type: "image" as const,
+        data: image.data,
+        mimeType: image.mimeType,
+      })),
+    ],
+  };
 }
 
 function toolError(payload: unknown): ReturnType<typeof toolText> {

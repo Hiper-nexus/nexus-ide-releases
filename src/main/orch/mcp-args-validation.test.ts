@@ -342,3 +342,46 @@ describe('F-1302: pane_spawn expect contract depth', () => {
     );
   });
 });
+
+describe('fields advertised by the tool schema are accepted', () => {
+  it('accepts focus, paneId, judge, holdMs and the file_search budgets', () => {
+    expect(validateToolArgs('nexus_browser_read', { paneId: 'b', focus: 'qual o preço?' }))
+      .toEqual({ paneId: 'b', focus: 'qual o preço?' });
+    expect(validateToolArgs('nexus_browser_open', { url: 'https://a.test', paneId: 'b' }))
+      .toEqual({ url: 'https://a.test', paneId: 'b' });
+    expect(validateToolArgs('nexus_browser_find', { paneId: 'b', text: 'Salvar', judge: false }))
+      .toEqual({ paneId: 'b', text: 'Salvar', judge: false });
+    expect(validateToolArgs('nexus_browser_press', { paneId: 'b', key: 'ArrowUp', holdMs: 80 }))
+      .toEqual({ paneId: 'b', key: 'ArrowUp', holdMs: 80 });
+    expect(() => validateToolArgs('nexus_browser_press', { paneId: 'b', key: 'a', holdMs: 1_001 }))
+      .toThrow();
+    expect(validateToolArgs('nexus_file_search', {
+      pattern: '**/*.ts', maxFiles: 500, maxDirectories: 50, timeoutMs: 2_000,
+    })).toEqual({ pattern: '**/*.ts', maxFiles: 500, maxDirectories: 50, timeoutMs: 2_000 });
+  });
+});
+
+describe('browser select', () => {
+  it('needs one target (ref|label) and one choice (option|value|index)', () => {
+    expect(validateToolArgs('nexus_browser_select', { paneId: 'b', ref: 'e4', option: 'São Paulo' }))
+      .toEqual({ paneId: 'b', ref: 'e4', option: 'São Paulo' });
+    expect(validateToolArgs('nexus_browser_select', { paneId: 'b', label: 'Estado', index: 2 }))
+      .toEqual({ paneId: 'b', label: 'Estado', index: 2 });
+    expect(() => validateToolArgs('nexus_browser_select', { paneId: 'b', ref: 'e4' })).toThrow();
+    expect(() => validateToolArgs('nexus_browser_select', { paneId: 'b', ref: 'e4', option: 'a', value: 'b' }))
+      .toThrow();
+    expect(() => validateToolArgs('nexus_browser_select', { paneId: 'b', option: 'a' })).toThrow();
+    expect(() => validateToolArgs('nexus_browser_select', { paneId: 'b', ref: '#uf', option: 'a' })).toThrow();
+  });
+});
+
+describe('browser history through navigate', () => {
+  it('accepts exactly one of url or history', () => {
+    expect(validateToolArgs('nexus_browser_navigate', { paneId: 'b', history: 'back' }))
+      .toEqual({ paneId: 'b', history: 'back' });
+    expect(() => validateToolArgs('nexus_browser_navigate', { paneId: 'b' })).toThrow();
+    expect(() => validateToolArgs('nexus_browser_navigate', { paneId: 'b', url: 'https://a.test', history: 'reload' }))
+      .toThrow();
+    expect(() => validateToolArgs('nexus_browser_navigate', { paneId: 'b', history: 'home' })).toThrow();
+  });
+});

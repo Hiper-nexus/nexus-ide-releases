@@ -54,6 +54,8 @@ const stubs = vi.hoisted(() => ({
   assertBrowserAtExactUrl: vi.fn(),
   analyzeBrowserResponsive: vi.fn(async () => ({ paneId: 'browser-1', breakpoints: [] as unknown[] })),
   pressBrowserKey: vi.fn(async () => ({ paneId: 'browser-1' })),
+  historyBrowserPane: vi.fn(async () => ({ paneId: 'browser-1', navigated: true })),
+  selectBrowserOption: vi.fn(async () => ({ paneId: 'browser-1', selected: true })),
   resolveReviewAuthority: vi.fn(() => null as {
     reviewSessionId: string;
     reviewerSessionId: string;
@@ -94,6 +96,8 @@ vi.mock('../browser/browser-manager', () => ({
   scrollBrowserPane: vi.fn(),
   pressBrowserKey: stubs.pressBrowserKey,
   hoverBrowserElement: vi.fn(),
+  historyBrowserPane: stubs.historyBrowserPane,
+  selectBrowserOption: stubs.selectBrowserOption,
 }));
 vi.mock('../perf/perf-ipc', () => ({ collectPerfSnapshot: vi.fn() }));
 vi.mock('./pane-registry', () => ({
@@ -334,6 +338,58 @@ describe('preview tool workspace confinement', () => {
       tool.handler({ dir: '/Users/example' }, context),
     ).rejects.toThrow(/escapes workspace/);
     expect(stubs.startPreview).not.toHaveBeenCalled();
+  });
+
+  it('screenshot returns the image as MCP content and forwards fullPage/ref/theme', async () => {
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_screenshot')!;
+    stubs.captureBrowserScreenshot.mockResolvedValueOnce({
+      path: '/runtime/shot.png', url: 'http://127.0.0.1:1234/',
+      image: { data: 'aW1n', mimeType: 'image/png', width: 10, height: 5 },
+    } as never);
+    const result = await tool.handler({ paneId: 'browser-1', fullPage: true, theme: 'dark', ref: 'e3' }, context);
+    expect(stubs.captureBrowserScreenshot).toHaveBeenLastCalledWith('browser-1', scope, undefined,
+      expect.objectContaining({ fullPage: true, theme: 'dark', ref: 'e3', includeImage: true }));
+    expect(result).toMatchObject({ path: '/runtime/shot.png', inlineImage: { width: 10, height: 5 } });
+    expect(JSON.stringify(result)).not.toContain('aW1n');
+    const symbols = Object.getOwnPropertySymbols(result as object);
+    expect(symbols).toHaveLength(1);
+  });
+
+  it('select needs write authority and confirmation and passes the label target and the option', async () => {
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_select')!;
+    expect(tool.requiresConfirm).toBe(true);
+    await tool.handler({ paneId: 'browser-1', label: 'Estado', option: 'São Paulo' }, context);
+    expect(authorizePaneRef).toHaveBeenLastCalledWith(context, 'browser-1', 'write');
+    expect(stubs.selectBrowserOption).toHaveBeenCalledWith('browser-1', scope, { text: 'Estado' },
+      { option: 'São Paulo' }, expect.objectContaining({ judge: true }));
+    await expect(tool.handler({ paneId: 'browser-1', ref: 'e1' }, context)).rejects.toThrow(/option, value or index/);
+  });
+
+  it('navigate walks the history (back/forward/reload) instead of a url', async () => {
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_navigate')!;
+    expect(tool.inputSchema.required).toEqual(['paneId']);
+    await tool.handler({ paneId: 'browser-1', history: 'back' }, context);
+    expect(authorizePaneRef).toHaveBeenLastCalledWith(context, 'browser-1', 'write');
+    expect(stubs.historyBrowserPane).toHaveBeenCalledWith('browser-1', scope, 'back',
+      expect.objectContaining({ judge: true }));
+    expect(stubs.loadBrowser).not.toHaveBeenCalled();
+    await expect(tool.handler({ paneId: 'browser-1' }, context)).rejects.toThrow(/url or history/);
+  });
+
+  it('opens with the same read/judge/device options as navigate', async () => {
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_open')!;
+    const properties = tool.inputSchema.properties as Record<string, unknown>;
+    expect(properties).toHaveProperty('read');
+    expect(properties).toHaveProperty('judge');
+    expect(properties).toHaveProperty('device');
+
+    await tool.handler({ url: 'https://example.com', read: { format: 'compact' }, device: 'mobile' }, context);
+    expect(stubs.loadBrowser).toHaveBeenLastCalledWith('browser-1', 'https://example.com',
+      expect.objectContaining({ read: { format: 'compact' }, judge: true, device: 'mobile', privateAccessConfirmed: false }));
+
+    await tool.handler({ url: 'https://example.com', judge: false }, context);
+    expect(stubs.loadBrowser).toHaveBeenLastCalledWith('browser-1', 'https://example.com',
+      expect.objectContaining({ judge: false }));
   });
 
   it('propagates the captured project scope when opening a browser pane', async () => {
@@ -654,6 +710,7 @@ describe('preview tool workspace confinement', () => {
       {
         signal: undefined,
         assertCurrentAuthority: undefined,
+        includeImage: true,
       },
     );
   });

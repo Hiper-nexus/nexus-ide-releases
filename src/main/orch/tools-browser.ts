@@ -1,5 +1,6 @@
 import {
   assertMcpInvocationCurrent,
+  withMcpImageContent,
   type McpToolDef,
 } from './mcp-protocol';
 import {
@@ -10,6 +11,7 @@ import {
   extractBrowserFields,
   fillBrowserElement,
   findBrowserElements,
+  historyBrowserPane,
   hoverBrowserElement,
   inspectBrowserElement,
   loadBrowser,
@@ -17,6 +19,7 @@ import {
   readBrowserPage,
   readBrowserPageCompact,
   scrollBrowserPane,
+  selectBrowserOption,
   waitForBrowser,
   type BrowserDeviceKind,
   type BrowserInlineRead,
@@ -96,7 +99,8 @@ const previewStartTool: McpToolDef = {
   description:
     'Serve a built static web app inside the active workspace on a Nexus-owned ' +
     '127.0.0.1 preview URL. Returns an opaque {id, url}; idempotent per project, ' +
-    'checkout and canonical directory.',
+    'checkout and canonical directory. This is the trusted way to look at your ' +
+    'own UI in nexus_browser_open (a dev server on localhost is refused).',
   inputSchema: {
     type: 'object',
     properties: { dir: { type: 'string' } },
@@ -131,12 +135,26 @@ const previewStopTool: McpToolDef = {
   },
 };
 
+const DEVICE_ARG_PROP = {
+  type: 'string',
+  enum: ['mobile', 'tablet', 'desktop'],
+  description:
+    'Emulate a device breakpoint before loading (real UA + viewport metrics, ' +
+    'reused from the operator\'s responsive-preview toggle) — "mobile"/"tablet" ' +
+    'serve the real mobile/tablet layout, "desktop" turns emulation back off. ' +
+    'For a full responsive check in one call use nexus_browser_responsive.',
+};
+
 const browserOpenTool: McpToolDef = {
   name: 'nexus_browser_open',
   requiresConfirm: true,
   description:
     'Open an embedded browser pane at a confirmed URL. Nexus preview URLs are ' +
-    'the only private targets trusted automatically.',
+    'the only private targets trusted automatically: a local dev server ' +
+    '(localhost/127.0.0.1) or a file:// page is refused. To check your own UI, ' +
+    'build it, serve the build with nexus_preview_start({dir}), open the ' +
+    'returned URL here and run nexus_browser_responsive. Page dialogs never ' +
+    'block this pane: alert closes, confirm answers Cancel, prompt answers empty.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -147,6 +165,9 @@ const browserOpenTool: McpToolDef = {
         description:
           'Required only for a main-provisioned automated design-review pane.',
       },
+      read: READ_ARG_PROP,
+      judge: JUDGE_ARG_PROP,
+      device: DEVICE_ARG_PROP,
     },
     required: ['url'],
   },
@@ -197,6 +218,7 @@ const browserOpenTool: McpToolDef = {
       // F-797: sem aba possível, o worker segue com curl e declara a falha.
       throw new Error(browserUnavailableError(result.error ?? 'browser open failed'));
     }
+    const device = str(args, 'device');
     try {
       assertMcpInvocationCurrent(invocation);
       const state = await loadBrowser(result.paneId, url, {
@@ -204,6 +226,15 @@ const browserOpenTool: McpToolDef = {
         privateAccessConfirmed: false,
         signal: invocation?.signal,
         assertCurrentAuthority: invocation?.assertCurrentAuthority,
+        // Same options as navigate: opening is the first navigation, and the
+        // agent otherwise spends a second call just to read or judge it.
+        read: inlineReadArg(args),
+        judge: args.judge !== false,
+        sessionId: ctx.sessionId,
+        missionId: ctx.missionId,
+        ...(device === 'mobile' || device === 'tablet' || device === 'desktop'
+          ? { device }
+          : {}),
       });
       assertMcpInvocationCurrent(invocation);
       return { ok: true, paneId: result.paneId, state };
@@ -220,39 +251,49 @@ const browserOpenTool: McpToolDef = {
   },
 };
 
-const DEVICE_ARG_PROP = {
-  type: 'string',
-  enum: ['mobile', 'tablet', 'desktop'],
-  description:
-    'Emulate a device breakpoint before loading (real UA + viewport metrics, ' +
-    'reused from the operator\'s responsive-preview toggle) — "mobile"/"tablet" ' +
-    'serve the real mobile/tablet layout, "desktop" turns emulation back off. ' +
-    'For a full responsive check in one call use nexus_browser_responsive.',
-};
 
 const browserNavigateTool: McpToolDef = {
   name: 'nexus_browser_navigate',
   requiresConfirm: true,
   description:
-    'Navigate an owned browser pane to a confirmed URL. Redirects and DNS are ' +
-    'revalidated independently. Every result carries after/changed and the ' +
-    'errors observed since the previous action.',
+    'Navigate an owned browser pane to a confirmed URL — or walk its history ' +
+    'with `history: "back" | "forward" | "reload"` instead of `url`. Redirects ' +
+    'and DNS are revalidated independently. Every result carries after/changed ' +
+    'and the errors observed since the previous action.',
   inputSchema: {
     type: 'object',
     properties: {
       paneId: { type: 'string' },
       url: { type: 'string' },
+      history: {
+        type: 'string',
+        enum: ['back', 'forward', 'reload'],
+        description: 'Instead of url: go back, forward or reload the current page.',
+      },
       read: READ_ARG_PROP,
       judge: JUDGE_ARG_PROP,
       device: DEVICE_ARG_PROP,
     },
-    required: ['paneId', 'url'],
+    required: ['paneId'],
   },
   handler: async (args, ctx, invocation) => {
     const paneId = requireStr(args, 'paneId');
     authorizePaneRef(ctx, paneId, 'write');
+    const history = str(args, 'history');
+    if (history === 'back' || history === 'forward' || history === 'reload') {
+      assertMcpInvocationCurrent(invocation);
+      return historyBrowserPane(paneId, ctx.scope, history, {
+        read: inlineReadArg(args),
+        judge: args.judge !== false,
+        sessionId: ctx.sessionId,
+        missionId: ctx.missionId,
+      });
+    }
+    if (typeof args.url !== 'string' || !args.url) {
+      throw new Error('missing required argument: url or history');
+    }
     const device = str(args, 'device');
-    return loadBrowser(paneId, requireStr(args, 'url'), {
+    return loadBrowser(paneId, args.url, {
       scope: ctx.scope,
       privateAccessConfirmed: false,
       signal: invocation?.signal,
@@ -272,13 +313,22 @@ const browserNavigateTool: McpToolDef = {
 const browserScreenshotTool: McpToolDef = {
   name: 'nexus_browser_screenshot',
   description:
-    'Capture an owned browser pane as a local PNG artifact with redacted URL metadata. ' +
-    'The response contains a path and metadata, not image content. Inspect the image ' +
-    'with an available authorized image tool before claiming visual verification; ' +
-    'if that is unavailable, report visual verification as pending.',
+    'Capture an owned browser pane as a local PNG artifact with redacted URL metadata, ' +
+    'and return the image itself (bounded to 1568 px on the longest side) so you can ' +
+    'look at it. `fullPage: true` captures the whole scrollable page; `ref` crops to ' +
+    'one element (scrolled into view); `theme: "light" | "dark"` renders that ' +
+    'prefers-color-scheme for this capture only. For a device breakpoint navigate ' +
+    'with `device` first (or use nexus_browser_responsive). A pane on the personal ' +
+    'profile never returns its pixels (path only). `image: false` returns metadata only.',
   inputSchema: {
     type: 'object',
-    properties: { paneId: { type: 'string' } },
+    properties: {
+      paneId: { type: 'string' },
+      fullPage: { type: 'boolean', description: 'Whole scrollable page, not just the viewport' },
+      ref: { type: 'string', description: 'Crop to this element ref from browser_read/find' },
+      theme: { type: 'string', enum: ['light', 'dark'], description: 'prefers-color-scheme for this capture' },
+      image: { type: 'boolean', description: 'Return the image content too (default true)' },
+    },
     required: ['paneId'],
   },
   handler: async (args, ctx, invocation) => {
@@ -286,6 +336,15 @@ const browserScreenshotTool: McpToolDef = {
     const reviewAuthority = authorizeBrowserPane(ctx, paneId, 'read');
     assertReviewSurfaceCurrent(ctx, reviewAuthority);
     const visualAssignment = ctx.visualTask;
+    const theme = str(args, 'theme');
+    const ref = str(args, 'ref');
+    // The automated review pane keeps its single, exact viewport capture.
+    const extras = reviewAuthority ? {} : {
+      ...(args.fullPage === true ? { fullPage: true } : {}),
+      ...(ref ? { ref } : {}),
+      ...(theme === 'light' || theme === 'dark' ? { theme } : {}),
+      includeImage: args.image !== false,
+    };
     const result = await captureBrowserScreenshot(
       paneId,
       ctx.scope,
@@ -293,6 +352,7 @@ const browserScreenshotTool: McpToolDef = {
       {
         signal: invocation?.signal,
         assertCurrentAuthority: invocation?.assertCurrentAuthority,
+        ...extras,
       },
     );
     if (reviewAuthority) {
@@ -305,8 +365,16 @@ const browserScreenshotTool: McpToolDef = {
       recordAutomatedReviewBrowserInspection(reviewAuthority, 'screenshot');
     }
     assertMcpInvocationCurrent(invocation);
-    if (ctx.visualTask === visualAssignment && !result.truncated) recordVisualHandoffEvidence(ctx, result.artifactId);
-    return result;
+    // An element crop is a detail, not the page: it does not satisfy the gate.
+    if (ctx.visualTask === visualAssignment && !result.truncated && !result.element) {
+      recordVisualHandoffEvidence(ctx, result.artifactId);
+    }
+    const { image, ...metadata } = result;
+    if (!image) return metadata;
+    return withMcpImageContent(
+      { ...metadata, inlineImage: { width: image.width, height: image.height, mimeType: image.mimeType } },
+      [{ data: image.data, mimeType: image.mimeType }],
+    );
   },
 };
 
@@ -562,7 +630,10 @@ const browserClickTool: McpToolDef = {
     'plain `text` (accessible name, never a CSS selector or JavaScript). ' +
     'With text, a clear winner is clicked; when ambiguous the response ' +
     'carries `candidates` and nothing is clicked (Jev only breaks ties ' +
-    'with ≥ 0.7 confidence). The click requires user confirmation.',
+    'with ≥ 0.7 confidence). The click is a real mouse click at the element ' +
+    'center after scrolling it into view (`input: "native"`); a covered or ' +
+    'hidden element falls back to the dispatched pointer/mouse/click sequence ' +
+    '(`input: "synthetic"`). The click requires user confirmation.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -626,6 +697,56 @@ const browserFillTool: McpToolDef = {
       (typeof args.label === 'string' ? { text: args.label } : null);
     if (!target) throw new Error('missing required argument: ref or label');
     return fillBrowserElement(paneId, ctx.scope, target, args.text, {
+      read: inlineReadArg(args),
+      judge: args.judge !== false,
+      sessionId: ctx.sessionId,
+      missionId: ctx.missionId,
+    });
+  },
+};
+
+const browserSelectTool: McpToolDef = {
+  name: 'nexus_browser_select',
+  requiresConfirm: true,
+  description:
+    'Choose an option in a dropdown by opaque `ref` — or by `label` (the ' +
+    'field\'s accessible name). Pass `option` (visible option text, case- and ' +
+    'accent-insensitive), or `value`/`index` for a native <select>. A native ' +
+    '<select> is set directly and fires input/change; a component dropdown ' +
+    '(Radix/shadcn Select, combobox, listbox) is opened with a real click and ' +
+    'the option with that name is clicked. Ambiguous or missing options come ' +
+    'back as `candidates` (or an error listing the options) and nothing is ' +
+    'chosen. Sensitive fields are refused.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      paneId: { type: 'string' },
+      ref: { type: 'string' },
+      label: { type: 'string', description: 'Accessible name of the dropdown instead of a ref' },
+      option: { type: 'string', description: 'Visible text of the option to choose' },
+      value: { type: 'string', description: 'Option value (native <select> only)' },
+      index: { type: 'integer', minimum: 0, description: 'Option index (native <select> only)' },
+      read: READ_ARG_PROP,
+      judge: JUDGE_ARG_PROP,
+    },
+    required: ['paneId'],
+  },
+  handler: async (args, ctx) => {
+    const paneId = requireStr(args, 'paneId');
+    authorizePaneRef(ctx, paneId, 'write');
+    const target =
+      str(args, 'ref') ??
+      (typeof args.label === 'string' ? { text: args.label } : null);
+    if (!target) throw new Error('missing required argument: ref or label');
+    const choice = {
+      ...(typeof args.option === 'string' ? { option: args.option } : {}),
+      ...(typeof args.value === 'string' ? { value: args.value } : {}),
+      ...(typeof args.index === 'number' ? { index: args.index } : {}),
+    };
+    if (Object.keys(choice).length !== 1) {
+      throw new Error('provide exactly one of option, value or index');
+    }
+    return selectBrowserOption(paneId, ctx.scope, target, choice, {
       read: inlineReadArg(args),
       judge: args.judge !== false,
       sessionId: ctx.sessionId,
@@ -727,8 +848,10 @@ const browserPressTool: McpToolDef = {
     'Press a keyboard key on the focused element, or on a `ref` when given ' +
     '(the element is focused first). Accepts named keys (Enter, Tab, Escape, ' +
     'ArrowUp/Down/Left/Right, Backspace, Delete, F1-F12, ...) or a single ' +
-    'printable character. Modifiers: Shift, Control, Alt, Meta. ' +
-    'Optional holdMs holds the key for up to 1000 ms before release.',
+    'printable character. Modifiers: Shift, Control, Alt, Meta. Keys are real ' +
+    'key events (Enter submits a form, Tab moves focus, a character types) ' +
+    'unless the pane cannot take input. Optional holdMs holds the key for up ' +
+    'to 1000 ms before release (dispatched events).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -766,9 +889,10 @@ const browserPressTool: McpToolDef = {
 const browserHoverTool: McpToolDef = {
   name: 'nexus_browser_hover',
   description:
-    'Hover a visible element by opaque ref (dispatches the pointer + mouse ' +
-    'over/enter sequence and focuses it). Useful for triggering tooltips, ' +
-    'dropdown menus, and :hover-driven UI.',
+    'Hover a visible element by opaque ref: moves a real mouse pointer to its ' +
+    'center (falls back to dispatched pointer/mouse events when the pane cannot ' +
+    'take input; `input` says which). Useful for tooltips, dropdown menus and ' +
+    ':hover-driven UI.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -805,6 +929,7 @@ export function buildBrowserTools(): McpToolDef[] {
     browserInspectTool,
     browserClickTool,
     browserFillTool,
+    browserSelectTool,
     browserWaitTool,
     browserScrollTool,
     browserPressTool,

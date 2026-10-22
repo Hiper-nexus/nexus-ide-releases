@@ -83,6 +83,37 @@ describe('renderBrowserOutline', () => {
     expect(outline).toContain('— 5 elementos, 4 telas abaixo');
   });
 
+  it('keeps alerts and invalid fields in the compact outline, ahead of the element list', () => {
+    const outline = renderBrowserOutline(read({
+      alerts: [
+        { ref: 'e20', role: 'textbox', text: 'Email' },
+        { role: 'alert', text: 'Informe um e-mail válido' },
+      ],
+      elements: [
+        { ref: 'e20', tag: 'input', role: 'textbox', name: 'Email', editable: true, invalid: true },
+        ...Array.from({ length: 200 }, (_, i) => ({
+          ref: `e${i + 100}`, tag: 'a', role: 'link', name: 'link '.repeat(20),
+        })),
+      ],
+    }));
+    expect(outline).toContain('## alertas');
+    expect(outline).toContain('[e20] textbox: Email');
+    expect(outline).toContain('alert: Informe um e-mail válido');
+    expect(outline).toContain('[e20] textbox "Email" (editable, invalid)');
+    expect(outline.indexOf('## alertas')).toBeLessThan(outline.indexOf('## elementos'));
+  });
+
+  it('flags expanded and selected state of menus, tabs and options', () => {
+    const outline = renderBrowserOutline(read({
+      elements: [
+        { ref: 'e1', tag: 'button', role: 'button', name: 'Conta', expanded: true },
+        { ref: 'e2', tag: 'button', role: 'tab', name: 'Planos', selected: true },
+      ],
+    }));
+    expect(outline).toContain('[e1] button "Conta" (expanded)');
+    expect(outline).toContain('[e2] tab "Planos" (selected)');
+  });
+
   it('omits empty sections and the tail when the page is empty', () => {
     const outline = renderBrowserOutline(
       read({
