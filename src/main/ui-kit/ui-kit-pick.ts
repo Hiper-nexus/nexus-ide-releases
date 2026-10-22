@@ -165,16 +165,54 @@ const TASK_CONCEPTS: readonly (readonly [string, readonly string[]])[] = [
 /** Words worth matching on: shorter ones carry no signal. */
 const MIN_TASK_WORD = 3;
 
+/**
+ * Words that mean nothing about a component.
+ *
+ * Measured on 15 real requests: "combobox" was chosen for a login screen, a
+ * client table, a sidebar, a landing page and a settings page — because the
+ * Portuguese word "com" ("with") is a SUBSTRING of "combobox". Short filler
+ * words are the whole problem, so they leave before any matching happens.
+ */
+const TASK_STOPWORDS = new Set([
+  'com', 'sem', 'para', 'por', 'uma', 'uns', 'uma', 'dos', 'das', 'nos', 'nas',
+  'que', 'mais', 'menos', 'num', 'numa', 'pelo', 'pela', 'seu', 'sua', 'meu',
+  'minha', 'ele', 'ela', 'isso', 'esse', 'essa', 'este', 'esta', 'aqui',
+  'quero', 'preciso', 'fazer', 'faz', 'monte', 'montar', 'criar', 'cria',
+  'colocar', 'coloca', 'deixar', 'deixa', 'ajustar', 'mudar', 'novo', 'nova',
+  'the', 'and', 'with', 'for', 'from', 'into', 'that', 'this', 'need', 'want',
+  'make', 'build', 'add', 'create', 'please', 'some', 'our', 'their',
+]);
+
+function wordsOf(text: string): readonly string[] {
+  return text
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((word) => word.length >= MIN_TASK_WORD && !TASK_STOPWORDS.has(word));
+}
+
 export function taskAffinityWords(task: string): readonly string[] {
-  const words = new Set<string>();
-  for (const word of task.toLowerCase().split(/[^\p{L}\p{N}]+/u)) {
-    if (word.length >= MIN_TASK_WORD) words.add(word);
-  }
+  const words = new Set<string>(wordsOf(task));
   for (const [concept, expansions] of TASK_CONCEPTS) {
     if (!words.has(concept)) continue;
     for (const expansion of expansions) words.add(expansion);
   }
   return [...words];
+}
+
+/**
+ * Whether two words are the same word, or one is a long enough prefix of the
+ * other ("calendario"/"calendar", "grafico"/"graph" via the concept map).
+ *
+ * Substring matching anywhere inside the candidate is what produced
+ * "com" → "combobox"; a prefix of at least four characters keeps the useful
+ * stemming without inventing matches in the middle of a word.
+ */
+const MIN_PREFIX_MATCH = 4;
+
+function wordsMatch(left: string, right: string): boolean {
+  if (left === right) return true;
+  const [short, long] = left.length <= right.length ? [left, right] : [right, left];
+  return short.length >= MIN_PREFIX_MATCH && long.startsWith(short);
 }
 
 /**
@@ -187,10 +225,15 @@ export function taskItemAffinity(
   task: string,
   candidate: Pick<UiKitCandidate, 'slug' | 'label' | 'category'>,
 ): number {
-  const haystack =
-    `${candidate.slug} ${candidate.label} ${candidate.category}`.toLowerCase();
+  // WORD BY WORD, on both sides. Comparing against one joined string let a
+  // task word match the middle of a slug, which is how a filler word picked
+  // the component.
+  const theirs = wordsOf(
+    `${candidate.slug} ${candidate.label} ${candidate.category}`,
+  );
   return taskAffinityWords(task).reduce(
-    (total, word) => (haystack.includes(word) ? total + 1 : total),
+    (total, word) =>
+      theirs.some((other) => wordsMatch(word, other)) ? total + 1 : total,
     0,
   );
 }

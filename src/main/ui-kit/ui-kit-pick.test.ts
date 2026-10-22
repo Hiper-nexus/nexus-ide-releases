@@ -479,3 +479,55 @@ describe('the judge saying "neither kit fits" is a decision', () => {
     expect(result.item?.slug).toBe('stat-cards');
   });
 });
+
+describe('a filler word does not pick a component', () => {
+  const COMBOBOX = {
+    kit: 'shadcn' as const,
+    slug: 'combobox',
+    label: 'Combobox',
+    category: 'registry:ui',
+    tier: 'free' as const,
+  };
+  const FORM = {
+    kit: 'shadcn' as const,
+    slug: 'form',
+    label: 'Form',
+    category: 'registry:ui',
+    tier: 'free' as const,
+  };
+
+  it('does not match "com" inside "combobox"', () => {
+    // Measured on 15 real requests: `combobox` was chosen for a login screen,
+    // a client table, a sidebar, a landing page and a settings page, because
+    // the Portuguese "com" ("with") is a substring of "combobox".
+    expect(taskItemAffinity('uma tela de login com e-mail e senha', COMBOBOX)).toBe(0);
+    expect(taskItemAffinity('tabela de clientes com busca', COMBOBOX)).toBe(0);
+  });
+
+  it('still matches the word the task really says', () => {
+    expect(taskItemAffinity('formulário de cadastro em três passos', FORM)).toBeGreaterThan(0);
+    expect(taskItemAffinity('preciso de um combobox de países', COMBOBOX)).toBeGreaterThan(0);
+  });
+
+  it('matches a prefix long enough to be a word, not a fragment', () => {
+    const calendar = {
+      kit: 'boardui' as const,
+      slug: 'calendar-view',
+      label: 'Calendar view',
+      category: 'base',
+      tier: 'free' as const,
+    };
+    // "calendario" ↔ "calendar": same word in two languages.
+    expect(taskItemAffinity('um calendario de agendamentos', calendar)).toBeGreaterThan(0);
+    // "age" (from "agendamentos"? no — a real 3-letter word) must not reach
+    // "agent-composer" by living inside it.
+    const agent = {
+      kit: 'boardui' as const,
+      slug: 'agent-composer',
+      label: 'Agent composer',
+      category: 'base',
+      tier: 'free' as const,
+    };
+    expect(taskItemAffinity('mostre a age do usuário', agent)).toBe(0);
+  });
+});
