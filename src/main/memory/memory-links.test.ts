@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { cpuTimeMs } from '../../test/cpu-time';
 import {
   extractMemoryLinkTargets,
   fileLinkTarget,
@@ -75,13 +76,12 @@ describe('F-764: varredura linear em texto de agente (memory-links)', () => {
     ['espaços e pontos', ' .'.repeat(SIZE / 2)],
   ];
 
+  // CPU, not wall clock: on the CI runner a 6 ms scan read as 51 ms of queue.
   it.each(inputs)('%s: tempo linear', (_label, text) => {
-    extractMemoryLinkTargets(text);
-    memorySubjectKey(text);
-    const startedAt = performance.now();
-    extractMemoryLinkTargets(text);
-    memorySubjectKey(text);
-    const elapsedMs = performance.now() - startedAt;
+    const elapsedMs = cpuTimeMs(() => {
+      extractMemoryLinkTargets(text);
+      memorySubjectKey(text);
+    });
     expect(elapsedMs).toBeLessThan(50);
   });
 });
