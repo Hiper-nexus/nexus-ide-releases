@@ -2877,12 +2877,15 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
     0600, invalida a free-list e re-confirma `license_status`. Nenhuma máquina
     de cliente gasta assento: o fornecedor só conta assento na ATIVAÇÃO.
     Chave DIGITADA (cofre) continua ativando de verdade no fornecedor — assento
-    honesto para chave própria. A porta do painel confere `license_status`
-    ANTES de provisionar (arquivo válido do próprio usuário não é sobrescrito);
-    as portas de install pulam a pré-checagem (`skipStatusPrecheck`) só porque
-    acabaram de rodar status elas mesmas. Auto-provisionamento de bundle só nas
-    PORTAS DE INSTALL (`autoActivate: true`); `planInstallItems`/dry-run não
-    tocam o arquivo.
+    honesto para chave própria. Quem decide sobrescrever é o ARQUIVO, não a
+    chamada ao fornecedor: antes de provisionar o Main lê o `license.json` —
+    arquivo ALHEIO (nativo, chave própria do usuário) fica intocado mesmo com o
+    fornecedor inalcançável (`unknown`) e mesmo nas portas de install (que
+    pulam a pré-checagem de status); só o payload do próprio bundle é regravado
+    (idempotente). A porta do painel ainda pré-checa `license_status` para
+    retornar cedo com a mensagem do próprio fornecedor. Auto-provisionamento de
+    bundle só nas PORTAS DE INSTALL (`autoActivate: true`);
+    `planInstallItems`/dry-run não tocam o arquivo.
   - "Remover" numa máquina provisionada é LOCAL, sempre
     (`isProvisionedBoardUiLicense`: chave E instanceId do payload embutido):
     apaga o arquivo + esquece o cofre, NUNCA chama `deactivate_license` —

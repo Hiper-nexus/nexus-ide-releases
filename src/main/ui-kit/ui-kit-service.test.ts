@@ -873,6 +873,39 @@ describe('the licence key bundled with Nexus', () => {
     expect(result.detail).toMatch(/valid and active/);
   });
 
+  it('keeps a NATIVE licence file that is already on disk — the file is the last word, not the vendor call', async () => {
+    // Security review 21/10: provisioning trusted only the vendor status
+    // call, and the vendor can be unreachable ('unknown') while a perfectly
+    // valid licence sits on disk — and the install doors do not even run the
+    // pre-check. Overwriting would destroy a working licence the machine
+    // already had. The same predicate the deactivate path uses decides here.
+    const h = harness({
+      licenseFile: { content: NATIVE_LICENSE },
+      mcp: (tool) => (tool === 'license_status' ? new Error('vendor unreachable') : { text: 'ok' }),
+    });
+
+    const result = await activateEffectiveBoardUiLicense({ cwd }, h.deps);
+
+    expect(result.ok).toBe(false);
+    expect(result.provisioned).toBeUndefined();
+    expect(result.detail).toMatch(/its own BoardUI licence file/);
+    expect(h.licenseFile.writes).toHaveLength(0);
+    expect(h.licenseFile.content).toEqual(NATIVE_LICENSE);
+    expect(h.vault.has(BOARDUI_LICENSE_SECRET)).toBe(false);
+  });
+
+  it('re-provisions the operator payload idempotently — our own file is the only one ever rewritten', async () => {
+    const h = harness({
+      licenseFile: { content: operatorBoardUiLicenseFile() },
+      mcp: (tool) => (tool === 'license_status' ? new Error('vendor unreachable') : { text: 'ok' }),
+    });
+
+    const result = await activateEffectiveBoardUiLicense({ cwd }, h.deps);
+
+    expect(result.provisioned).toBe(true);
+    expect(h.licenseFile.writes).toEqual([operatorBoardUiLicenseFile()]);
+  });
+
   it('routes the effective activation through the vault copy when there is one', async () => {
     const h = harness({ mcp: () => ({ text: 'License activated' }) });
     h.vault.set(BOARDUI_LICENSE_SECRET, 'BUI-OWN-KEY');

@@ -831,12 +831,36 @@ async function ensureActiveBoardUiLicense(
       };
     }
   }
+  // THE FILE ITSELF DECIDES, not the vendor's verdict.
+  //
+  // The pre-check above asks the vendor, and a vendor that cannot be reached
+  // answers `unknown` — on which the old code went ahead and overwrote. The
+  // install doors are worse: they pass `skipStatusPrecheck` and never asked
+  // at all. So a machine with its OWN licence file (this Mac before the key
+  // was bundled; a client that paid for its own seat) could have that file
+  // replaced by the operator's payload, destroying its instance identity and
+  // stranding its paid activation.
+  //
+  // Reading the file is local: it cannot be `unknown`. Absence has to be
+  // POSITIVELY established before anything is written, and a file that is not
+  // already our payload is left exactly as it is.
+  const ops = boardUiLicenseFileOps(deps);
+  const existing = ops.read();
+  if (existing && !isProvisionedBoardUiLicense(existing, operatorBoardUiLicenseFile())) {
+    return {
+      ok: false,
+      stored: false,
+      detail:
+        'this machine has its own BoardUI licence file; Nexus did not touch it. ' +
+        'Remove it yourself if you want the operator licence provisioned here.',
+    };
+  }
   invalidateBoardUiFreeList();
   // PROVISION, don't activate: writing the operator's licence file where the
   // CLI reads it is the whole trick — `validate` and every Pro download accept
   // key + instanceId from this machine, and no vendor seat is spent. The
   // vendor's own verdict follows; it does not count seats either.
-  const write = boardUiLicenseFileOps(deps).write(operatorBoardUiLicenseFile());
+  const write = ops.write(operatorBoardUiLicenseFile());
   if (!write.ok) {
     return {
       ok: false,
