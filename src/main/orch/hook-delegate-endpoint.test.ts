@@ -318,6 +318,8 @@ describe('hook /hook/delegate', () => {
       'edite o componente de login',
       'altere a função de cálculo do frete',
       'update package.json',
+      'renomear a função de login',
+      'renomeie a classe de pagamento',
     ])('sem conselho do Jev, pedido de código recebe o lembrete: %s', async (prompt) => {
       __resetLeanRemindersForTests();
       const out = await handleHookDelegateRequest(operator, { prompt }, { advise: vi.fn(async () => null) });
