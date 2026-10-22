@@ -9,6 +9,7 @@ import {
 import type { AdapterAuthStatus, CliAutoUpdateStatus, ProviderSettingsInfo } from '../../../shared/provider-settings-types';
 import { credentialLinkForKeySlot } from '../../../shared/credential-links';
 import { useAccountStore } from '../../state/account-store';
+import { useAccountReloginIntentStore } from '../../state/account-relogin-intent';
 import { useProviderStore } from '../../state/provider-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { useToastStore } from '../../state/toast-store';
@@ -1086,6 +1087,19 @@ export function ProvidersPanel() {
   useEffect(() => {
     setSelectedId((prev) => pickDefaultSelection(visible, prev));
   }, [visible]);
+
+  // F-1637: o pane pediu o login de uma conta — abre a CLI dela, na aba onde
+  // ela mora, para o AccountsManager atender o pedido.
+  const pendingRelogin = useAccountReloginIntentStore((s) => s.pending);
+  useEffect(() => {
+    if (!pendingRelogin) return;
+    const tabWithIt = (['clis', 'login'] as const).find((candidate) =>
+      filterProvidersForTab(providers, candidate, { showAbsent: true })
+        .some((p) => p.adapterId === pendingRelogin.adapterId));
+    if (!tabWithIt) return;
+    setTab(tabWithIt);
+    setSelectedId(pendingRelogin.adapterId);
+  }, [pendingRelogin, providers]);
 
   const selected = useMemo(
     () => visible.find((p) => p.adapterId === selectedId) ?? null,

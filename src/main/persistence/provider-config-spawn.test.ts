@@ -2152,7 +2152,10 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
         .toMatchObject({ expectedClaudeBlob: 'expired-renewable-blob' });
     } else {
       expect(prepared).toMatchObject({ ok: false,
-        error: expect.stringMatching(/“conta b” expirou — use «Entrar novamente» nessa conta/) });
+        error: expect.stringMatching(/“conta b” expirou — use «Entrar novamente» nessa conta/),
+        // A conta CERTA chega ao cartão do pane: só id e rótulo, sem e-mail.
+        relogin: { adapterId: 'claude', accountId: 'acct-b', accountLabel: 'conta b' } });
+      expect(JSON.stringify(prepared)).not.toContain('b@example.com');
       expect(spawnDeps.prepareAccount).not.toHaveBeenCalled();
     }
   });

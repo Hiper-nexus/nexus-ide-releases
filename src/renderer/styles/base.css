@@ -2094,6 +2094,22 @@ body {
   white-space: normal;
 }
 
+/* F-1637: recusa que se resolve entrando de novo na conta. O card continua
+   sem roubar clique do terminal; só o botão recebe ponteiro. */
+.pane-birth--failed.pane-birth--actionable {
+  grid-template-areas:
+    'identity headline'
+    'identity detail'
+    'identity action';
+}
+
+.pane-birth__action {
+  grid-area: action;
+  justify-self: start;
+  margin-top: var(--space-2);
+  pointer-events: auto;
+}
+
 @keyframes pane-birth-pulse {
   0%,
   100% {

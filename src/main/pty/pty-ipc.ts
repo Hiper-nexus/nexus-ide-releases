@@ -1,5 +1,6 @@
 import { readOwnedPromptState, submitOwnedPromptEnter } from './pty-prompt-state';
 import { licenseFailure } from '../../shared/license-errors';
+import { AccountReloginRequiredError, accountReloginFrom } from '../../shared/account-relogin';
 import { ipcMain } from "electron";
 import type { IpcMainInvokeEvent, WebContents } from "electron";
 import { workerContinuationPhysicalProof, bindWorkerContinuationSession, authorizeWorkerContinuationBirth, assertWorkerContinuationAccount } from '../orch/mission-pane-resume-ownership';
@@ -385,7 +386,9 @@ function spawnCliPtyAgentPane(
       authoritativePreparation ?? prepareProviderSpawn(adapter.id, perSpawn);
     timer.mark("provider-prep");
     if (!preparation.ok) {
-      throw new Error(preparation.error);
+      throw preparation.relogin
+        ? new AccountReloginRequiredError(preparation.error, preparation.relogin)
+        : new Error(preparation.error);
     }
     const selectedAccountId = preparation.overrides.selectedAccountId ?? request.accountId;
     if (request.accountId && selectedAccountId !== request.accountId) {
@@ -676,7 +679,8 @@ function spawnCliPtyAgentPane(
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "failed to spawn agent";
-    return licenseFailure(err) ?? { ok: false, error: message };
+    const relogin = accountReloginFrom(err);
+    return licenseFailure(err) ?? { ok: false, error: message, ...(relogin ? { relogin } : {}) };
   }
 }
 

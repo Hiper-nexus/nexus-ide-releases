@@ -12,8 +12,11 @@ import {
 import { useSessionStateStore } from '../state/session-state-store';
 import {
   peekPaneSpawnError,
+  peekPaneSpawnRelogin,
   subscribePaneSpawnErrors,
 } from '../terminal/pane-spawn-errors';
+import { requestAccountRelogin } from '../state/account-relogin-intent';
+import type { AccountReloginRequest } from '../../shared/account-relogin';
 import { getPaneSessionId, onPaneSessionChange } from '../terminal/terminal-host';
 import { ProviderLogo } from './ProviderLogo';
 
@@ -42,6 +45,9 @@ export function PaneBirthOverlay({ pane }: { pane: PaneModel }) {
   const [failureReason, setFailureReason] = useState<string | null>(() =>
     peekPaneSpawnError(pane.id),
   );
+  const [relogin, setRelogin] = useState<AccountReloginRequest | null>(() =>
+    peekPaneSpawnRelogin(pane.id),
+  );
 
   useEffect(() => {
     setSessionId(getPaneSessionId(pane.id));
@@ -51,7 +57,10 @@ export function PaneBirthOverlay({ pane }: { pane: PaneModel }) {
   }, [pane.id]);
 
   useEffect(() => {
-    const refresh = () => setFailureReason(peekPaneSpawnError(pane.id));
+    const refresh = () => {
+      setFailureReason(peekPaneSpawnError(pane.id));
+      setRelogin(peekPaneSpawnRelogin(pane.id));
+    };
     refresh();
     return subscribePaneSpawnErrors(refresh);
   }, [pane.id]);
@@ -114,10 +123,13 @@ export function PaneBirthOverlay({ pane }: { pane: PaneModel }) {
     : display.slow
       ? 'pane-birth--slow'
       : '';
+  // F-1637: a conta precisa de login de verdade — o caminho é um clique, o
+  // mesmo «Entrar novamente» do painel de contas, nunca um logout.
+  const reloginAction = display.failed && relogin ? relogin : null;
 
   return (
     <div
-      className={`pane-birth ${tone}`}
+      className={`pane-birth ${tone}${reloginAction ? ' pane-birth--actionable' : ''}`}
       // Uma recusa é uma mudança de estado que pede ação, não um progresso:
       // assertive só nela, para não gritar em cada cold start normal.
       role={display.failed ? 'alert' : 'status'}
@@ -131,6 +143,16 @@ export function PaneBirthOverlay({ pane }: { pane: PaneModel }) {
       </span>
       <strong className="pane-birth__headline">{display.headline}</strong>
       <span className="pane-birth__detail">{display.detail}</span>
+      {reloginAction && (
+        <button
+          type="button"
+          className="settings-btn settings-btn--primary pane-birth__action"
+          onClick={() => requestAccountRelogin(reloginAction)}
+          title="Abre Contas de IA e o terminal de login desta conta"
+        >
+          Entrar novamente em “{reloginAction.accountLabel}”
+        </button>
+      )}
     </div>
   );
 }

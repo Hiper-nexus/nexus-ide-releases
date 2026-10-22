@@ -18,6 +18,8 @@ import {
   recordPaneSpawnError,
 } from '../terminal/pane-spawn-errors';
 import type { PaneModel } from '../../shared/types';
+import { useAccountReloginIntentStore } from '../state/account-relogin-intent';
+import { useProductNavigationStore } from '../state/product-navigation-store';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -201,6 +203,49 @@ describe('PaneBirthOverlay', () => {
     ).replace(/\/\*[\s\S]*?\*\//g, '');
     const failedRule = css.match(/\.pane-birth--failed\s*\{([^}]*)\}/)?.[1] ?? '';
     expect(failedRule).toMatch(/grid-template-areas:[^;]*'identity headline'[^;]*'identity detail'/s);
+    act(() => clearPaneSpawnError(PANE.id));
+  });
+
+  // F-1637: "A sessão de “conta b” expirou" deixava o operador sem caminho
+  // no próprio pane. A recusa que se resolve com login vira um botão.
+  it('conta que precisa de login oferece «Entrar novamente» nela, com um clique', () => {
+    act(() => {
+      useSessionStateStore.getState().setPaneState(PANE.id, 'exited');
+      recordPaneSpawnError(
+        PANE.id,
+        'A sessão de “conta b” expirou — use «Entrar novamente» nessa conta em Configurações › Contas de IA.',
+        { adapterId: 'claude', accountId: 'acct-b', accountLabel: 'conta b' },
+      );
+    });
+    const host = mount();
+    expect(host.textContent).toContain('A conta precisa entrar de novo');
+    const action = [...host.querySelectorAll('button')]
+      .find((b) => b.textContent === 'Entrar novamente em “conta b”');
+    expect(action).toBeDefined();
+    expect(host.querySelector('.pane-birth--actionable')).not.toBeNull();
+
+    act(() => action!.click());
+    expect(useAccountReloginIntentStore.getState().pending)
+      .toMatchObject({ adapterId: 'claude', accountId: 'acct-b' });
+    expect(useProductNavigationStore.getState().destination)
+      .toMatchObject({ kind: 'settings', section: 'providers' });
+    // O card não rouba clique do terminal: só o botão recebe ponteiro.
+    const css = readFileSync(resolve(process.cwd(), 'src/renderer/styles/base.css'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(css.match(/\.pane-birth__action\s*\{([^}]*)\}/)?.[1]).toMatch(/pointer-events:\s*auto/);
+    act(() => {
+      clearPaneSpawnError(PANE.id);
+      useAccountReloginIntentStore.setState({ pending: null });
+    });
+  });
+
+  it('recusa sem conta para reautenticar não mostra botão', () => {
+    act(() => {
+      useSessionStateStore.getState().setPaneState(PANE.id, 'exited');
+      recordPaneSpawnError(PANE.id, 'cli_missing: provider binary unavailable');
+    });
+    const host = mount();
+    expect(host.querySelector('button')).toBeNull();
     act(() => clearPaneSpawnError(PANE.id));
   });
 

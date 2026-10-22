@@ -217,6 +217,7 @@ import { isCurrentProcessSmokeTest } from '../smoke-core';
 import type { ApiQuotaKeyRequest } from '../quota/provider-live-usage';
 import { activateAgyAccountForSpawn } from './agy-keyring-activation';
 import { prepareMinimaxNodeRuntime } from '../adapters/minimax-node-runtime';
+import type { AccountReloginRequest } from '../../shared/account-relogin';
 
 /**
  * Provider configuration hub: per-adapter enable/disable, binary-path
@@ -1541,7 +1542,7 @@ function buildProviderSpawnOverrides(
 
 export type ProviderSpawnPreparation =
   | { ok: true; overrides: ProviderSpawnOverrides }
-  | { ok: false; error: string };
+  | { ok: false; error: string; relogin?: AccountReloginRequest };
 
 function prepareProviderSpawnWithDecision(
   adapterId: string,
@@ -2128,7 +2129,12 @@ export async function prepareProviderSpawnAuthoritative(
       // F-1637: `renewable` é token vencido só pelo relógio, que a CLI do pane
       // renova; recusar ali era pedir login de uma conta que não o precisava.
       if (identity !== 'match' && identity !== 'renewable') {
-        return { ok: false as const, error: identity === 'mismatch'
+        // Expirada ou de outra conta: as duas se resolvem entrando de novo
+        // NESSA conta, e o cartão do pane oferece isso com um clique.
+        const relogin = identity === 'mismatch' || identity === 'auth-expired'
+          ? { relogin: { adapterId, accountId: account.id, accountLabel: account.label } }
+          : {};
+        return { ok: false as const, ...relogin, error: identity === 'mismatch'
           ? `A credencial de “${account.label}” pertence a outra conta Claude — entre novamente antes de abrir um pane.`
           : identity === 'auth-expired'
             ? `A sessão de “${account.label}” expirou — use «Entrar novamente» nessa conta em Configurações › Contas de IA.`
