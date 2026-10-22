@@ -4,7 +4,11 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { UiKitCliRunRequest } from './ui-kit-cli';
 import { writeCachedItem } from './ui-kit-cache';
-import { liveCandidates, offlineCandidates } from './ui-kit-catalog';
+import {
+  liveCandidates,
+  offlineCandidates,
+  resetLiveCandidatesCacheForTests,
+} from './ui-kit-catalog';
 import type { UiKitRegistry } from './ui-kit-registry';
 import {
   resetBoardUiFreeListCacheForTests,
@@ -23,6 +27,7 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
   resetBoardUiFreeListCacheForTests();
+  resetLiveCandidatesCacheForTests();
 });
 
 function harness(
@@ -168,6 +173,31 @@ describe('a configured registry the project does not declare', () => {
     expect(result.unmappedRegistries).toEqual(['@acme', '@shadcnuikit']);
   });
 
+  it('does not call a registry unreachable when its search answered', async () => {
+    // @shadcnuikit resolves through the shadcn public directory with no
+    // declaration at all (measured: 1 228 items) — the panel said "a busca
+    // não alcança esse registry" right above them.
+    const h = harness((request) => {
+      const namespace = request.args.slice(1).find((arg) => arg.startsWith('@'));
+      return {
+        stdout: JSON.stringify({
+          items: namespace === '@shadcnuikit' ? [{ name: 'pricing1', registry: '@shadcnuikit' }] : [],
+        }),
+      };
+    });
+
+    const result = await liveCandidates('shadcn', cwd, undefined, {
+      ...h.deps,
+      registries: () => [PRIVATE],
+    });
+
+    expect(result.unmappedRegistries).toEqual(['@acme']);
+    // And its pricing is the vendor's, not "free".
+    expect(result.candidates.find((entry) => entry.slug === '@shadcnuikit/pricing1')?.tier).toBe(
+      'unknown',
+    );
+  });
+
   it('says nothing about it once the project declares it', async () => {
     fs.writeFileSync(
       path.join(cwd, 'components.json'),
@@ -205,9 +235,11 @@ describe('a search wider than the CLI accepts', () => {
     };
   }
 
-  it('runs one search per batch and merges, instead of throwing', async () => {
+  it('runs one search per registry and merges, instead of throwing', async () => {
     // 16 configured registries plus `@shadcn` is 17, over the CLI's limit of
-    // 16 — this used to throw and take the whole live catalogue with it.
+    // 16 — this used to throw and take the whole live catalogue with it. Each
+    // registry now runs on its own: a shared `--limit` let the first one take
+    // every slot.
     const runs: string[][] = [];
     const deps: UiKitServiceDeps = {
       runCli: async (request) => {
@@ -233,9 +265,8 @@ describe('a search wider than the CLI accepts', () => {
 
     const result = await liveCandidates('shadcn', cwd, undefined, deps);
 
-    expect(runs).toHaveLength(2);
-    expect(runs[0]).toHaveLength(16);
-    expect(runs[0]?.[0]).toBe('@shadcn');
+    expect(runs.every((registries) => registries.length === 1)).toBe(true);
+    expect(runs[0]).toEqual(['@shadcn']);
     expect(result.error).toBeUndefined();
     // Lossless, stated as the invariant rather than a count: every namespace
     // that was searched contributed its item. (The bundled-operator namespace
@@ -269,5 +300,60 @@ describe('a search wider than the CLI accepts', () => {
     // A later batch succeeding does not make the earlier refusal untrue.
     expect(result.error).toContain('registry refused');
     expect(result.candidates.map((entry) => entry.label)).toContain('late');
+  });
+});
+
+describe('every registry keeps its place in the live catalogue', () => {
+  /** Answers like the real CLI: per registry, honouring --query and --limit. */
+  function registryFake(catalog: Record<string, readonly string[]>) {
+    const runs: { registries: string[]; query?: string; limit?: number }[] = [];
+    const deps: UiKitServiceDeps = {
+      runCli: async (request) => {
+        const registries = request.args.slice(1).filter((arg) => arg.startsWith('@'));
+        const queryAt = request.args.indexOf('--query');
+        const limitAt = request.args.indexOf('--limit');
+        const query = queryAt >= 0 ? request.args[queryAt + 1] : undefined;
+        const limit = limitAt >= 0 ? Number(request.args[limitAt + 1]) : 100;
+        runs.push({ registries, ...(query ? { query } : {}), limit });
+        const items = registries
+          .flatMap((namespace) =>
+            (catalog[namespace] ?? [])
+              .filter((name) => !query || name.includes(query))
+              .map((name) => ({ name, type: 'registry:block', registry: namespace })),
+          )
+          .slice(0, limit);
+        return { stdout: JSON.stringify({ items }), stderr: '', code: 0 };
+      },
+      getSecret: () => null,
+      setSecret: () => ({ ok: true }),
+      cacheOptions: { rootDir: dir },
+    };
+    return { deps, runs };
+  }
+
+  const SHADCN = Array.from({ length: 300 }, (_, i) => `block-${i}`);
+  const KIT = [...Array.from({ length: 400 }, (_, i) => `misc${i}`), 'pricing1', 'pricing2'];
+
+  it('reaches a big operator registry that a shared limit hid behind @shadcn', async () => {
+    const { deps } = registryFake({ '@shadcn': SHADCN, '@shadcnuikit': KIT });
+
+    const result = await liveCandidates('shadcn', cwd, undefined, deps, {
+      taskQueries: ['pricing'],
+    });
+
+    const slugs = result.candidates.map((entry) => entry.slug);
+    expect(slugs).toContain('@shadcnuikit/pricing1');
+    expect(slugs.some((slug) => !slug.startsWith('@'))).toBe(true);
+  });
+
+  it('answers from the cache for five minutes, then asks again', async () => {
+    const { deps, runs } = registryFake({ '@shadcn': ['button'] });
+
+    await liveCandidates('shadcn', cwd, undefined, deps, { now: 1_000 });
+    const first = runs.length;
+    await liveCandidates('shadcn', cwd, undefined, deps, { now: 1_000 + 60_000 });
+    expect(runs).toHaveLength(first);
+    await liveCandidates('shadcn', cwd, undefined, deps, { now: 1_000 + 6 * 60_000 });
+    expect(runs.length).toBeGreaterThan(first);
   });
 });

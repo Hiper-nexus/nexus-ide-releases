@@ -31,6 +31,61 @@ const TIER_LABELS: Record<string, string> = {
   unknown: '—',
 };
 
+/**
+ * The one line that says what happened. Exit code 0 used to read as
+ * "Instalado" even when every file already existed and nothing was written.
+ */
+function installHeadline(result: UiKitInstallView): string {
+  if (result.refusal === 'components_json_missing') {
+    return 'Este projeto ainda não tem components.json: rode o init do shadcn primeiro, ou instale pelo BoardUI.';
+  }
+  if (result.refusal === 'framework_unsupported') {
+    return 'Este projeto não é React para web: os kits instalam componentes React. Use o port do framework ou escreva com o contrato de design.';
+  }
+  if (result.refusal === 'project_busy') {
+    return 'Outra instalação de kit ainda está rodando neste projeto. Espere terminar e tente de novo.';
+  }
+  if (!result.ok) return result.error ?? 'A instalação falhou.';
+  if (result.preview) {
+    return `Prévia: instalaria ${result.installed.join(', ') || 'nada'}`;
+  }
+  if (result.nothingWritten) {
+    return 'Nada novo: os arquivos já existiam e não foram sobrescritos.';
+  }
+  return `Instalado: ${result.installed.join(', ') || 'nada a fazer'}`;
+}
+
+/** How many catalogue rows the panel paints; the rest is a search away. */
+const CATALOG_VISIBLE = 80;
+
+/**
+ * The licence in the operator's language, from the state Main reports. The
+ * vendor's own sentence ("Pro license valid and active: 4889…") used to be the
+ * headline, in English; it is kept, under "Resposta do fornecedor".
+ */
+function licenseHeadline(
+  license: UiKitStatusView['license'] | undefined,
+  workspaceOpen: boolean,
+): string | null {
+  if (!license) return null;
+  if (license.state === 'active') {
+    return license.source === 'nexus-file' || (license.operatorKey && !license.stored)
+      ? 'Pro liberado neste PC pela licença que vem com o Nexus.'
+      : 'Pro ativo com a sua chave.';
+  }
+  if (license.state === 'unknown') {
+    return workspaceOpen
+      ? 'Não deu para confirmar a licença com o fornecedor agora. Os itens grátis funcionam.'
+      : 'Abra um projeto para conferir a licença com o fornecedor.';
+  }
+  if (license.operatorKey && !license.stored) {
+    return 'A licença do Nexus ainda não está neste PC: use "Ativar a chave do Nexus".';
+  }
+  return license.stored
+    ? 'A chave guardada não está ativa neste PC.'
+    : 'Sem chave: os itens grátis funcionam.';
+}
+
 function formatBytes(bytes: number): string {
   if (bytes <= 0) return '0 KB';
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -57,6 +112,8 @@ export function UiKitSection() {
   const [exactSlug, setExactSlug] = useState('');
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [result, setResult] = useState<UiKitInstallView | null>(null);
+  /** What is waiting for a second click: removing is not undone by a click. */
+  const [confirming, setConfirming] = useState<string | null>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -153,6 +210,7 @@ export function UiKitSection() {
   }
 
   async function removeLicense() {
+    setConfirming(null);
     setBusy('license');
     try {
       await window.nexus.uiKit.license({ action: 'remove' });
@@ -162,7 +220,7 @@ export function UiKitSection() {
     }
   }
 
-  async function install(request: { items?: string[]; recipe?: string }) {
+  async function install(request: { items?: string[]; recipe?: string; dryRun?: boolean }) {
     setBusy(request.recipe ?? request.items?.join(',') ?? 'install');
     setResult(null);
     try {
@@ -245,6 +303,7 @@ export function UiKitSection() {
   }
 
   async function removeRegistry(namespace: string) {
+    setConfirming(null);
     setBusy(`registry:${namespace}`);
     setRegistryError(null);
     try {
@@ -326,7 +385,7 @@ export function UiKitSection() {
             Superfícies de agente e dashboards: composers de chat, stat cards,
             gráficos e templates inteiros.{' '}
             {typeof status?.freeItemCount === 'number'
-              ? `${status.freeItemCount} itens funcionam sem chave nenhuma. Os itens Pro (templates e componentes mais ricos) precisam da sua licença.`
+              ? `${status.freeItemCount} itens grátis e ${status.proItemCount} Pro (componentes mais ricos e templates de página inteira), liberados pela licença que vem com o Nexus.`
               : 'A metade grátis funciona sem chave nenhuma.'}
           </p>
           <div className="settings-row">
@@ -366,20 +425,47 @@ export function UiKitSection() {
                       : 'Ativar a chave guardada'}
                 </button>
               )}
-            {(license?.stored || license?.state === 'active') && (
-              // Also when `stored` is false: the vendor may still hold the
-              // activation, and hiding this button would strand it.
-              <button
-                type="button"
-                className="settings-btn"
-                disabled={busy === 'license'}
-                onClick={() => void removeLicense()}
-              >
-                Remover
-              </button>
-            )}
+            {(license?.stored || license?.state === 'active') &&
+              (confirming === 'license' ? (
+                <>
+                  <button
+                    type="button"
+                    className="settings-btn settings-btn--primary"
+                    disabled={busy === 'license'}
+                    onClick={() => void removeLicense()}
+                  >
+                    {license.stored
+                      ? 'Confirmar: liberar a ativação no fornecedor'
+                      : 'Confirmar: remover a licença deste PC'}
+                  </button>
+                  <button type="button" className="settings-btn" onClick={() => setConfirming(null)}>
+                    Cancelar
+                  </button>
+                </>
+              ) : (
+                // Also when `stored` is false: the vendor may still hold the
+                // activation, and hiding this button would strand it.
+                <button
+                  type="button"
+                  className="settings-btn"
+                  disabled={busy === 'license'}
+                  onClick={() => setConfirming('license')}
+                >
+                  Remover
+                </button>
+              ))}
           </div>
-          {license?.detail && <p className="settings-list__detail">{license.detail}</p>}
+          {licenseHeadline(license, status?.workspaceOpen === true) && (
+            <p className="settings-list__detail" role="status">
+              {licenseHeadline(license, status?.workspaceOpen === true)}
+            </p>
+          )}
+          {license?.detail && (
+            <details className="settings-list__detail">
+              <summary>Resposta do fornecedor</summary>
+              <p>{license.detail}</p>
+            </details>
+          )}
         </div>
       </div>
 
@@ -394,9 +480,13 @@ export function UiKitSection() {
           <button
             key={candidate}
             type="button"
-            className="settings-btn"
+            className={kit === candidate ? 'settings-btn settings-btn--primary' : 'settings-btn'}
             aria-pressed={kit === candidate}
-            onClick={() => setKit(candidate)}
+            onClick={() => {
+              // The search belonged to the other kit's catalogue.
+              setQuery('');
+              setKit(candidate);
+            }}
           >
             {KIT_LABELS[candidate]}
           </button>
@@ -417,7 +507,17 @@ export function UiKitSection() {
                 disabled={!status?.workspaceOpen || busy !== null}
                 onClick={() => void install({ recipe: recipe.id })}
               >
-                {busy === recipe.id ? 'Instalando…' : `Instalar em ${KIT_LABELS[kit]}`}
+                {busy === recipe.id
+                  ? 'Instalando…'
+                  : `Instalar em ${KIT_LABELS[kit]}${status?.workspaceName ? ` · ${status.workspaceName}` : ''}`}
+              </button>
+              <button
+                type="button"
+                className="settings-btn"
+                disabled={!status?.workspaceOpen || busy !== null}
+                onClick={() => void install({ recipe: recipe.id, dryRun: true })}
+              >
+                Prévia
               </button>
             </div>
           </li>
@@ -429,11 +529,13 @@ export function UiKitSection() {
           className={result.ok ? 'mkt-notice mkt-notice--ok' : 'mkt-notice mkt-notice--danger'}
           role="status"
         >
-          <p>
-            {result.ok
-              ? `Instalado: ${result.installed.join(', ') || 'nada a fazer'}`
-              : (result.error ?? 'A instalação falhou.')}
-          </p>
+          <p>{installHeadline(result)}</p>
+          {result.warning && <p className="settings-list__detail">{result.warning}</p>}
+          {result.files && result.files.created.length + result.files.updated.length > 0 && (
+            <p className="settings-list__detail">
+              Arquivos: {[...result.files.created, ...result.files.updated].slice(0, 12).join(', ')}
+            </p>
+          )}
           {!result.ok && result.output && (
             // The CAUSE. A dependency conflict or a network error leaves the
             // diagnosis in `output` and no `error` at all, so the panel said
@@ -542,8 +644,21 @@ export function UiKitSection() {
           pelo nome exato do item.
         </p>
       )}
+      {loadingCatalog && (catalog?.items.length ?? 0) === 0 && (
+        <p className="settings-help" role="status">Carregando o catálogo…</p>
+      )}
+      {!loadingCatalog && catalog && !catalog.error && catalog.items.length === 0 && !catalog.bestEffort && (
+        <p className="settings-help">
+          {query.trim() ? `Nada encontrado para "${query.trim()}".` : 'Nenhum item neste catálogo.'}
+        </p>
+      )}
+      {(catalog?.items.length ?? 0) > CATALOG_VISIBLE && (
+        <p className="settings-help">
+          Mostrando {CATALOG_VISIBLE} de {catalog?.items.length}: refine a busca para ver o resto.
+        </p>
+      )}
       <ul className="settings-list">
-        {(catalog?.items ?? []).slice(0, 80).map((item) => (
+        {(catalog?.items ?? []).slice(0, CATALOG_VISIBLE).map((item) => (
           <li key={item.slug} className="settings-list__item">
             <div className="settings-list__head">
               <span className="settings-list__title">{item.label}</span>
@@ -740,14 +855,37 @@ export function UiKitSection() {
               // An entry only the bundle provides (no settings row, no vault
               // token of the operator's own) has nothing "Remover" can take.
               <div className="settings-row">
-                <button
-                  type="button"
-                  className="settings-btn"
-                  disabled={busy !== null}
-                  onClick={() => void removeRegistry(registry.namespace)}
-                >
-                  {busy === `registry:${registry.namespace}` ? 'Removendo…' : 'Remover'}
-                </button>
+                {registry.tokenStored && confirming !== `registry:${registry.namespace}` ? (
+                  // A stored token is not coming back from a click: confirm.
+                  <button
+                    type="button"
+                    className="settings-btn"
+                    disabled={busy !== null}
+                    onClick={() => setConfirming(`registry:${registry.namespace}`)}
+                  >
+                    Remover
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className={registry.tokenStored ? 'settings-btn settings-btn--primary' : 'settings-btn'}
+                      disabled={busy !== null}
+                      onClick={() => void removeRegistry(registry.namespace)}
+                    >
+                      {busy === `registry:${registry.namespace}`
+                        ? 'Removendo…'
+                        : registry.tokenStored
+                          ? 'Confirmar: remover o registry e o token guardado'
+                          : 'Remover'}
+                    </button>
+                    {registry.tokenStored && (
+                      <button type="button" className="settings-btn" onClick={() => setConfirming(null)}>
+                        Cancelar
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
             )}
           </li>

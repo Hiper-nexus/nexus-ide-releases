@@ -109,6 +109,52 @@ describe('guardToolCall', () => {
     expect(judge).not.toHaveBeenCalled();
   });
 
+  describe('isenção do writer isolado (F-563): git_add/git_commit na própria worktree', () => {
+    const coordination = {
+      version: 1 as const, installationId: 'i', projectId: 'p', checkoutId: 'c',
+      rootRealPath: '/repo', identitySource: 'manifest' as const,
+    };
+    const isolatedWorktree = { ...coordination, rootRealPath: '/repo-wt/nexus-m1-w1' };
+    const writer = (over: Record<string, unknown> = {}) => ({
+      role: 'worker', missionId: 'm1', sessionId: 's1',
+      scope: coordination, executionScope: isolatedWorktree, ...over,
+    });
+
+    it.each(['nexus_git_add', 'nexus_git_commit'])('%s do worker em worktree isolada não vai ao juiz', async (toolName) => {
+      const judge = vi.fn();
+      const v = await guardToolCall(input({
+        toolName, args: { paths: ['src/a.ts'], message: 'feat: a' }, ctx: writer(),
+      } as Partial<GuardToolCallInput>), { judge });
+      expect(v).toEqual({ kind: 'skipped', reason: 'isolated-writer' });
+      expect(judge).not.toHaveBeenCalled();
+    });
+
+    it('helper isolado da mão do operador (isolatedWriter do Main) também é isento', async () => {
+      const judge = vi.fn();
+      const v = await guardToolCall(input({
+        toolName: 'nexus_git_commit', args: { message: 'fix: b' },
+        ctx: writer({ role: 'user', missionId: undefined, isolatedWriter: true, operatorBrief: 'corrigir o parser' }),
+      } as Partial<GuardToolCallInput>), { judge });
+      expect(v).toEqual({ kind: 'skipped', reason: 'isolated-writer' });
+      expect(judge).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['mesmo checkout (sem worktree própria)', { toolName: 'nexus_git_commit', ctx: writer({ executionScope: coordination }) }],
+      ['sem escopo de execução', { toolName: 'nexus_git_add', ctx: writer({ executionScope: undefined }) }],
+      ['worktree compartilhada da aba', { toolName: 'nexus_git_commit', ctx: writer({ sharedTabWorktree: true }) }],
+      ['orquestrador (não é writer isolado)', { toolName: 'nexus_git_commit', ctx: writer({ role: 'orchestrator' }) }],
+      ['push do writer isolado', { toolName: 'nexus_git_push', ctx: writer() }],
+      ['memory_retain do writer isolado (persiste texto nos contextos futuros)', { toolName: 'nexus_memory_retain', ctx: writer() }],
+      ['file_write do writer isolado', { toolName: 'nexus_file_write', ctx: writer() }],
+    ] as const)('continua julgado: %s', async (_label, over) => {
+      const judge = vi.fn(async () => result(benign));
+      const v = await guardToolCall(input(over as Partial<GuardToolCallInput>), { judge });
+      expect(v.kind).toBe('pass');
+      expect(judge).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('skips when the surface is disabled or the credential is absent', async () => {
     const judge = vi.fn();
     expect(await guardToolCall(input(), { judge, enabled: () => false })).toEqual({

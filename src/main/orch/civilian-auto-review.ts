@@ -16,12 +16,14 @@ import {
   type CandidateQualityDeclaredLimit,
 } from '../context/candidate-quality-scanner';
 import type { MechanicalCheckResult, MechanicalFinding } from '../context/mechanical-sensors';
+import { ceremonyProfileNote, isNonExecutableDiffPath, missionCeremonyProfile } from '../../shared/mission-ceremony-profile';
 import type { ReviewCategory, ReviewFindingInput } from '../context/review-council';
 import type { McpToolInvocation } from './mcp-protocol';
 import { deliverAgentPrompt } from './tool-util';
 import { createCompletionCheckExecutors } from './completion-check-executors';
 import {
   isRegressionGateEnabled,
+  MIN_TEST_BUDGET_MS,
   runRegressionGate,
   type RegressionGateResult,
 } from '../regression-gate/regression-gate';
@@ -48,6 +50,13 @@ import {
 export const CIVILIAN_REPAIR_BUDGET_PER_MISSION = 2;
 /** Após despachar reparo, espera o Maestro trabalhar antes de re-escanear. */
 export const CIVILIAN_REPAIR_COOLDOWN_MS = 90_000;
+/**
+ * Strict completion runs EVERY impacted test, E2E included, on the whole
+ * mission delta. The 120 s default of a worker handoff did not fit, and the
+ * overrun came back as "restore the runner" repairs. Each attempt that runs
+ * out of time gets the next budget; past the last, the refusal says timeout.
+ */
+export const COMPLETION_REGRESSION_BUDGETS_MS = [300_000, 600_000, 1_200_000] as const;
 
 const BLOCKING_SEVERITIES = new Set(['critical', 'high']);
 /** No commit claim: working-tree scanner binds these projects to its file snapshot. */
@@ -93,6 +102,12 @@ export interface CivilianAutoReviewInput {
   readonly scope: ProjectExecutionScope;
   /** Arquivos entregues pela missão (produto), já filtrados de lixo. */
   readonly productFiles: readonly string[];
+  /**
+   * Main-proved COMPLETE candidate (changed, deleted, unread and absent
+   * paths). Only strict completion uses it, to drop checks the diff cannot
+   * affect; absent means the full ceremony runs.
+   */
+  readonly candidatePaths?: readonly string[];
   /** Sessão do Maestro vivo da missão, se existir. */
   readonly liveOrchestratorSessionId?: string | null;
   /** Main-owned lifetime only; not a provider/renderer argument. */
@@ -118,6 +133,7 @@ export interface CivilianAutoReviewDependencies {
         readonly declaredFiles: readonly string[];
         readonly baseSha?: string;
         readonly includeE2E?: boolean;
+        readonly timeoutMs?: number;
         readonly trustedDependencyRoot?: string;
         readonly authority?: McpToolInvocation;
         readonly signal?: AbortSignal;
@@ -132,10 +148,44 @@ export interface CivilianAutoReviewDependencies {
 
 const repairBudgets = new Map<string, { used: number }>();
 const repairCooldowns = new Map<string, number>();
+/** Index into COMPLETION_REGRESSION_BUDGETS_MS; only grows for a mission. */
+const regressionBudgetLevels = new Map<string, number>();
 
 export function __resetCivilianAutoReviewForTests(): void {
   repairBudgets.clear();
   repairCooldowns.clear();
+  regressionBudgetLevels.clear();
+}
+
+function completionRegressionBudgetMs(missionId: string): number {
+  return COMPLETION_REGRESSION_BUDGETS_MS[regressionBudgetLevels.get(missionId) ?? 0]!;
+}
+
+/**
+ * Unverified only for lack of time: no counted failure, every unrun test was
+ * cut by a deadline, or the gate spent the import-map share of the budget
+ * (the map stops `MIN_TEST_BUDGET_MS` before the end) without naming another
+ * cause. A missing runner, config or sandbox is not a timeout.
+ */
+function regressionRanOutOfTime(regression: RegressionGateResult, budgetMs: number): boolean {
+  if (regression.status !== 'unavailable' || regression.failures.length > 0) return false;
+  const causes = regression.notRun?.causes ?? [];
+  if (causes.some(cause => cause !== 'map-deadline' && cause !== 'test-deadline')) return false;
+  return causes.length > 0 || regression.durationMs >= budgetMs - MIN_TEST_BUDGET_MS;
+}
+
+/** Next attempt gets the next budget; past the last, the refusal is final and still says timeout. */
+function completionRegressionTimeout(missionId: string, budgetMs: number): CivilianAutoReviewOutcome {
+  const level = regressionBudgetLevels.get(missionId) ?? 0;
+  const minutes = (ms: number) => `${Math.round(ms / 60_000)} min`;
+  const next = COMPLETION_REGRESSION_BUDGETS_MS[level + 1];
+  if (next !== undefined) {
+    regressionBudgetLevels.set(missionId, level + 1);
+    return { kind: 'defer-to-roster-review', retryable: true,
+      reason: `Os testes impactados não couberam no prazo de ${minutes(budgetMs)}. O Nexus tentará novamente com ${minutes(next)}; nenhum reparo de código foi solicitado.` };
+  }
+  return { kind: 'defer-to-roster-review',
+    reason: `Os testes impactados não couberam no prazo de ${minutes(budgetMs)} da verificação de conclusão; a entrega não foi certificada e nenhum reparo de código foi solicitado. Rode a suíte lenta por conta própria, divida a entrega ou marque a missão como concluída.` };
 }
 
 function repairBudgetRemaining(missionId: string): boolean {
@@ -323,6 +373,32 @@ function regressionSummary(result: RegressionGateResult | null): string {
   }
 }
 
+/** TS/JS: the import graph maps their impacted tests; an unmapped one already makes the index incomplete. */
+const IMPACT_MAPPED_SOURCE_RE = /\.[cm]?[jt]sx?$/iu;
+/** Go/Rust: mapped only when the gate ran the full native suites (it names the native runner). */
+const NATIVE_SUITE_FILE_RE = /(?:\.(?:go|rs)|(?:^|\/)(?:go\.(?:mod|sum|work)|Cargo\.(?:toml|lock)))$/iu;
+
+/**
+ * AGENTS.md: proven absence of an applicable test is not an obligation to
+ * invent one. `no-tests`/`clean` proves it only when the impact index is
+ * complete, nothing was skipped, and every changed file belongs to a family
+ * the index can actually map. "The project declares tests" is a property of
+ * the project, not of this diff: it only keeps the result unverified for the
+ * files the index cannot see (Python, JSON, other languages).
+ */
+function regressionProvesNoApplicableTests(
+  regression: RegressionGateResult,
+  declaredFiles: readonly string[],
+  projectDeclaresTests: boolean,
+): boolean {
+  if (regression.status !== 'no-tests' && regression.status !== 'clean') return false;
+  if (regression.coverage?.indexComplete !== true || regression.coverage.skippedTests.length > 0) return false;
+  if (!projectDeclaresTests) return true;
+  const nativeSuitesRan = regression.runner === 'go' || regression.runner === 'cargo';
+  return [...regression.changedFiles, ...declaredFiles].every(file => IMPACT_MAPPED_SOURCE_RE.test(file) ||
+    isNonExecutableDiffPath(file) || nativeSuitesRan && NATIVE_SUITE_FILE_RE.test(file));
+}
+
 function sensorSummaries(
   results: readonly MechanicalCheckResult[],
 ): string {
@@ -409,11 +485,18 @@ export async function enforceCivilianAutoReview(
   // dependências + cobertura de testes quando o projeto permite. Não dependem
   // de scripts no alvo; falha de infraestrutura é indisponível, não bloqueio.
   const sensors = await import('../context/mechanical-sensors');
-  const requirements = await wait(sensors.mechanicalProjectRequirements(root, changedFiles));
   const strictCompletion = input.completionBaseSha !== undefined;
+  // Subtraction needs the COMPLETE candidate; only strict completion has one.
+  const requirements = await wait(sensors.mechanicalProjectRequirements(root, changedFiles,
+    strictCompletion ? input.candidatePaths : undefined));
+  const ceremony = missionCeremonyProfile(input.mission.intentContract?.goal || input.mission.description || input.mission.title,
+    requirements.diffClass);
   const ownedChecks = strictCompletion ? createCompletionCheckExecutors({ scope: input.scope, executionScope,
     missionId: input.mission.id, signal: input.lifetime?.signal, assertCurrent }) : null;
-  const typecheck = launch(() => dependencies.typecheck ? dependencies.typecheck(root) : ownedChecks ? ownedChecks.typecheck(root) : sensors.runTypecheckSensor(root, { signal: input.lifetime?.signal }));
+  const typecheck = ceremony.dropped.includes('typecheck')
+    ? Promise.resolve<MechanicalCheckResult>({ kind: 'typecheck', status: 'unavailable', findings: [],
+      summary: 'Typecheck dispensado: o diff só tem estilos, texto ou assets estáticos.' })
+    : launch(() => dependencies.typecheck ? dependencies.typecheck(root) : ownedChecks ? ownedChecks.typecheck(root) : sensors.runTypecheckSensor(root, { signal: input.lifetime?.signal }));
   const audit = () => launch(() => (dependencies.audit ?? ownedChecks?.audit ?? sensors.runDependencyAuditSensor)(root));
   // One project permit: do not spend the shorter audit deadline waiting for
   // this same completion's compiler on every retry.
@@ -435,13 +518,18 @@ export async function enforceCivilianAutoReview(
     launch(() => (dependencies.testCoverage ?? sensors.runTestCoverageSensor)(root, changedFiles)),
   ]));
   const mechanicalBlocking = mechanicalToReviewFindings(mechanical);
-  const regressionGate =
-    dependencies.regressionGate !== undefined
+  // A non-executable complete diff drops the tests with the typecheck: the gate
+  // would spend the completion budget (or time out and defer) to run nothing.
+  const testsDropped = ceremony.dropped.includes('tests');
+  const regressionGate = testsDropped
+    ? null
+    : dependencies.regressionGate !== undefined
       ? dependencies.regressionGate
       : strictCompletion || isRegressionGateEnabled()
         ? runRegressionGate
         : null;
   let regression: RegressionGateResult | null = null;
+  const regressionBudgetMs = strictCompletion ? completionRegressionBudgetMs(input.mission.id) : undefined;
   if (regressionGate && (observedHead || strictCompletion)) {
     try {
       regression = await launch(() => regressionGate({
@@ -451,7 +539,7 @@ export async function enforceCivilianAutoReview(
         ...(observedHead ? { baseSha } : {}),
         trustedDependencyRoot: input.scope.rootRealPath,
         authority: { signal: input.lifetime?.signal, assertCurrentAuthority: assertCurrent },
-        ...(strictCompletion ? { includeE2E: true } : {}),
+        ...(regressionBudgetMs !== undefined ? { includeE2E: true, timeoutMs: regressionBudgetMs } : {}),
         ...(input.lifetime ? { signal: input.lifetime.signal } : {}),
       }));
     } catch (error) {
@@ -459,17 +547,22 @@ export async function enforceCivilianAutoReview(
       console.warn('[civilian-auto-review] portão de regressão falhou (ignorado):', error);
     }
   }
+  // Out of time is not a defect of the code: it never becomes the "restore the
+  // runner" repair below. Real findings still go to repair first.
+  const regressionOutOfTime = regressionBudgetMs !== undefined && regression !== null &&
+    regressionRanOutOfTime(regression, regressionBudgetMs);
   // Missing execution or incomplete discovery is never evidence of N/A.
+  const noApplicableTests = regression !== null && regressionProvesNoApplicableTests(regression, changedFiles, requirements.tests);
   if (strictCompletion && regression && (
     regression.coverage?.indexComplete === false || (regression.coverage?.skippedTests.length ?? 0) > 0 ||
-    ['no-tests', 'clean'].includes(regression.status) && (requirements.tests || regression.coverage?.indexComplete !== true)
+    ['no-tests', 'clean'].includes(regression.status) && !noApplicableTests
   )) {
     regression = { ...regression, status: 'unavailable',
       testsNotRun: [...new Set([...regression.testsNotRun, ...(regression.coverage?.skippedTests ?? [])])],
       warnings: [...regression.warnings, 'cobertura de testes aplicáveis não comprovada integralmente'],
     };
   }
-  if (strictCompletion && (mechanical.some(check => check.retryable) || regression?.retryable)) {
+  if (strictCompletion && (mechanical.some(check => check.retryable) || regression?.retryable && !regressionOutOfTime)) {
     return { kind: 'defer-to-roster-review', retryable: true,
       reason: 'Verificações aguardando recursos ou encerramento de processos anteriores. O Nexus tentará novamente; nenhum reparo de código foi solicitado.' };
   }
@@ -481,7 +574,7 @@ export async function enforceCivilianAutoReview(
       .map(check => ({ severity: 'high' as const, category: 'correctness' as const, file: 'package.json', criterionRefs: [], invariantRefs: ['required-check-executed'],
         evidence: `Verificação obrigatória não executada: ${check.summary}`,
         recommendation: 'Restaure o compilador/configuração ou lockfile declarado e execute novamente a verificação.' })),
-    ...(regression?.status === 'unavailable' ? [{ severity: 'high' as const, category: 'correctness' as const, file: regression.testsNotRun[0] ?? 'package.json',
+    ...(regression?.status === 'unavailable' && !regressionOutOfTime ? [{ severity: 'high' as const, category: 'correctness' as const, file: regression.testsNotRun[0] ?? 'package.json',
       criterionRefs: [], invariantRefs: ['required-tests-executed'], evidence: 'Testes aplicáveis não foram verificados integralmente.',
       recommendation: 'Restaure runner, configuração e pré-requisitos dos testes impactados (inclusive E2E) e solicite nova verificação.' }] : []),
   ] : [];
@@ -492,6 +585,9 @@ export async function enforceCivilianAutoReview(
     ...regressionToReviewFindings(regression),
   ];
   assertCurrent();
+  if (blocking.length === 0 && regressionBudgetMs !== undefined && regressionOutOfTime) {
+    return completionRegressionTimeout(input.mission.id, regressionBudgetMs);
+  }
   if (blocking.length === 0) {
     const has = (file: string) => existsSync(join(root, file));
     const packagePresent = has('package.json');
@@ -499,7 +595,7 @@ export async function enforceCivilianAutoReview(
     const outcome: CivilianAutoReviewOutcome = {
       kind: 'approved',
       evidenceId: `nexus-auto-review:${analysis.analysisHash}`,
-      note: [civilianAutoReviewEvidenceNote(analysis), sensorSummaries(mechanical), regressionSummary(regression),
+      note: [civilianAutoReviewEvidenceNote(analysis), ceremonyProfileNote(ceremony), sensorSummaries(mechanical), regressionSummary(regression),
         !observedHead ? 'Arquivos atuais analisados sem comparação com histórico Git.' : '',
       ].filter(Boolean).join('\n'),
       verification: {
@@ -510,8 +606,7 @@ export async function enforceCivilianAutoReview(
         checks: mechanical.map(check => ({ kind: check.kind, summary: check.summary,
           status: check.status === 'unavailable' && !applicable(check.kind) ? 'not-applicable' : check.status })),
         regression,
-        regressionApplicable: regression ? !['no-tests', 'clean'].includes(regression.status) || requirements.tests ||
-          regression.coverage?.indexComplete !== true || (regression.coverage?.skippedTests.length ?? 0) > 0
+        regressionApplicable: testsDropped ? false : regression ? !noApplicableTests
           : packagePresent || ['tsconfig.json', 'pyproject.toml', 'pytest.ini', 'Cargo.toml', 'go.mod', 'Makefile'].some(has) ||
             changedFiles.some(file => /(?:^|[/.])(?:tests?|spec)[/.]|\.(?:test|spec)\./i.test(file)),
       },

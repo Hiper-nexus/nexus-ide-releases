@@ -50,7 +50,7 @@ import {
 } from "../persistence/renderer-workspace-scope";
 import { sameProjectScope } from "./project-scoped-broadcast";
 import { getContextBySession, type AgentGateContext } from './gate';
-import { canListPane, sameExactPaneScope, type CallerCtx, type PaneAuthzInfo } from "./pane-authz";
+import { authorizePaneAccess, canListPane, sameExactPaneScope, type CallerCtx, type PaneAuthzInfo } from "./pane-authz";
 import { parsePaneNumberRef } from "../../shared/pane-number";
 import { makeId } from "./store-util";
 import type { ProjectExecutionScope } from "../../shared/types";
@@ -3523,7 +3523,7 @@ export function requestPaneSpawn(
   });
 }
 
-export function requestBrowserPane(options: {
+interface BrowserPaneOpenOptions {
   url: string;
   title?: string;
   missionId?: string;
@@ -3532,7 +3532,35 @@ export function requestBrowserPane(options: {
   scope: Readonly<ProjectExecutionScope>;
   /** Trusted Main gate context; never renderer or MCP argument metadata. */
   caller?: CallerCtx;
-}): Promise<BrowserPaneOpenResult> {
+}
+
+/**
+ * Review 22/10 (F-168): the window shows another project, so the renderer
+ * cannot mount a new browser for this one — and a mission there could not
+ * capture anything for the visual gate. A browser this SAME agent opened for
+ * this project stays alive while parked (page, login, id): hand it back so the
+ * agent keeps working (navigate, capture) instead of a refusal. Never anyone
+ * else's tab: same window, exact scope, same mission, agent and execution
+ * worktree, and the access rule that driving it would apply anyway.
+ */
+function parkedBrowserOfSameAgent(owner: WebContents, options: BrowserPaneOpenOptions): string | null {
+  const caller = options.caller;
+  if (!caller || !options.agentName) return null;
+  const driver = callerWithPaneOwner(caller);
+  const callerTree = caller.executionScope ?? caller.scope;
+  const mine = [...parkedBrowserPanes.values()].filter((parked) => {
+    if (parked.owner !== owner || !sameExactPaneScope(parked.scope, options.scope)) return false;
+    const meta = orchMetaByPane.get(paneMetaKey(owner, parked.entry.paneId));
+    if (!meta) return false;
+    return meta.agentName === options.agentName && meta.missionId === options.missionId &&
+      sameExactPaneScope(meta.executionScope ?? parked.scope, callerTree) &&
+      authorizePaneAccess(driver, parkedBrowserAuthzInfo(parked), "write").allow;
+  });
+  // The most recently parked one is the page the agent last worked on.
+  return mine.at(-1)?.entry.paneId ?? null;
+}
+
+export function requestBrowserPane(options: BrowserPaneOpenOptions): Promise<BrowserPaneOpenResult> {
   const owner = options.caller
     ? (sameExactPaneScope(options.caller.scope, options.scope)
       ? browserOwnerForCaller(options.caller) : null)
@@ -3547,6 +3575,10 @@ export function requestBrowserPane(options: {
   try {
     requireLiveRendererWorkspaceScope(owner, options.scope);
   } catch {
+    const parked = parkedBrowserOfSameAgent(owner, options);
+    if (parked) {
+      return Promise.resolve({ requestId: makeId("browseropen"), ok: true, paneId: parked });
+    }
     return Promise.resolve({
       requestId: "",
       ok: false,

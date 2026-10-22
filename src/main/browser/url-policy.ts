@@ -277,6 +277,31 @@ export function normalizeBrowserUrl(
   return url.toString();
 }
 
+/**
+ * The one local path the browser trusts without a native confirmation: a
+ * Nexus-owned preview of a built app. Agents are told to "run npm run dev" or
+ * "open the file", and both are refused; the refusal must name what works
+ * instead of leaving the agent to guess (P0-6). The policy itself is not
+ * loosened — the preview is the trusted route.
+ */
+const LOCAL_PREVIEW_PATH =
+  'build the app, serve the build folder with nexus_preview_start({dir}), ' +
+  'open the returned URL with nexus_browser_open and check the breakpoints ' +
+  'with nexus_browser_responsive';
+
+export function browserBlockedTargetHint(
+  kind: BrowserUrlBlockKind,
+  rawUrl?: string,
+): string | null {
+  if (kind === 'private-network') {
+    return `local dev servers and LAN hosts are not opened directly: ${LOCAL_PREVIEW_PATH}`;
+  }
+  if (kind === 'unsafe-scheme' && /^\s*file:/i.test(rawUrl ?? '')) {
+    return `local files are not opened as file://: ${LOCAL_PREVIEW_PATH}`;
+  }
+  return null;
+}
+
 export const resolveBrowserHostname: BrowserAddressResolver = async (hostname) => {
   const records = await dns.promises.lookup(hostname, {
     all: true,

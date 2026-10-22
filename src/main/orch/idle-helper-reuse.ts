@@ -21,7 +21,7 @@ import {
   getAgentSemanticStatusBySession,
   type AgentSemanticStatusEntry,
 } from './agent-status';
-import { armedAutoClosePaneId } from './pane-close-scopes';
+import { armedAutoClosePaneId, reuseHoldRemainingMs } from './pane-close-scopes';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { readSessionOutput, stripAnsi } from './pane-session-output';
@@ -36,12 +36,42 @@ import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
   recordJevDecision,
+  recordJevSkip,
 } from '../jev/jev-decision-log';
 
 export const HELPER_REUSE_MIN_IDLE_MS = 20_000;
 export const HELPER_REUSE_MAX_CANDIDATES = 5;
 export const HELPER_REUSE_MIN_CONFIDENCE = 0.7;
 const HELPER_REUSE_TIMEOUT_MS = 4_000;
+/**
+ * F-197: helper whose reuse window (`HELPER_REUSE_HOLD_MS`) ends sooner than
+ * this is left out, so the Jev consultation (≤ 4 s) plus the prompt delivery
+ * never race the close of the pane that would receive the task.
+ */
+export const HELPER_REUSE_CLAIM_MARGIN_MS = 30_000;
+
+/**
+ * Why a scan found no candidate. Categories only — never ids, titles or text —
+ * so the decision journal can show why `helperReuse` does not fire.
+ */
+export type HelperReuseRejection =
+  | 'no-helper'
+  | 'not-idle'
+  | 'one-shot'
+  | 'other-cli'
+  | 'other-mode'
+  | 'review-task'
+  | 'closing'
+  | 'armed'
+  | 'isolated-writer'
+  | 'no-hook'
+  | 'too-recent';
+
+export interface IdleHelperScan {
+  candidates: IdleHelperCandidate[];
+  /** `null` when there is a candidate; otherwise the most frequent rejection among the owner's helpers. */
+  noCandidateReason: HelperReuseRejection | null;
+}
 const HELPER_REUSE_TASK_CHARS = 1_500;
 const HELPER_REUSE_HANDOFF_CHARS = 400;
 const HELPER_REUSE_TAIL_CHARS = 600;
@@ -62,6 +92,8 @@ export interface IdleHelperReuseDeps {
   /** Sessão fisicamente viva e stdin escrevível — falso durante o close. */
   stdinWritable?: (sessionId: string) => boolean;
   armedAutoClose?: (sessionId: string, paneId?: string | null) => string | null;
+  /** F-197: ms left in the pane's reuse window, `null` outside one. */
+  reuseHoldRemaining?: (sessionId: string, paneId: string) => number | null;
   isIsolatedWriter?: (
     scope: ProjectExecutionScope,
     sessionId: string,
@@ -118,39 +150,81 @@ function lastHandoffSummaryOf(
   }
 }
 
+export interface IdleHelperScanInput {
+  mode: 'operator-hand' | 'tab-mission';
+  callerSessionId: string;
+  missionId?: string;
+  adapterId: string;
+  readOnly: boolean;
+  newTask: string;
+  scope: ProjectExecutionScope;
+}
+
 /**
  * Filtra os helpers reutilizáveis (máx. 5, mais recentemente ocioso primeiro).
  * `mode: 'operator-hand'` = filhos do pane do operador (sem missão);
  * `mode: 'tab-mission'` = workers da missão da aba indicada.
  */
 export function listIdleHelperCandidates(
-  input: {
-    mode: 'operator-hand' | 'tab-mission';
-    callerSessionId: string;
-    missionId?: string;
-    adapterId: string;
-    readOnly: boolean;
-    newTask: string;
-    scope: ProjectExecutionScope;
-  },
+  input: IdleHelperScanInput,
   deps: IdleHelperReuseDeps = {},
 ): IdleHelperCandidate[] {
+  return scanIdleHelperCandidates(input, deps).candidates;
+}
+
+/**
+ * Same filter as `listIdleHelperCandidates`, plus WHY nothing qualified: the
+ * superfície `helperReuse` passou 4 semanas sem disparar e o diário não dizia
+ * se faltava helper, se todos estavam armados para fechar ou ainda trabalhando.
+ * Only the owner's own helpers count towards the reason.
+ */
+export function scanIdleHelperCandidates(
+  input: IdleHelperScanInput,
+  deps: IdleHelperReuseDeps = {},
+): IdleHelperScan {
   const snapshots = (deps.listPaneSnapshots ?? listPaneSnapshots)();
   const authorityOf = deps.getAuthority ?? getPaneRuntimeAuthorityBySession;
   const semanticOf = deps.getSemanticStatus ?? getAgentSemanticStatusBySession;
   const writable = deps.stdinWritable ?? isSessionStdinWritable;
   const armed = deps.armedAutoClose ?? armedAutoClosePaneId;
+  const holdRemaining = deps.reuseHoldRemaining ?? reuseHoldRemainingMs;
   const isolated = deps.isIsolatedWriter ?? paneIsIsolatedWriter;
   const now = (deps.now ?? Date.now)();
   const reviewTask = taskAsksForIndependentReview(input.newTask);
   const candidates: IdleHelperCandidate[] = [];
+  const rejected = new Map<HelperReuseRejection, number>();
+  const reject = (reason: HelperReuseRejection): void => {
+    rejected.set(reason, (rejected.get(reason) ?? 0) + 1);
+  };
+  /** First failed condition for one of the owner's helpers; `null` = candidate. */
+  const rejectionOf = (pane: PaneSnapshot, sessionId: string): HelperReuseRejection | null => {
+    if (pane.state !== 'idle') return 'not-idle';
+    // F-1272: one-shot (agy --print / opencode run) com a raiz viva não lê o
+    // terminal — injetar a tarefa nova a perderia (nexus_pane_ask já recusa).
+    if (pane.oneShotAlive === true) return 'one-shot';
+    if (pane.adapterId !== input.adapterId) return 'other-cli';
+    if ((pane.readOnly === true) !== input.readOnly) return 'other-mode';
+    if (reviewTask && !input.readOnly) return 'review-task';
+    // "Não está fechando": stdin escrevível exclui o voo de término físico, e a
+    // janela de reuso no fim (F-197) não recebe tarefa que ela vai cortar.
+    if (!writable(sessionId)) return 'closing';
+    const remaining = holdRemaining(sessionId, pane.paneId);
+    if (remaining !== null && remaining < HELPER_REUSE_CLAIM_MARGIN_MS) return 'closing';
+    if (armed(sessionId, pane.paneId) !== null) return 'armed';
+    if (isolated(input.scope, sessionId, pane.paneId)) return 'isolated-writer';
+    // Sem a marca semântica não há como medir os 20s — pane sem hook nunca é
+    // candidato (conservador, nunca escreve a esmo).
+    const semantic = semanticOf(sessionId);
+    if (!semantic) return 'no-hook';
+    if (semantic.status !== 'idle' && semantic.status !== 'completed') return 'not-idle';
+    if (now - semantic.updatedAt < HELPER_REUSE_MIN_IDLE_MS) return 'too-recent';
+    return null;
+  };
   for (const pane of snapshots) {
     const sessionId = pane.sessionId;
     if (!sessionId || sessionId === input.callerSessionId) continue;
-    if (pane.kind !== 'cli-agent' || pane.state !== 'idle') continue;
-    // F-1272: one-shot (agy --print / opencode run) com a raiz viva não lê o
-    // terminal — injetar a tarefa nova a perderia (nexus_pane_ask já recusa).
-    if (pane.oneShotAlive === true) continue;
+    if (pane.kind !== 'cli-agent') continue;
+    // Só os helpers do MESMO dono contam (nem para o motivo do pulo).
     if (input.mode === 'operator-hand') {
       const authority = authorityOf(sessionId);
       if (authority?.operatorParentSessionId !== input.callerSessionId) {
@@ -161,24 +235,13 @@ export function listIdleHelperCandidates(
         continue;
       }
     }
-    if (pane.adapterId !== input.adapterId) continue;
-    if ((pane.readOnly === true) !== input.readOnly) continue;
-    if (reviewTask && !input.readOnly) continue;
-    // "Não está fechando": stdin escrevível exclui o voo de término físico.
-    if (!writable(sessionId)) continue;
-    if (armed(sessionId, pane.paneId) !== null) continue;
-    if (isolated(input.scope, sessionId, pane.paneId)) continue;
-    // Ocioso comprovado: sem a marca semântica não há como medir os 20s —
-    // pane sem hook nunca é candidato (conservador, nunca escreve a esmo).
-    const semantic = semanticOf(sessionId);
-    if (
-      !semantic ||
-      (semantic.status !== 'idle' && semantic.status !== 'completed')
-    ) {
+    const rejection = rejectionOf(pane, sessionId);
+    if (rejection) {
+      reject(rejection);
       continue;
     }
-    const idleForMs = now - semantic.updatedAt;
-    if (idleForMs < HELPER_REUSE_MIN_IDLE_MS) continue;
+    // Ocioso comprovado: `rejectionOf` já exigiu a marca semântica.
+    const idleForMs = now - semanticOf(sessionId)!.updatedAt;
     candidates.push({
       paneId: pane.paneId,
       sessionId,
@@ -186,9 +249,25 @@ export function listIdleHelperCandidates(
       idleForMs,
     });
   }
-  return candidates
-    .sort((a, b) => a.idleForMs - b.idleForMs)
-    .slice(0, HELPER_REUSE_MAX_CANDIDATES);
+  return {
+    candidates: candidates
+      .sort((a, b) => a.idleForMs - b.idleForMs)
+      .slice(0, HELPER_REUSE_MAX_CANDIDATES),
+    noCandidateReason: candidates.length > 0 ? null : mostFrequent(rejected) ?? 'no-helper',
+  };
+}
+
+/** Most frequent rejection; ties keep the first one seen (check order). */
+function mostFrequent(counts: ReadonlyMap<HelperReuseRejection, number>): HelperReuseRejection | null {
+  let best: HelperReuseRejection | null = null;
+  let bestCount = 0;
+  for (const [reason, count] of counts) {
+    if (count > bestCount) {
+      best = reason;
+      bestCount = count;
+    }
+  }
+  return best;
 }
 
 /** O que o Jev vê do trabalho recente do helper: último handoff, senão o tail. */
@@ -253,6 +332,8 @@ export async function judgeIdleHelperReuse(
   input: {
     newTask: string;
     candidates: IdleHelperCandidate[];
+    /** From `scanIdleHelperCandidates`: why the list is empty (category). */
+    noCandidateReason?: HelperReuseRejection | null;
     scope: ProjectExecutionScope;
     missionId: string | null;
     callerSessionId?: string;
@@ -261,7 +342,18 @@ export async function judgeIdleHelperReuse(
 ): Promise<HelperReuseChoice | null> {
   const enabled = deps.surfaceEnabled ?? (() => isJevSurfaceEnabled('helperReuse'));
   const hasKey = deps.hasKey ?? (() => hasDecisionCredential('helperReuse'));
-  if (!enabled() || !hasKey() || input.candidates.length === 0) return null;
+  if (!enabled() || !hasKey()) return null;
+  if (input.candidates.length === 0) {
+    // Elegível, mas nada a julgar: o pulo fica no diário com a categoria,
+    // para o painel mostrar por que a superfície não dispara (zero requisição).
+    recordJevSkip({
+      surface: 'helperReuse',
+      reason: `no-candidate:${input.noCandidateReason ?? 'no-helper'}`,
+      ...(input.callerSessionId ? { sessionId: input.callerSessionId } : {}),
+      ...(input.missionId ? { missionId: input.missionId } : {}),
+    });
+    return null;
+  }
   const helpers = input.candidates.map((candidate, index) => ({
     id: `h${index + 1}`,
     title: candidate.title,

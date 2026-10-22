@@ -268,7 +268,7 @@ describe('complementary decision routing', () => {
   });
 
   it('names the surfaces whose thresholds were calibrated on Jev', () => {
-    for (const surface of ['taskRouting', 'missionKickoff', 'completionCheck', 'reviewTriage'] as const) {
+    for (const surface of ['taskRouting', 'missionKickoff', 'completionCheck', 'reviewTriage', 'uiKitPick'] as const) {
       expect(CALIBRATED_THRESHOLD_SURFACES.has(surface)).toBe(true);
     }
     expect(CALIBRATED_THRESHOLD_SURFACES.has('recoveryAdvice')).toBe(false);

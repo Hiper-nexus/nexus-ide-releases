@@ -39,6 +39,7 @@ import {
 } from '../jev/jev-decision-log';
 import { canonicalToolName, type AgentGateContext } from './gate';
 import { effectPolicyForTool } from './mcp-effect-policy';
+import { isIsolatedWriterContext } from './isolated-writer-policy';
 
 export const GUARD_INJECTED_DENY_MIN = 0.8;
 /**
@@ -95,6 +96,27 @@ export const GUARD_EXEMPT_TOOLS: ReadonlySet<string> = new Set([
   'browser_inspect',
   'browser_screenshot',
   'browser_wait',
+]);
+
+/**
+ * Isentas SÓ para o writer isolado (F-563), nunca pelo nome sozinho. Ali o
+ * próprio handler já confina a chamada pela política do Main: caminhos
+ * explícitos dentro da worktree do writer, branch `refs/heads/nexus/…` do
+ * registro (nunca main/master), sem push/pull/merge — a integração espera o
+ * Maestro ler o diff e o veredito de ponta. O efeito é local e reversível e o
+ * juiz custava ~0,35 s por commit sem um único `deny` em 1.057 respostas. O
+ * predicado é o MESMO do handler (`isIsolatedWriterContext`, derivado dos
+ * escopos que o Main emitiu, nunca de argumento), então a isenção não alcança
+ * sessão que a política não confina.
+ *
+ * `memory_retain` fica julgado de propósito: o texto retido volta ao contexto
+ * de workers futuros (recall explícito e, na mesma missão, o contexto
+ * automático), e a quarentena do F-808 só cobre sessão exposta à web — uma
+ * instrução copiada de arquivo ou handoff persistiria sem ninguém olhar.
+ */
+export const ISOLATED_WRITER_GUARD_EXEMPT_TOOLS: ReadonlySet<string> = new Set([
+  'git_add',
+  'git_commit',
 ]);
 
 export type JevGuardVerdict =
@@ -388,7 +410,9 @@ export interface GuardToolCallInput {
   ctx: Pick<
     AgentGateContext,
     'role' | 'missionId' | 'sessionId' | 'operatorBrief'
-  >;
+  > &
+    // Escopos do Main: decidem se a sessão é writer isolado (F-563).
+    Partial<Pick<AgentGateContext, 'scope' | 'executionScope' | 'sharedTabWorktree' | 'isolatedWriter'>>;
   recentTools: readonly string[];
   missionObjective: string | null;
   /** Sessão física usada para o cache e o log (default: ctx.sessionId). */
@@ -504,6 +528,9 @@ export async function guardToolCall(
     return { kind: 'skipped', reason: 'read-only' };
   }
   if (GUARD_EXEMPT_TOOLS.has(canonical)) return { kind: 'skipped', reason: 'exempt' };
+  if (ISOLATED_WRITER_GUARD_EXEMPT_TOOLS.has(canonical) && isIsolatedWriterContext(input.ctx)) {
+    return { kind: 'skipped', reason: 'isolated-writer' };
+  }
   if (!enabled()) return { kind: 'skipped', reason: 'surface-disabled' };
   if (!hasKey()) return { kind: 'skipped', reason: 'no-credential' };
 

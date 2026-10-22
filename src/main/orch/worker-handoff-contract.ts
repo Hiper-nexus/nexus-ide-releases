@@ -3,6 +3,7 @@ import { LEGACY_MARKER } from './legacy-handoff';
 import { PONYTAIL_RULES } from './ponytail';
 import { ENGINEERING_CHARTER } from './engineering-charter';
 import { composeDesignCharter } from './design-profile';
+import { UI_KIT_BRIEF_LINE } from './design-charter';
 import { getOrchSettings } from '../persistence/settings-store';
 import { canUseNexusMcp } from './cli-mcp-inject';
 import { isPaneMetaTask } from './mission-fast-lane';
@@ -153,8 +154,11 @@ export function withHandoffContract(
       'uma tarefa visual fica partial. Um caminho ou hash ' +
       'de screenshot não é inspeção: observe a imagem com uma ferramenta autorizada disponível. Build, testes ' +
       'e leitura do código não comprovam aparência nem gameplay. Entrega ainda não ' +
-      'servida não é ferramenta indisponível: suba o preview você mesmo neste pane ' +
-      '(servidor de dev do projeto ou o arquivo local) e então observe. Se uma ' +
+      'servida não é ferramenta indisponível: gere o build e sirva-o com ' +
+      'nexus_preview_start({dir}) (ex.: dir "dist"), abra a URL que ele devolve com ' +
+      'nexus_browser_open e confira com nexus_browser_responsive. O navegador do ' +
+      'Nexus recusa localhost de um servidor de dev e file://, então não suba ' +
+      '`npm run dev` para verificar. Se uma ' +
       'ferramenta ou ' +
       'ambiente necessário falhar mesmo assim, registre a validação como não verificada e envie ' +
       'handoff com status "partial" (ou "blocked" se impedir a tarefa), com os passos ' +
@@ -224,8 +228,13 @@ export function withHandoffContract(
     orch.seniorMode && tier.engineering ? `\n\n${ENGINEERING_CHARTER}` : '';
   // A carta de design é composta com o perfil (direção + dials) do workspace;
   // perfil neutro degrada para a carta pura, sem custo extra de prompt.
-  const design =
-    orch.designPro && tier.design ? `\n\n${composeDesignCharter(orch)}` : '';
+  // With Design Pro off the charter goes, but the KIT stays: it is a
+  // capability, not a design opinion.
+  const design = tier.design
+    ? orch.designPro
+      ? `\n\n${composeDesignCharter(orch)}`
+      : `\n\n${UI_KIT_BRIEF_LINE}`
+    : '';
   const lean = orch.leanCode && tier.lean ? `\n\n${PONYTAIL_RULES}` : '';
   return `${prompt}${charter}${design}${lean}\n\n${autonomy}${visualVerification ? `\n\n${visualVerification}` : ''}\n\n${peerRead}${memoryDoctrine ? `\n\n${memoryDoctrine}` : ''}${browserDoctrine ? `\n\n${browserDoctrine}` : ''}\n\n${contract}`;
 }

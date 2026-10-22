@@ -30,8 +30,33 @@ import {
 import { KeyedCoalescingWorker } from '../util/keyed-coalescing-worker';
 import { getOrchSettings } from '../persistence/settings-store';
 import { currentStorageHygienePolicy } from '../storage-hygiene/hygiene-policy';
+import { LICENSE_RESERVED_AGENT_SEATS } from './pane-admission';
 
-export const WORKTREE_POOL_MAX_PER_SCOPE = 2;
+/** Hard ceiling per checkout: each pooled worktree reserves ~1.6 GB of disk. */
+export const WORKTREE_POOL_MAX_PER_SCOPE = 4;
+/** Historical size, kept when the license cannot be read. */
+const WORKTREE_POOL_FALLBACK_SIZE = 2;
+
+/**
+ * The first helper wave takes at most `licenseMaxAgents − LICENSE_RESERVED_AGENT_SEATS`
+ * worktrees at once (AGENTS.md "Plano Trial": Trial 6 → 4 helpers). Two
+ * pre-allocated worktrees left the rest of that wave paying 6–11 s of
+ * `git worktree add` + CoW each, inside the MCP call. Unlimited plans take
+ * the ceiling; blocked access spawns no agent, so it pre-allocates nothing.
+ */
+export function worktreePoolTargetSize(licenseMaxAgents: number | null): number {
+  if (licenseMaxAgents === null) return WORKTREE_POOL_MAX_PER_SCOPE;
+  if (!Number.isFinite(licenseMaxAgents)) return WORKTREE_POOL_FALLBACK_SIZE;
+  if (licenseMaxAgents <= 0) return 0;
+  return Math.min(WORKTREE_POOL_MAX_PER_SCOPE,
+    Math.max(1, Math.floor(licenseMaxAgents) - LICENSE_RESERVED_AGENT_SEATS));
+}
+
+/** Production target: the license is read lazily so the pool stays importable without it. */
+async function currentWorktreePoolTargetSize(): Promise<number> {
+  const { maxAgents } = await import('../license-access');
+  return worktreePoolTargetSize(maxAgents());
+}
 
 /** F-980/A1: base de onde o writer nasce (HEAD do checkout ou HEAD da aba). */
 export interface IsolatedWriterPoolRequest {
@@ -103,6 +128,7 @@ export class IsolatedWriterPoolOrchestrator {
   /** Escopos cuja limpeza de boot já rodou (uma vez por processo). */
   readonly #bootCleaned = new Set<string>();
   readonly #bootCleanups = new Map<string, Promise<void>>();
+  readonly #targetSize: () => number | Promise<number>;
   readonly #replenish: KeyedCoalescingWorker<
     string,
     { readonly scope: ProjectExecutionScope; readonly request: IsolatedWriterPoolRequest }
@@ -110,19 +136,37 @@ export class IsolatedWriterPoolOrchestrator {
 
   constructor(
     backend: IsolatedWriterPoolBackend,
-    options: { readonly enabled?: () => boolean } = {},
+    options: {
+      readonly enabled?: () => boolean;
+      /** Desired pre-allocated worktrees per checkout; clamped to the ceiling. */
+      readonly targetSize?: () => number | Promise<number>;
+    } = {},
   ) {
     this.#backend = backend;
     this.#pool = new WorktreePool({ maxPerScope: WORKTREE_POOL_MAX_PER_SCOPE });
     this.#enabled = options.enabled ?? worktreePoolEnabled;
+    this.#targetSize = options.targetSize ?? (() => WORKTREE_POOL_FALLBACK_SIZE);
     this.#replenish = new KeyedCoalescingWorker(
       async (_scopeKey, { scope, request }) => {
         // Fora do caminho crítico: mais uma janela para os spawns ativos.
-        await new Promise((resolve) => setImmediate(resolve));
-        await this.preallocate(scope, request);
+        // Uma worktree por vez até o alvo: a fila do `git worktree add` fica
+        // livre entre elas, e a primeira falha (ou o alvo) encerra a rodada.
+        for (;;) {
+          await new Promise((resolve) => setImmediate(resolve));
+          if (!(await this.preallocate(scope, request))) return;
+        }
       },
       (error) => console.warn('[isolated-writer-pool] reposição adiada', error),
     );
+  }
+
+  async #target(): Promise<number> {
+    try {
+      const target = await this.#targetSize();
+      return Number.isInteger(target) && target >= 0 ? Math.min(target, WORKTREE_POOL_MAX_PER_SCOPE) : WORKTREE_POOL_FALLBACK_SIZE;
+    } catch {
+      return WORKTREE_POOL_FALLBACK_SIZE;
+    }
   }
 
   get size(): number {
@@ -203,26 +247,30 @@ export class IsolatedWriterPoolOrchestrator {
 
   /**
    * Pré-aloca UMA worktree do pool no HEAD atual da base pedida, respeitando o
-   * teto. Público para o aquecimento de boot e para os testes.
+   * alvo. Público para o aquecimento de boot e para os testes. `true` = uma
+   * worktree nova entrou no pool.
    */
   async preallocate(
     scope: ProjectExecutionScope,
     request: IsolatedWriterPoolRequest,
-  ): Promise<void> {
-    if (!this.#enabled()) return;
+  ): Promise<boolean> {
+    if (!this.#enabled()) return false;
     // Disco crítico: ~1,6 GB de reserva por worktree não compensam o spawn
     // mais rápido. O writer materializa a worktree na hora, como sem pool.
-    if (currentStorageHygienePolicy().pressure === 'critical') return;
+    if (currentStorageHygienePolicy().pressure === 'critical') return false;
     const scopeKey = this.#backend.scopeKey(scope);
     this.#scopes.set(scopeKey, scope);
-    if (this.#pool.entriesFor(scopeKey).length >= WORKTREE_POOL_MAX_PER_SCOPE) return;
+    if (this.#pool.entriesFor(scopeKey).length >= await this.#target()) return false;
     try {
       const base = await this.#backend.resolveBase(scope, request);
       const entry = await this.#backend.materialize(scope, base);
+      const before = this.#pool.entriesFor(scopeKey).length;
       this.#pool.stage(entry);
+      return this.#pool.entriesFor(scopeKey).length > before;
     } catch (error) {
       // Reposição é melhor esforço; o spawn nunca depende dela.
       console.warn('[isolated-writer-pool] pré-alocação falhou', error);
+      return false;
     }
   }
 
@@ -363,7 +411,8 @@ let orchestratorGeneration = -1;
 export function requireIsolatedWriterPool(): IsolatedWriterPoolOrchestrator {
   const generation = worktreeRuntimeRegistryGeneration();
   if (!orchestrator || orchestratorGeneration !== generation) {
-    orchestrator = new IsolatedWriterPoolOrchestrator(createRealIsolatedWriterPoolBackend());
+    orchestrator = new IsolatedWriterPoolOrchestrator(createRealIsolatedWriterPoolBackend(),
+      { targetSize: currentWorktreePoolTargetSize });
     orchestratorGeneration = generation;
   }
   return orchestrator;

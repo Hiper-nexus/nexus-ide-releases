@@ -30,7 +30,7 @@ vi.mock('../adapters/adapter-registry', () => ({ getAdapter: vi.fn() }));
 vi.mock('./legacy-handoff', () => ({ LEGACY_MARKER: 'marker' }));
 vi.mock('./ponytail', () => ({ PONYTAIL_RULES: '[PONYTAIL]' }));
 vi.mock('./engineering-charter', () => ({ ENGINEERING_CHARTER: '[ENGINEERING]' }));
-vi.mock('./design-charter', () => ({ DESIGN_CHARTER: '[DESIGN]' }));
+vi.mock('./design-charter', () => ({ DESIGN_CHARTER: '[DESIGN]' , UI_KIT_BRIEF_LINE: '[UI-KIT]' }));
 vi.mock('../persistence/settings-store', () => ({
   getOrchSettings: vi.fn(() => ({
     leanCode: true,

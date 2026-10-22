@@ -11,6 +11,7 @@ import {
   recordJevDecision,
   recordJevNoAnswer,
   recordJevOptimization,
+  recordJevSkip,
   resetJevDecisionInstrumentationForTesting,
   setJevDecisionFeedback,
   type JevDecisionEntry,
@@ -600,6 +601,112 @@ describe('espelho no trace principal e contadores de boot', () => {
     expect(jevDecisionBootCounts()).toEqual({
       byProvider: { clef: 1, luna: 1, jev: 1 },
       bySurface: { paneState: 2, handoffReview: 1 },
+    });
+  });
+
+  it('pulo com kind skip vira outcome skip com o motivo categórico', async () => {
+    setupDirs();
+    recordJevSkip({ surface: 'helperReuse', reason: 'no-candidate:armed' }, { dir: logDir });
+    const events = await readDecisionTrace();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ outcome: 'skip', reason: 'no-candidate:armed', requestCount: 0 });
+  });
+});
+
+describe('pulo local (kind skip): nunca é consulta respondida', () => {
+  let skipDir: string | undefined;
+  afterEach(() => {
+    if (skipDir) fs.rmSync(skipDir, { recursive: true, force: true });
+    skipDir = undefined;
+    resetJevDecisionInstrumentationForTesting();
+  });
+  function setupSkips(): string {
+    skipDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jev-log-skip-'));
+    return skipDir;
+  }
+  function rawRows(d: string): Record<string, unknown>[] {
+    return fs.readFileSync(path.join(d, 'decisions.jsonl'), 'utf8').trim().split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+  }
+
+  it('recordJevSkip grava kind skip, zero requisição e custo medido zero', () => {
+    const d = setupSkips();
+    recordJevSkip({ surface: 'memoryDistill', reason: 'store-unavailable', missionId: 'm1' }, { dir: d });
+    const [row] = rawRows(d);
+    expect(row).toMatchObject({
+      kind: 'skip', surface: 'memoryDistill', decision: 'skip:store-unavailable',
+      requestCount: 0, inputTokens: 0, usd: 0, missionId: 'm1',
+    });
+  });
+
+  it('o motivo do pulo é categórico: texto livre não entra no diário', () => {
+    const d = setupSkips();
+    recordJevSkip({ surface: 'memoryDistill', reason: 'Error: /Users/x/secret path\nboom' }, { dir: d });
+    expect(rawRows(d)[0].decision).toBe('skip:invalid-reason');
+  });
+
+  it('pulos ficam fora de consultas, chamadas, decisões, gasto, provider e missão', () => {
+    const d = setupSkips();
+    const now = Date.now();
+    recordJevDecision(entry({ surface: 'memoryDistill', missionId: 'm1', decision: 'retain' }), { dir: d });
+    recordJevNoAnswer({ surface: 'memoryDistill', reason: 'timeout', model: 'jev-1.13.0', missionId: 'm1' }, { dir: d });
+    recordJevSkip({ surface: 'memoryDistill', reason: 'store-unavailable', missionId: 'm1' }, { dir: d });
+    recordJevSkip({ surface: 'helperReuse', reason: 'no-candidate:armed' }, { dir: d });
+    const stats = jevDecisionStats({ dir: d, now });
+    for (const window of [stats.windows.today, stats.windows.last30d, stats.windows.allTime]) {
+      expect(window).toMatchObject({ consultations: 2, answered: 1, noAnswer: 1, skipped: 2 });
+    }
+    expect(stats.totals).toMatchObject({ calls: 1, noAnswer: 1 });
+    expect(stats.bySurface.memoryDistill).toMatchObject({
+      calls: 1, noAnswer: 1, skipped: 1, last30d: { jev: 1, rule: 1 }, decisions: { retain: 1 },
+    });
+    expect(stats.bySurface.helperReuse).toMatchObject({
+      calls: 0, noAnswer: 0, skipped: 1, last30d: { jev: 0, rule: 0, usd: 0 }, decisions: {},
+    });
+    expect(stats.byProvider.jev).toMatchObject({ calls: 1, noAnswer: 1 });
+    expect(stats.byModel.unavailable).toBeUndefined();
+    expect(stats.byMission.m1).toMatchObject({ calls: 1, noAnswer: 1 });
+    expect(listJevDecisions({ dir: d, includeNoAnswer: true })).toHaveLength(2);
+    expect(listJevDecisions({ dir: d, includeNoAnswer: true, includeSkips: true })).toHaveLength(4);
+  });
+
+  it('linhas antigas com model "unavailable" já no disco são lidas como pulo', () => {
+    const d = setupSkips();
+    const legacy = (over: Record<string, unknown>) => fs.appendFileSync(path.join(d, 'decisions.jsonl'), JSON.stringify({
+      id: `legacy-${Math.random().toString(36).slice(2)}`, at: Date.now(), surface: 'memoryDistill',
+      model: 'unavailable', questions: [], probabilities: {}, decision: 'skip:store-unavailable',
+      inputTokens: null, usd: null, ...over,
+    }) + '\n');
+    legacy({});
+    legacy({ surface: 'handoffReview', decision: 'judge-unavailable', inputTokens: 0, usd: 0, missionId: 'm9' });
+    legacy({ requestCount: 0, inputTokens: 0, usd: 0, decision: 'skip:flag-off' });
+    recordJevDecision(entry(), { dir: d });
+    const stats = jevDecisionStats({ dir: d });
+    expect(stats.windows.allTime).toMatchObject({ consultations: 1, answered: 1, skipped: 3 });
+    expect(stats.totals.calls).toBe(1);
+    expect(stats.bySurface.memoryDistill).toMatchObject({ calls: 0, skipped: 2, decisions: {} });
+    expect(stats.bySurface.handoffReview).toMatchObject({ calls: 1, skipped: 1 });
+    expect(stats.byMission.m9).toBeUndefined();
+    const skips = listJevDecisions({ dir: d, includeSkips: true }).filter((row) => row.kind === 'skip');
+    expect(skips).toHaveLength(3);
+    expect(skips.every((row) => row.requestCount === 0 && row.usd === 0 && row.inputTokens === 0)).toBe(true);
+    expect(listJevDecisions({ dir: d })).toHaveLength(1);
+  });
+
+  it('recordJevDecision com model "unavailable" já sai do disco como pulo', () => {
+    const d = setupSkips();
+    recordJevDecision(entry({ model: 'unavailable', decision: 'judge-unavailable', inputTokens: 0, usd: 0 }), { dir: d });
+    expect(rawRows(d)[0]).toMatchObject({ kind: 'skip', requestCount: 0 });
+  });
+
+  it('o pulo não conta como trabalho do provider desde o boot', () => {
+    const d = setupSkips();
+    resetJevDecisionInstrumentationForTesting();
+    recordJevSkip({ surface: 'memoryDistill', reason: 'trivial' }, { dir: d });
+    recordJevDecision(entry(), { dir: d });
+    expect(jevDecisionBootCounts()).toEqual({
+      byProvider: { jev: 1 },
+      bySurface: { memoryDistill: 1, handoffReview: 1 },
     });
   });
 });

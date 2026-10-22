@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { afterEach, expect, it, vi } from 'vitest';
-import { HeavyCommandPermitPool, createHeavyCommandPressureCache, heavyCommandEffectiveCap, heavyCommandKindIsExclusive, heavyLaneBlocked, parseHeavyCommandPressureOutput } from './heavy-command-permit';
+import { HeavyCommandPermitPool, type HeavyExclusiveHeldReport, createHeavyCommandPressureCache, heavyCommandEffectiveCap, heavyCommandKindIsExclusive, heavyLaneBlocked, parseHeavyCommandPressureOutput } from './heavy-command-permit';
 import { testProjectScope } from './__tests__/scope-fixture';
 
 const pools: HeavyCommandPermitPool[] = [];
@@ -427,4 +427,70 @@ it('expires a ghost exclusive lease whose executor survives re-parenting but its
   expect(admitted).toBe(true);
   ghost.release(); (await reader).release();
   expect(value.snapshot()).toMatchObject({ active: 0, waiting: 0 });
+});
+
+it('reports an exclusive build that holds its root while others wait, without ever releasing it', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(0);
+  const reports: HeavyExclusiveHeldReport[] = [];
+  const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 100_000, swapUsedMB: 0 }),
+    limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {},
+    pollMs: 10, waitMs: Number.POSITIVE_INFINITY, maxActive: 4,
+    exclusiveHeld: { firstAfterMs: 1_000, repeatEveryMs: 3_000, report: report => reports.push(report) } });
+  pools.push(value);
+  const build = await value.acquire({ ...request(), kind: 'build', sessionId: 'maestro', paneId: 'pane-1', label: 'npm run build', missionId: 'mission-a' });
+  let admitted = false;
+  const waiting = [value.acquire({ ...request(), kind: 'tests', sessionId: 'worker-1', missionId: 'mission-a' }),
+    value.acquire({ ...request(), kind: 'typescript', sessionId: 'worker-2', missionId: 'mission-b' })]
+    .map(wait => wait.then(permit => { admitted = true; return permit; }));
+  await vi.advanceTimersByTimeAsync(900);
+  expect(reports).toEqual([]);
+  await vi.advanceTimersByTimeAsync(200);
+  expect(reports).toHaveLength(1);
+  expect(reports[0]).toMatchObject({ kind: 'build', sessionId: 'maestro', paneId: 'pane-1', missionId: 'mission-a', label: 'npm run build',
+    waiting: 2, root: scope.rootRealPath });
+  expect(reports[0]!.heldMs).toBeGreaterThanOrEqual(1_000);
+  expect([...reports[0]!.waitingMissionIds].sort()).toEqual(['mission-a', 'mission-b']);
+  // No repeat before the next interval; exclusivity (F-983) is untouched.
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(reports).toHaveLength(1); expect(admitted).toBe(false);
+  await vi.advanceTimersByTimeAsync(1_100);
+  expect(reports).toHaveLength(2); expect(admitted).toBe(false);
+  build.release();
+  for (const permit of await Promise.all(waiting)) permit.release();
+  expect(admitted).toBe(true);
+});
+
+it('says whether a session holds or waits for a heavy admission, parked waiters included', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(0);
+  const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 100_000, swapUsedMB: 0 }),
+    limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {},
+    pollMs: 10, waitMs: Number.POSITIVE_INFINITY, maxActive: 4, progressAfterMs: 50 });
+  pools.push(value);
+  const build = await value.acquire({ ...request(), kind: 'build', sessionId: 'holder' });
+  const parked = value.acquire({ ...request(), kind: 'tests', sessionId: 'queued' }).catch((error: Error) => error.message);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(await parked).toBe('heavy_command_queued');
+  expect(value.sessionAdmissionOpen('holder')).toBe(true);
+  expect(value.sessionAdmissionOpen('queued')).toBe(true);
+  expect(value.sessionAdmissionOpen('stranger')).toBe(false);
+  expect(value.sessionAdmissionOpen('')).toBe(false);
+  build.release();
+  expect(value.sessionAdmissionOpen('holder')).toBe(false);
+});
+
+it('never reports a long exclusive job nobody is waiting for, nor a long reader', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(0);
+  const reports: HeavyExclusiveHeldReport[] = [];
+  const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 100_000, swapUsedMB: 0 }),
+    limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {},
+    pollMs: 10, waitMs: Number.POSITIVE_INFINITY, maxActive: 2,
+    exclusiveHeld: { firstAfterMs: 1_000, repeatEveryMs: 1_000, report: report => reports.push(report) } });
+  pools.push(value);
+  const reader = await value.acquire({ ...request(), kind: 'tests' });
+  const lonelyBuild = await value.acquire({ ...request(), scope: { ...scope, rootRealPath: '/lonely-root' }, kind: 'build' });
+  // A third root waits on the MACHINE cap, not on either lane.
+  const other = value.acquire({ ...request(), scope: { ...scope, rootRealPath: '/other-root' }, kind: 'build' });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(reports).toEqual([]);
+  reader.release(); lonelyBuild.release(); (await other).release();
 });

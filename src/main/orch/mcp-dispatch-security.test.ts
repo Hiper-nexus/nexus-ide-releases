@@ -910,6 +910,41 @@ describe("MCP dispatch effect safety", () => {
       expect(handler).toHaveBeenCalledTimes(1);
     });
 
+    it("writer isolado: o guard recebe os escopos do Main e isenta git_commit da própria worktree", async () => {
+      vi.mocked(guardToolCall).mockClear();
+      resetGateForTests();
+      const writer = mintToken({
+        label: "security-test-isolated-writer",
+        role: "worker",
+        missionId: TEST_MISSION_ID,
+        scope: auditScope,
+        executionScope: { ...auditScope, rootRealPath: path.join(testDir, "..", "nexus-wt-writer") },
+        allowedTools: null,
+        allowedSkills: null,
+      });
+      await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: "nexus_git_commit",
+          description: "commit",
+          inputSchema: { type: "object", properties: { message: { type: "string" } } },
+          handler: vi.fn(async () => ({ output: "ok" })),
+        }),
+        "nexus_git_commit",
+        { message: "feat: parser" },
+        writer,
+        opsWorkflowOptions(),
+      );
+      expect(guardToolCall).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(guardToolCall).mock.calls[0]![0].ctx).toMatchObject({
+        executionScope: { rootRealPath: path.join(testDir, "..", "nexus-wt-writer") },
+      });
+      await expect(vi.mocked(guardToolCall).mock.results[0]!.value).resolves.toEqual({
+        kind: "skipped",
+        reason: "isolated-writer",
+      });
+    });
+
     it("is never consulted for read-only tools", async () => {
       vi.mocked(guardToolCall).mockClear();
       const handler = vi.fn(async () => ({ text: "" }));

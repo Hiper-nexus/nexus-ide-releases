@@ -11,6 +11,9 @@ export const browserElementDescriptorSchema = z
     disabled: z.boolean().optional(),
     checked: z.boolean().optional(),
     editable: z.boolean().optional(),
+    invalid: z.boolean().optional(),
+    expanded: z.boolean().optional(),
+    selected: z.boolean().optional(),
   })
   .strict();
 
@@ -172,5 +175,46 @@ export const browserLayoutAuditSchema = z
       )
       .max(20),
     truncated: z.boolean(),
+  })
+  .strict();
+
+/** `input_prepare`: a point + delivery token, or why native input cannot be used. */
+export const browserInputPrepareSchema = z.union([
+  z
+    .object({
+      token: z.string().regex(/^i[1-9]\d{0,9}$/),
+      x: z.number().finite().min(0).max(100_000),
+      y: z.number().finite().min(0).max(100_000),
+      element: browserElementDescriptorSchema,
+    })
+    .strict(),
+  z.object({ token: z.string().regex(/^i[1-9]\d{0,9}$/) }).strict(),
+  z
+    .object({
+      token: z.null(),
+      reason: z.enum(['no-geometry', 'offscreen', 'occluded', 'no-target']),
+    })
+    .strict(),
+]);
+
+export const browserInputConfirmSchema = z.object({ delivered: z.boolean() }).strict();
+
+export const browserSelectResultSchema = z
+  .object({
+    selected: z.literal(true),
+    ref: z.string().regex(/^e[1-9]\d{0,7}$/),
+    option: z
+      .object({ label: z.string().max(120), index: z.number().int().min(0).max(100_000) })
+      .strict(),
+  })
+  .strict();
+
+/** `element_rect`: element box in top-level viewport CSS px after scrolling it into view. */
+export const browserElementRectSchema = z
+  .object({
+    x: z.number().finite().min(-100_000).max(100_000),
+    y: z.number().finite().min(-100_000).max(100_000),
+    width: z.number().finite().min(0).max(100_000),
+    height: z.number().finite().min(0).max(100_000),
   })
   .strict();

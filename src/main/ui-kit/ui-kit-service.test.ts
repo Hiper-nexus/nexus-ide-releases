@@ -11,6 +11,7 @@ import type { BoardUiLicenseFile } from './boardui-license-file';
 import {
   activateBoardUiLicense,
   activateEffectiveBoardUiLicense,
+  provisionBundledBoardUiLicense,
   invalidateBoardUiFreeList,
   parseBoardUiListOutput,
   parseShadcnSearch,
@@ -96,6 +97,7 @@ function harness(
     licenseFile?: {
       content?: BoardUiLicenseFile | null;
       unreadable?: boolean;
+      corrupted?: boolean;
       failWrite?: boolean;
       failRemove?: boolean;
     };
@@ -144,7 +146,9 @@ function harness(
           ? { status: 'unreadable' }
           : licenseFile.content
             ? { status: 'parsed', file: licenseFile.content }
-            : { status: 'absent' },
+            : over.licenseFile?.corrupted && licenseFile.writes.length === 0
+              ? { status: 'parsed', file: null }
+              : { status: 'absent' },
       write: (payload) => {
         if (over.licenseFile?.failWrite) {
           return { ok: false, error: 'EACCES: the licence file could not be written' };
@@ -457,8 +461,10 @@ describe('where the BoardUI CLI is resolved from', () => {
 });
 
 describe('the cached free list is a function of the licence', () => {
+  // A slug the vendor-read snapshot does not list: only those are resolved
+  // against the live listing (the snapshot answers for everything it holds).
   const FREE_ONLY = '  button    Primary button.\n';
-  const WITH_PRO = `${FREE_ONLY}  template-home-dashboard  Pro template.\n`;
+  const WITH_PRO = `${FREE_ONLY}  shipped-next-month  Pro template.\n`;
 
   it('forgets the unlicensed listing when a licence is activated', async () => {
     // Without this, activating a key left the Pro items undiscoverable for up
@@ -469,11 +475,11 @@ describe('the cached free list is a function of the licence', () => {
       mcp: () => ({ text: 'license activated' }),
     });
 
-    expect(await resolveBoardUiTier('template-home-dashboard', cwd, h.deps)).toBe('pro');
+    expect(await resolveBoardUiTier('shipped-next-month', cwd, h.deps)).toBe('pro');
     listing = WITH_PRO;
     await activateBoardUiLicense({ key: 'BUI-TEST-KEY-0001', cwd }, h.deps);
 
-    expect(await resolveBoardUiTier('template-home-dashboard', cwd, h.deps)).toBe('free');
+    expect(await resolveBoardUiTier('shipped-next-month', cwd, h.deps)).toBe('free');
   });
 
   it('forgets the licensed listing when the licence is removed', async () => {
@@ -486,17 +492,17 @@ describe('the cached free list is a function of the licence', () => {
       mcp: () => ({ text: 'license released' }),
     });
 
-    expect(await resolveBoardUiTier('template-home-dashboard', cwd, h.deps)).toBe('free');
+    expect(await resolveBoardUiTier('shipped-next-month', cwd, h.deps)).toBe('free');
     listing = FREE_ONLY;
     await deactivateBoardUiLicense({ cwd }, h.deps);
 
-    expect(await resolveBoardUiTier('template-home-dashboard', cwd, h.deps)).toBe('pro');
+    expect(await resolveBoardUiTier('shipped-next-month', cwd, h.deps)).toBe('pro');
   });
 });
 
 describe('every door that changes the licence forgets the listing', () => {
   const FREE_ONLY = '  button    Primary button.\n';
-  const WITH_PRO = `${FREE_ONLY}  template-home-dashboard  Pro template.\n`;
+  const WITH_PRO = `${FREE_ONLY}  shipped-next-month  Pro template.\n`;
 
   it('invalidates on the AGENT activation path, not only the service wrapper', async () => {
     // `nexus_ui_kit_boardui { tool: 'activate_license' }` reaches
@@ -512,11 +518,11 @@ describe('every door that changes the licence forgets the listing', () => {
     // The tool refuses without a stored key, so the vault carries one.
     h.vault.set(BOARDUI_LICENSE_SECRET, 'BUI-TEST-KEY-0001');
 
-    expect(await resolveBoardUiTier('template-home-dashboard', cwd, h.deps)).toBe('pro');
+    expect(await resolveBoardUiTier('shipped-next-month', cwd, h.deps)).toBe('pro');
     listing = WITH_PRO;
     await callBoardUiTool({ tool: 'activate_license', cwd }, h.deps);
 
-    expect(await resolveBoardUiTier('template-home-dashboard', cwd, h.deps)).toBe('free');
+    expect(await resolveBoardUiTier('shipped-next-month', cwd, h.deps)).toBe('free');
   });
 
   it('discards a listing that STARTED before the licence changed', async () => {
@@ -540,10 +546,10 @@ describe('every door that changes the licence forgets the listing', () => {
     invalidateBoardUiFreeList();
     gate.release?.(WITH_PRO);
     // …the caller still gets the answer it asked for,
-    expect((await inFlight)?.has('template-home-dashboard')).toBe(true);
+    expect((await inFlight)?.has('shipped-next-month')).toBe(true);
     // but it must not have been cached across the change.
     const after = harness({ cli: () => ({ stdout: FREE_ONLY }) });
-    expect(await resolveBoardUiTier('template-home-dashboard', cwd, after.deps)).toBe('pro');
+    expect(await resolveBoardUiTier('shipped-next-month', cwd, after.deps)).toBe('pro');
   });
 });
 
@@ -583,12 +589,41 @@ describe('planInstallItems', () => {
 
 describe('installItems', () => {
   it('sends shadcn items to the shadcn CLI', async () => {
+    writeComponentsJson({ aliases: { ui: '@/components/ui' } });
     const h = harness();
 
     await installItems({ kit: 'shadcn', items: ['button'], cwd, path: 'src/ui' }, h.deps);
 
     expect(h.cliRuns[0]?.kit).toBe('shadcn');
     expect(h.cliRuns[0]?.args).toEqual(['add', '--yes', 'button', '--path', 'src/ui']);
+  });
+
+  it('refuses a shadcn add at once when the project has no components.json', async () => {
+    // shadcn stops at "You need to create a components.json file… Proceed?",
+    // which ignores --yes: the run used to sit there until the 300 s timeout.
+    const h = harness();
+    const started = Date.now();
+
+    const result = await installItems({ kit: 'shadcn', items: ['button'], cwd }, h.deps);
+
+    expect(result.ok).toBe(false);
+    expect(result.refusal).toBe('components_json_missing');
+    expect(result.hint).toMatch(/command: 'init'/);
+    expect(h.cliRuns).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it('warns before a BoardUI install on Tailwind v3, without refusing it', async () => {
+    fs.writeFileSync(
+      path.join(cwd, 'package.json'),
+      JSON.stringify({ dependencies: { react: '^18.3.0' }, devDependencies: { tailwindcss: '^3.4.1' } }),
+    );
+    const h = harness();
+
+    const result = await installItems({ kit: 'boardui', items: ['button'], cwd }, h.deps);
+
+    expect(result.warning).toMatch(/Tailwind v3/);
+    expect(h.cliRuns[0]?.kit).toBe('boardui');
   });
 
   it('sends BoardUI items to the BoardUI CLI', async () => {
@@ -958,6 +993,101 @@ describe('the licence key bundled with Nexus', () => {
   });
 });
 
+describe('provisionBundledBoardUiLicense — the bundled key on every machine', () => {
+  // Operator 22/10: "a key BoardUI para ficar disponível para todos PCs …
+  // tem que ficar tudo liberado usando a key". This runs at boot and before
+  // every door that asks whether Pro is usable, so it must be LOCAL: no
+  // vendor process, no network, no seat.
+
+  it('writes the operator licence file on a fresh machine without spawning anything', () => {
+    const h = harness();
+
+    const result = provisionBundledBoardUiLicense(h.deps);
+
+    expect(result).toEqual({ status: 'written' });
+    expect(h.licenseFile.writes).toEqual([operatorBoardUiLicenseFile()]);
+    expect(h.mcpCalls).toHaveLength(0);
+    expect(h.cliRuns).toHaveLength(0);
+    expect(h.vault.has(BOARDUI_LICENSE_SECRET)).toBe(false);
+  });
+
+  it('leaves our own payload alone instead of rewriting it at every boot', () => {
+    const h = harness({ licenseFile: { content: operatorBoardUiLicenseFile() } });
+
+    expect(provisionBundledBoardUiLicense(h.deps)).toEqual({ status: 'present' });
+    expect(h.licenseFile.writes).toHaveLength(0);
+  });
+
+  it('heals a corrupted file — the CLI reads no licence from it either', () => {
+    const h = harness({ licenseFile: { corrupted: true } });
+
+    expect(provisionBundledBoardUiLicense(h.deps)).toEqual({ status: 'written' });
+    expect(h.licenseFile.writes).toEqual([operatorBoardUiLicenseFile()]);
+  });
+
+  it('never touches a machine\'s own licence file', () => {
+    const h = harness({ licenseFile: { content: NATIVE_LICENSE } });
+
+    const result = provisionBundledBoardUiLicense(h.deps);
+
+    expect(result).toMatchObject({ status: 'skipped', reason: 'native-file' });
+    expect(h.licenseFile.writes).toHaveLength(0);
+    expect(h.licenseFile.content).toEqual(NATIVE_LICENSE);
+  });
+
+  it('never writes over a file it could not read', () => {
+    const h = harness({ licenseFile: { unreadable: true } });
+
+    expect(provisionBundledBoardUiLicense(h.deps)).toMatchObject({
+      status: 'skipped',
+      reason: 'unreadable-file',
+    });
+    expect(h.licenseFile.writes).toHaveLength(0);
+  });
+
+  it('stands aside when the operator typed their own key — that one activates with the vendor', () => {
+    const h = harness();
+    h.vault.set(BOARDUI_LICENSE_SECRET, 'BUI-OWN-KEY');
+
+    expect(provisionBundledBoardUiLicense(h.deps)).toMatchObject({
+      status: 'skipped',
+      reason: 'own-key',
+    });
+    expect(h.licenseFile.writes).toHaveLength(0);
+  });
+
+  it('does nothing in a build that ships no key', () => {
+    operatorBundle.hasKey = false;
+    const h = harness();
+
+    expect(provisionBundledBoardUiLicense(h.deps)).toMatchObject({
+      status: 'skipped',
+      reason: 'no-bundled-key',
+    });
+    expect(h.licenseFile.writes).toHaveLength(0);
+  });
+
+  it('reports a refused write instead of throwing', () => {
+    const h = harness({ licenseFile: { failWrite: true } });
+
+    const result = provisionBundledBoardUiLicense(h.deps);
+
+    expect(result).toMatchObject({ status: 'skipped', reason: 'write-failed' });
+    expect(JSON.stringify(result)).toMatch(/EACCES/);
+  });
+
+  it('forgets the cached listing when it writes — the licence changed', async () => {
+    const h = harness({ cli: () => ({ stdout: '  button    Primary button.\n' }) });
+    await listBoardUiFreeSlugs(cwd, h.deps);
+    expect(h.cliRuns).toHaveLength(1);
+
+    provisionBundledBoardUiLicense(h.deps);
+    await listBoardUiFreeSlugs(cwd, h.deps);
+
+    expect(h.cliRuns).toHaveLength(2);
+  });
+});
+
 describe('auto-activation at the install doors', () => {
   /** `boardui list` output shape, as the real CLI prints it. */
   const freeList = '  button    Primary button.\n';
@@ -1091,12 +1221,17 @@ describe('readItemSource', () => {
 
     await readItemSource({ kit: 'boardui', slug: 'button', cwd }, h.deps);
     await readItemSource({ kit: 'boardui', slug: 'template-home-dashboard', cwd }, h.deps);
+    await readItemSource({ kit: 'boardui', slug: 'shipped-next-month', cwd }, h.deps);
 
     expect(readCachedItem('boardui', 'button', { rootDir: dir })?.tier).toBe('free');
-    // Not 'pro' and not 'free': the snapshot cannot see Pro items, so the
-    // cache records that it does not know rather than inventing a tier.
+    // A Pro identifier the vendor published is recorded as Pro.
     expect(
       readCachedItem('boardui', 'template-home-dashboard', { rootDir: dir })?.tier,
+    ).toBe('pro');
+    // Not 'pro' and not 'free': a slug the snapshot never saw is recorded as
+    // not known rather than given an invented tier.
+    expect(
+      readCachedItem('boardui', 'shipped-next-month', { rootDir: dir })?.tier,
     ).toBe('unknown');
   });
 
@@ -1176,13 +1311,14 @@ describe('catalog helpers', () => {
     expect(shadcnSearchNamespaces([PRIVATE_REGISTRY])).toEqual(['@shadcn', '@acme']);
   });
 
-  it('offers the free BoardUI catalog offline', () => {
+  it('offers the whole BoardUI catalog offline, free and Pro', () => {
     const candidates = boardUiCandidates();
 
-    expect(candidates).toHaveLength(69);
+    expect(candidates).toHaveLength(109);
     expect(candidates.find((entry) => entry.slug === 'button')?.tier).toBe('free');
     expect(candidates.find((entry) => entry.slug === 'app-shell')?.tier).toBe('free');
-    expect(candidates.every((entry) => entry.tier === 'free')).toBe(true);
+    expect(candidates.find((entry) => entry.slug === 'template-finance')?.tier).toBe('pro');
+    expect(candidates.filter((entry) => entry.tier === 'free')).toHaveLength(69);
   });
 });
 
@@ -1312,9 +1448,10 @@ describe('the Pro gate on a direct install', () => {
     expect(result.ok).toBe(false);
     expect(result.needsLicense).toEqual(['template-home-dashboard']);
     expect(result.licenseState).toBe('absent');
-    expect(result.stderr).toMatch(/Settings → UI kits/);
-    // Only the catalogue listing ran; the install never reached the vendor.
-    expect(h.cliRuns.map((run) => run.args[0])).toEqual(['list']);
+    expect(result.stderr).toMatch(/Configurações › Biblioteca › Kits de UI/);
+    // The snapshot knows it is Pro, so no listing ran — and the install never
+    // reached the vendor.
+    expect(h.cliRuns).toEqual([]);
   });
 
   it('installs it once the licence is active', async () => {
@@ -1377,6 +1514,58 @@ describe('the cwd guard runs before the project config is touched', () => {
   });
 });
 
+describe('one writer per project covers the components.json edit', () => {
+  it('a retry refused as busy leaves components.json as the running install has it', async () => {
+    // The first install declares @acme and is still running; the retry names
+    // another namespace. Claimed only inside the CLI runner, the retry wrote
+    // its registry first and was refused afterwards.
+    const other: UiKitRegistry = {
+      namespace: '@other',
+      url: 'https://registry.other.test/r/{name}.json',
+      auth: { kind: 'header', name: 'Authorization', envVar: 'OTHER_REGISTRY_TOKEN' },
+      secretKey: 'external:ui-kit-registry-other',
+    };
+    writeComponentsJson({ style: 'new-york' });
+    let finish: () => void = () => {};
+    const running = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const h = harness({ registries: [PRIVATE_REGISTRY, other] });
+    const first = runShadcnCommand(
+      { command: { kind: 'add', items: ['@acme/auth'] }, cwd },
+      {
+        ...h.deps,
+        runCli: async () => {
+          await running;
+          return { code: 0, stdout: '', stderr: '' };
+        },
+      },
+    );
+    await vi.waitFor(() => expect(declaredRegistry('@acme')).toBeDefined());
+    const during = fs.readFileSync(path.join(cwd, 'components.json'), 'utf8');
+
+    await expect(
+      runShadcnCommand({ command: { kind: 'add', items: ['@other/login'] }, cwd }, h.deps),
+    ).rejects.toMatchObject({ code: 'PROJECT_BUSY' });
+    expect(fs.readFileSync(path.join(cwd, 'components.json'), 'utf8')).toBe(during);
+
+    finish();
+    await first;
+    // Released once the first run settled: the next one goes through.
+    await runShadcnCommand({ command: { kind: 'add', items: ['@other/login'] }, cwd }, h.deps);
+    expect(declaredRegistry('@other')).toMatchObject({ url: other.url });
+  });
+
+  it('the CLI runner is told the slot is already held', async () => {
+    const h = harness();
+
+    await runShadcnCommand({ command: { kind: 'add', items: ['button'] }, cwd }, h.deps);
+    await runShadcnCommand({ command: { kind: 'info' }, cwd }, h.deps);
+
+    expect(h.cliRuns.map((run) => run.projectWriteClaimed)).toEqual([true, undefined]);
+  });
+});
+
 describe('resolveBoardUiTier', () => {
   const freeList = '  button    Primary button.\n  app-shell  The shell.\n';
 
@@ -1390,8 +1579,15 @@ describe('resolveBoardUiTier', () => {
   it('asks the live catalogue for a slug the snapshot does not know', async () => {
     const h = harness({ cli: () => ({ stdout: freeList }) });
 
-    expect(await resolveBoardUiTier('template-home-dashboard', cwd, h.deps)).toBe('pro');
+    expect(await resolveBoardUiTier('shipped-next-month', cwd, h.deps)).toBe('pro');
     expect(h.cliRuns[0]?.args).toEqual(['list']);
+  });
+
+  it('answers a Pro item the snapshot knows without spawning anything', async () => {
+    const h = harness({ cli: () => ({ stdout: freeList }) });
+
+    expect(await resolveBoardUiTier('template-home-dashboard', cwd, h.deps)).toBe('pro');
+    expect(h.cliRuns).toEqual([]);
   });
 
   it('answers unknown — never free — when the vendor cannot be reached', async () => {

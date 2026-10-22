@@ -9,6 +9,7 @@ import {
 } from '../jev/jev-decision-log';
 import { UI_KIT_IDS, type UiKitId } from './ui-kit-cli';
 import type { UiKitCachedTier } from './ui-kit-cache';
+import { hasUiWorkTerm } from '../../shared/ui-work-signal';
 
 /**
  * "Which kit, which item — and does this task want a kit at all?"
@@ -58,12 +59,22 @@ export interface UiKitPickRequest {
   readonly signal?: AbortSignal;
 }
 
+export type UiKitDecidedBy = 'jev' | 'heuristic';
+
 export interface UiKitPickResult {
   /** False when the task does not call for a kit component at all. */
   readonly needsKit: boolean;
   readonly kit: UiKitId | null;
   readonly item: UiKitCandidate | null;
-  readonly source: 'jev' | 'heuristic';
+  /** `jev` when the Jev's own answer chose the kit or the item. */
+  readonly source: UiKitDecidedBy;
+  /**
+   * Who chose each part. One `source` for the whole result recorded "jev"
+   * whenever the Jev answered at all, so a heuristic kit or item read as a
+   * judged one.
+   */
+  readonly kitDecidedBy?: UiKitDecidedBy;
+  readonly itemDecidedBy?: UiKitDecidedBy | null;
   /** Set when the best match is Pro and no licence is active. */
   readonly needsLicense: boolean;
   /** The Pro item that was wanted but could not be used. */
@@ -88,13 +99,16 @@ const UI_WORDS = [
   // in this repo it means a CLI session far more often than a UI surface.
   'chat', 'composer', 'avatar', 'badge', 'dropdown', 'pagination', 'carousel',
   'slider', 'switch', 'checkbox', 'radio', 'tooltip', 'breadcrumb', 'widget',
+  'ux', 'kanban', 'board', 'quadro', 'settings', 'configuração', 'aba', 'abas',
+  'toast', 'notificação', 'popover', 'drawer', 'navbar', 'hero', 'pricing',
+  'calendar', 'calendário', 'sidebar', 'botões',
 ];
 
 /** What BoardUI is actually better at: agentic surfaces and data dashboards. */
 const BOARDUI_WORDS = [
   'dashboard', 'painel', 'chart', 'gráfico', 'grafico', 'kpi', 'metric',
   'métrica', 'metrica', 'analytics', 'agent', 'agente', 'chat', 'composer',
-  'ai ', ' ia ', 'llm', 'assistant', 'assistente', 'thinking', 'stat',
+  'ai', 'ia', 'llm', 'assistant', 'assistente', 'thinking', 'stat',
   'revenue', 'receita', 'finance', 'financeiro', 'calendar', 'calendário',
   'calendario', 'task list', 'kanban', 'project board', 'questionnaire',
   'onboarding',
@@ -129,6 +143,7 @@ const TASK_CONCEPTS: readonly (readonly [string, readonly string[]])[] = [
   ['receita', ['revenue', 'sales', 'chart']],
   ['revenue', ['revenue', 'sales', 'chart']],
   ['login', ['login', 'auth', 'sign', 'password', 'credential']],
+  ['senha', ['password', 'login', 'auth']],
   ['entrar', ['login', 'auth', 'sign']],
   ['cadastro', ['signup', 'register', 'form', 'auth']],
   ['signup', ['signup', 'register', 'form']],
@@ -155,11 +170,34 @@ const TASK_CONCEPTS: readonly (readonly [string, readonly string[]])[] = [
   ['onboarding', ['onboarding', 'step', 'wizard', 'questionnaire']],
   ['perfil', ['profile', 'avatar', 'account', 'user']],
   ['profile', ['profile', 'avatar', 'account', 'user']],
-  ['notificacao', ['notification', 'toast', 'alert', 'badge']],
-  ['notificação', ['notification', 'toast', 'alert', 'badge']],
+  ['notificacao', ['notification', 'toast', 'alert', 'badge', 'sonner']],
+  ['notificação', ['notification', 'toast', 'alert', 'badge', 'sonner']],
   ['configuracao', ['setting', 'preference', 'form', 'tabs']],
   ['configuração', ['setting', 'preference', 'form', 'tabs']],
   ['settings', ['setting', 'preference', 'form', 'tabs']],
+  // Portuguese names of the components the review found missing from the
+  // 12 the judge sees (tabs, alert-dialog, sidebar, empty, sonner, chart-line).
+  ['aba', ['tab', 'tabs']],
+  ['abas', ['tab', 'tabs']],
+  ['alerta', ['alert', 'dialog']],
+  ['confirmação', ['alert', 'dialog', 'confirm']],
+  ['confirmar', ['alert', 'dialog', 'confirm']],
+  ['diálogo', ['dialog', 'modal']],
+  ['lateral', ['sidebar']],
+  ['barra', ['bar', 'sidebar', 'navbar']],
+  ['vazio', ['empty']],
+  ['vazia', ['empty']],
+  ['toast', ['toast', 'sonner']],
+  ['aviso', ['alert', 'toast', 'sonner']],
+  ['linha', ['line']],
+  ['pizza', ['pie']],
+  ['financeiro', ['finance']],
+  ['finanças', ['finance']],
+  ['transação', ['transaction', 'table']],
+  ['paciente', ['medical', 'patient']],
+  ['médico', ['medical', 'patient']],
+  ['board', ['board', 'kanban']],
+  ['quadro', ['board', 'kanban']],
 ];
 
 /** Words worth matching on: shorter ones carry no signal. */
@@ -183,20 +221,90 @@ const TASK_STOPWORDS = new Set([
   'make', 'build', 'add', 'create', 'please', 'some', 'our', 'their',
 ]);
 
-function wordsOf(text: string): readonly string[] {
-  return text
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter((word) => word.length >= MIN_TASK_WORD && !TASK_STOPWORDS.has(word));
+/**
+ * One spelling per word: lowercase, no accents, singular.
+ *
+ * Without it "gráficos" never met "grafico", "abas" never met "aba" and
+ * "notificações" never met "notificação" — the review measured 6 of 12 UI
+ * requests whose right item existed and never reached the judge's 12 slots.
+ * Both sides of every comparison go through here.
+ */
+export function foldWord(word: string): string {
+  const plain = word.toLowerCase().normalize('NFD').replace(/\p{M}+/gu, '');
+  if (plain.length <= 4 || plain.endsWith('ss')) return plain;
+  if (plain.endsWith('oes')) return `${plain.slice(0, -3)}ao`;
+  if (plain.endsWith('ais')) return `${plain.slice(0, -3)}al`;
+  if (plain.endsWith('eis')) return `${plain.slice(0, -3)}el`;
+  return plain.endsWith('s') ? plain.slice(0, -1) : plain;
 }
 
-export function taskAffinityWords(task: string): readonly string[] {
-  const words = new Set<string>(wordsOf(task));
+function tokensOf(text: string): readonly string[] {
+  return text
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((token) => token.length > 0)
+    .map(foldWord);
+}
+
+const FOLDED_STOPWORDS = new Set([...TASK_STOPWORDS].map(foldWord));
+
+function wordsOf(text: string): readonly string[] {
+  return tokensOf(text).filter(
+    (word) => word.length >= MIN_TASK_WORD && !FOLDED_STOPWORDS.has(word),
+  );
+}
+
+/** The concept table keyed by folded word, duplicates merged. */
+const FOLDED_CONCEPTS: ReadonlyMap<string, readonly string[]> = (() => {
+  const merged = new Map<string, Set<string>>();
   for (const [concept, expansions] of TASK_CONCEPTS) {
-    if (!words.has(concept)) continue;
-    for (const expansion of expansions) words.add(expansion);
+    const key = foldWord(concept);
+    const bucket = merged.get(key) ?? new Set<string>();
+    for (const expansion of expansions) bucket.add(foldWord(expansion));
+    merged.set(key, bucket);
+  }
+  return new Map([...merged].map(([key, values]) => [key, [...values]]));
+})();
+
+export function taskAffinityWords(task: string): readonly string[] {
+  // A word that only says "UI" scores nothing: "página" is a prefix of
+  // "pagination", and "página de preços" installed a pagination control.
+  const words = new Set<string>(wordsOf(task).filter((word) => !GENERIC_SEARCH_WORDS.has(word)));
+  for (const word of [...words]) {
+    for (const expansion of FOLDED_CONCEPTS.get(word) ?? []) words.add(expansion);
   }
   return [...words];
+}
+
+/** Words that say "UI" without saying WHICH component; useless as a search. */
+const GENERIC_SEARCH_WORDS = new Set(
+  [
+    'tela', 'pagina', 'page', 'screen', 'component', 'componente', 'interface',
+    'layout', 'design', 'frontend', 'projeto', 'project', 'usuario', 'user',
+    'sistema', 'system', 'aplicativo', 'app', 'site', 'web', 'novo', 'nova',
+  ].map(foldWord),
+);
+const MAX_SEARCH_TERMS = 2;
+
+/**
+ * Up to two catalogue words to SEARCH a registry with for this task.
+ *
+ * A 1 228-item registry answers the first 200 of its own order, so "pricing
+ * page" never saw the 20 `pricing*` blocks of @shadcnuikit. The catalogue is
+ * English and the task often is not: a concept word contributes its first
+ * expansion ("preços" → "pricing"), any other specific word itself.
+ */
+export function searchTermsForTask(task: string): readonly string[] {
+  const terms: string[] = [];
+  const add = (term: string | undefined): void => {
+    if (!term || terms.includes(term) || terms.length >= MAX_SEARCH_TERMS) return;
+    terms.push(term);
+  };
+  for (const word of wordsOf(task)) {
+    if (GENERIC_SEARCH_WORDS.has(word)) continue;
+    const concept = FOLDED_CONCEPTS.get(word);
+    add(concept ? concept[0] : word.length >= 4 ? word : undefined);
+  }
+  return terms;
 }
 
 /**
@@ -242,16 +350,36 @@ function normalize(text: string): string {
   return ` ${text.toLowerCase()} `;
 }
 
-function countHits(haystack: string, words: readonly string[]): number {
+/**
+ * How many of `terms` the text SAYS, word by word.
+ *
+ * A substring test read "ui" inside "build", "tema" inside "sistema", "form"
+ * inside "transform" and "stat" inside "status": 8 of 10 non-UI tasks came
+ * out as UI work. A term is a whole folded word, or a phrase of them.
+ */
+function countHits(text: string, terms: readonly string[]): number {
+  const tokens = tokensOf(text);
+  const joined = ` ${tokens.join(' ')} `;
+  const present = new Set(tokens);
   let hits = 0;
-  for (const word of words) {
-    if (haystack.includes(word)) hits += 1;
+  for (const term of terms) {
+    const termTokens = tokensOf(term);
+    if (termTokens.length === 0) continue;
+    const found =
+      termTokens.length === 1
+        ? present.has(termTokens[0] as string)
+        : joined.includes(` ${termTokens.join(' ')} `);
+    if (found) hits += 1;
   }
   return hits;
 }
 
+/**
+ * The kit's vocabulary plus the repo's shared one (`hasUiWorkTerm`), which
+ * also knows the craft words — "redesign", "tipografia" — this list never had.
+ */
 export function taskLooksLikeUiWork(task: string): boolean {
-  return countHits(normalize(task), UI_WORDS) > 0;
+  return countHits(task, UI_WORDS) > 0 || hasUiWorkTerm(task);
 }
 
 /**
@@ -275,8 +403,8 @@ export function pickUiKitByHeuristic(
     };
   }
 
-  const boardHits = countHits(haystack, BOARDUI_WORDS);
-  const shadcnHits = countHits(haystack, SHADCN_WORDS);
+  const boardHits = countHits(request.task, BOARDUI_WORDS);
+  const shadcnHits = countHits(request.task, SHADCN_WORDS);
   const boardAvailable = available.includes('boardui');
   const shadcnAvailable = available.includes('shadcn');
 
@@ -320,22 +448,8 @@ export function pickUiKitByHeuristic(
   // `tree-view` installed for "build a dashboard". So the fallback takes the
   // first candidate of the kit only when it has some affinity with the task;
   // with none, the honest answer is no item, and the reason says so.
-  const firstIn = (target: UiKitId): UiKitCandidate | null => {
-    // The one with the MOST affinity, not the one that happens to be first:
-    // this must not depend on the caller having ranked the list, because when
-    // it does not, "first" is the vendor's catalogue order.
-    let best: UiKitCandidate | null = null;
-    let bestScore = 0;
-    for (const candidate of request.candidates) {
-      if (candidate.kit !== target) continue;
-      const score = taskItemAffinity(request.task, candidate);
-      if (score > bestScore) {
-        best = candidate;
-        bestScore = score;
-      }
-    }
-    return best;
-  };
+  const firstIn = (target: UiKitId): UiKitCandidate | null =>
+    mostAffineCandidate(request.task, request.candidates, target);
 
   let best = matchIn(kit);
   if (!best) {
@@ -359,17 +473,46 @@ export function pickUiKitByHeuristic(
       kit,
       item: best,
       source: 'heuristic',
+      kitDecidedBy: 'heuristic',
+      itemDecidedBy: best ? 'heuristic' : null,
       needsLicense: false,
       reason: named
         ? boardHits > shadcnHits
           ? 'the task leans agentic/dashboard, which is BoardUI territory'
           : 'the broad primitive and block surface is shadcn'
-        : // Said plainly: nothing in the task named an item, so this is the
-          // best-ranked candidate of the kit the task leans towards.
-          `nothing in the task names an item; took the best-ranked ${kit} candidate`,
+        : best
+          ? // Said plainly: nothing in the task named an item, so this is the
+            // candidate of the kit the task leans towards with the most
+            // affinity to its words.
+            `nothing in the task names an item; took the most affine ${kit} candidate`
+          : `nothing in the ${kit} catalogue matches the task's words; no item chosen`,
     },
     request,
   );
+}
+
+/**
+ * The item of `kit` with the most affinity to the task, or null when none has
+ * any. The one with the MOST affinity, not the one that happens to be first:
+ * this must not depend on the caller having ranked the list, because when it
+ * does not, "first" is the vendor's catalogue order.
+ */
+function mostAffineCandidate(
+  task: string,
+  candidates: readonly UiKitCandidate[],
+  kit: UiKitId,
+): UiKitCandidate | null {
+  let best: UiKitCandidate | null = null;
+  let bestScore = 0;
+  for (const candidate of candidates) {
+    if (candidate.kit !== kit) continue;
+    const score = taskItemAffinity(task, candidate);
+    if (score > bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+  return best;
 }
 
 /**
@@ -553,24 +696,44 @@ export async function pickUiKit(
   // installed a component anyway — the item answer, absent or below
   // confidence, stayed the heuristic's guess.
   const kitIsNone = kit === NONE;
+  const kitJudged = kitIsNone || (kit !== null && available.includes(kit as UiKitId));
   const chosenKit = kitIsNone
     ? null
     : kit && available.includes(kit as UiKitId)
       ? (kit as UiKitId)
       : fallback.kit;
+  const kitDecidedBy: UiKitDecidedBy = kitJudged ? 'jev' : 'heuristic';
 
   const itemKey = acceptedChoice(answers.item, UI_KIT_PICK_MIN_CONFIDENCE);
   let chosenItem: UiKitCandidate | null = kitIsNone ? null : fallback.item;
-  if (itemKey === NONE || kitIsNone) chosenItem = null;
-  else if (itemKey) {
+  let itemDecidedBy: UiKitDecidedBy | null = chosenItem ? 'heuristic' : null;
+  if (itemKey === NONE || kitIsNone) {
+    chosenItem = null;
+    itemDecidedBy = itemKey === NONE ? 'jev' : null;
+  } else if (itemKey) {
     const index = candidates.findIndex(
       (_entry, position) => candidateKey(position) === itemKey,
     );
-    if (index >= 0) chosenItem = candidates[index] ?? null;
+    const judged = index >= 0 ? (candidates[index] ?? null) : null;
+    if (judged) {
+      chosenItem = judged;
+      itemDecidedBy = 'jev';
+    }
   }
   // An item from the other kit is not an answer to "which kit".
   if (chosenItem && chosenKit && chosenItem.kit !== chosenKit) {
     chosenItem = fallback.item && fallback.item.kit === chosenKit ? fallback.item : null;
+    itemDecidedBy = chosenItem ? 'heuristic' : null;
+  }
+  // The kit stands but no item answer cleared the bar (and none was judged
+  // "none of these"): the most affine item OF THAT KIT, over the whole list,
+  // not a null that reads as "nothing in the catalog fits".
+  if (!chosenItem && chosenKit && itemKey !== NONE) {
+    const affine = mostAffineCandidate(request.task, request.candidates, chosenKit);
+    if (affine) {
+      chosenItem = affine;
+      itemDecidedBy = 'heuristic';
+    }
   }
 
   const record = deps.record ?? recordJevDecision;
@@ -597,6 +760,8 @@ export async function pickUiKit(
       kit: null,
       item: null,
       source: 'jev',
+      kitDecidedBy: 'jev',
+      itemDecidedBy: null,
       needsLicense: false,
       confidence,
       reason: 'judged as not calling for a kit component',
@@ -611,6 +776,8 @@ export async function pickUiKit(
       kit: null,
       item: null,
       source: 'jev',
+      kitDecidedBy: 'jev',
+      itemDecidedBy: null,
       needsLicense: false,
       confidence,
       reason: 'judged that neither kit fits: this should be written from scratch',
@@ -622,15 +789,31 @@ export async function pickUiKit(
       needsKit: true,
       kit: chosenKit,
       item: chosenItem,
-      source: 'jev',
+      source: kitDecidedBy === 'jev' || itemDecidedBy === 'jev' ? 'jev' : 'heuristic',
+      kitDecidedBy,
+      itemDecidedBy,
       needsLicense: false,
       confidence,
-      reason: chosenKit
-        ? `judged ${chosenKit}${chosenItem ? ` / ${chosenItem.label}` : ''}`
-        : 'no kit judged suitable',
+      reason: pickReason(chosenKit, chosenItem, kitDecidedBy, itemDecidedBy),
     },
     request,
   );
+}
+
+/** Says which part the Jev chose and which the offline rule did. */
+function pickReason(
+  kit: UiKitId | null,
+  item: UiKitCandidate | null,
+  kitDecidedBy: UiKitDecidedBy,
+  itemDecidedBy: UiKitDecidedBy | null,
+): string {
+  if (!kit) return 'no kit judged suitable';
+  const kitPart = kitDecidedBy === 'jev' ? `judged ${kit}` : `offline rule chose ${kit}`;
+  if (!item) return `${kitPart}; no item matches the task`;
+  if (kitDecidedBy === 'jev' && itemDecidedBy === 'jev') return `judged ${kit} / ${item.label}`;
+  return itemDecidedBy === 'jev'
+    ? `${kitPart}; judged ${item.label}`
+    : `${kitPart}; ${item.label} by the offline rule (no item answer cleared ${UI_KIT_PICK_MIN_CONFIDENCE})`;
 }
 
 function acceptedChoice(

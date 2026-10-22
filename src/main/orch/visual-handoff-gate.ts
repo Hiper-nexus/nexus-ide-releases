@@ -1,9 +1,11 @@
 import type { ProjectExecutionScope } from '../../shared/types';
 import { createHash, randomUUID } from 'node:crypto';
 import { classifyWorkKind, requiresDesignAuthority } from '../../shared/mission-work-kind';
-import { isUiWorkText } from '../../shared/ui-work-signal';
+import { canonicalizeWorkText, collectUiWorkEvidence, isUiWorkText } from '../../shared/ui-work-signal';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { createScopedBrowserArtifactStore } from '../browser/browser-artifact-store';
+import { captureWorkingTreeCandidate } from '../context/candidate-working-tree-snapshot';
+import { isRunningPreviewUrlForScope } from './preview-server';
 import { getMissionEventRuntimeManager } from './mission-event-emit';
 import type { VisualTaskRequirement } from '../../shared/orch-types';
 import { createScopedTaskStore } from './task-store';
@@ -20,7 +22,16 @@ export interface VisualHandoffContext {
 }
 export type VisualHandoffVerdict = { readonly required: false; readonly verified: true } |
   { readonly required: true; readonly verified: false; readonly reason: string } |
-  { readonly required: true; readonly verified: true; readonly artifactId: string; readonly sha256: string };
+  {
+    readonly required: true; readonly verified: true; readonly artifactId: string; readonly sha256: string;
+    /**
+     * Review 22/10: only the worker ever saw the image. The verdict travels in
+     * the handoff artifact, so the judge gets the Main-verified file (these
+     * exact bytes: `sha256`) and the instruction to look at it.
+     */
+    readonly path?: string; readonly url?: string; readonly width?: number; readonly height?: number;
+    readonly capturedAt?: number; readonly reviewHint?: string;
+  };
 
 /** Only the Main assignment/immutable task is classified, never the reported result. */
 export function createVisualTaskRequirement(now = Date.now(), id: string = randomUUID()): VisualTaskRequirement {
@@ -87,6 +98,39 @@ function withoutWorkspaceDesignRule(text: string): string {
   return text.replace(DESIGN_RULE_BLOCK, ' ');
 }
 
+/**
+ * Review 22/10: a UI bug usually arrives REPORTED, not ordered — "o modal de
+ * login não fecha no mobile" has no repair verb and a single ambiguous UI noun,
+ * so neither the skill-grant quorum (`isUiWorkText`) nor the design-authority
+ * verb rule saw it, and the worker that fixed the screen was never asked for a
+ * capture. A UI place plus a visible malfunction OF that place is a visual
+ * delivery. This vocabulary only decides the capture requirement: it never
+ * grants skills nor writes a design contract, so it lives here and not in the
+ * shared UI grammar. Patterns run on the canonical (accent-free) text.
+ */
+const UI_MALFUNCTION = new RegExp(String.raw`\b(?:` + [
+  String.raw`nao\s+(?:fecha|abre|aparece|carrega|renderiza|mostra|exibe|rola|clica|envia|atualiza|cabe|centraliza)`,
+  String.raw`sumiu|somem|desaparece\w*`,
+  // "some" alone is also the English quantifier ("fix some issues").
+  String.raw`some\s+(?:n[oa]s?|em|quando|ao|apos|depois)`,
+  String.raw`cortad[oa]s?|sobrepost[oa]s?|desalinhad[oa]s?|desconfigurad[oa]s?`,
+  String.raw`tela\s+(?:branca|em\s+branco)|blank\s+screen|white\s+screen`,
+  String.raw`piscando|flicker\w*`,
+  String.raw`(?:doesn'?t|does\s+not|won'?t|isn'?t|is\s+not|not)\s+(?:close|closing|open|opening|show|showing|render|rendering|display|displaying|scroll|scrolling)`,
+].join('|') + String.raw`)\b`);
+/** Hydration is a client-render concept; it only means a defect next to one. */
+const HYDRATION = /\b(?:hidratacao|hydration)\b/;
+const HYDRATION_DEFECT = /\b(?:erros?|errors?|falhas?|mismatch|warnings?|avisos?|bugs?)\b/;
+
+function isReportedUiDefect(text: string, kind: string): boolean {
+  // A document ABOUT the defect is a document; its writer has nothing to capture.
+  if (kind === 'doc') return false;
+  const canonical = canonicalizeWorkText(text);
+  if (HYDRATION.test(canonical) && HYDRATION_DEFECT.test(canonical)) return true;
+  const evidence = collectUiWorkEvidence(text);
+  return (evidence.locative !== null || evidence.craft !== null) && UI_MALFUNCTION.test(canonical);
+}
+
 export function visualTaskRequirement(assignment: string | undefined, now = Date.now(), id?: string): VisualTaskRequirement | undefined {
   if (!assignment) return undefined;
   // F-1271: os blocos de contexto montados na frente (<business-model> com as
@@ -96,7 +140,9 @@ export function visualTaskRequirement(assignment: string | undefined, now = Date
   ).slice(0, 16_384);
   // A UI defect is still a visual delivery. Requiring a capture does not
   // reclassify it as new design work or grant design-authority capabilities.
-  const required = requiresDesignAuthority(text) || (classifyWorkKind(text).kind === 'bug' && isUiWorkText(text));
+  const kind = classifyWorkKind(text).kind;
+  const required = requiresDesignAuthority(text) || (kind === 'bug' && isUiWorkText(text)) ||
+    isReportedUiDefect(text, kind);
   return required ? createVisualTaskRequirement(now, id) : undefined;
 }
 
@@ -110,17 +156,126 @@ function plannedRequirement(ctx: VisualHandoffContext, task?: VisualPlannedTask 
   return visualTaskRequirement(`${task.plannedTitle}\n${task.plannedDetail}`, task.task.createdAt, id);
 }
 
+export interface VisualLaneAuthority {
+  readonly readOnly?: boolean;
+  readonly isolatedWriter?: boolean;
+  readonly executionMode?: string;
+}
+
+/**
+ * Review 22/10: a read-only lane (mapping, review, scouting) delivers findings,
+ * not a rendered screen. Charging it a capture downgraded every reader of a UI
+ * task to `partial`. F-1318: an isolated worktree — or any sealed writer mode —
+ * beats the readOnly label; that pane writes and is still charged.
+ */
+export function isReadOnlyVisualLane(input: VisualLaneAuthority): boolean {
+  if (input.isolatedWriter === true || input.executionMode === 'isolated_worktree' ||
+    input.executionMode === 'same_checkout') return false;
+  return input.readOnly === true || input.executionMode === 'read_only';
+}
+
 /** A supplied undefined is Main's negative classification, before adding boilerplate. */
-export function visualTaskAtSpawn(input: {
+export function visualTaskAtSpawn(input: VisualLaneAuthority & {
   role?: string; visualTask?: VisualTaskRequirement; initialPrompt?: string;
 }): VisualTaskRequirement | undefined {
-  if (input.role === 'orchestrator') return undefined;
+  if (input.role === 'orchestrator' || isReadOnlyVisualLane(input)) return undefined;
   return Object.hasOwn(input, 'visualTask') ? input.visualTask : visualTaskRequirement(input.initialPrompt);
+}
+
+/**
+ * Review 22/10: what a capture proves. It must show THIS worker's build (a
+ * Nexus preview rooted in its execution checkout, not a public page), and it
+ * is bound to the candidate it showed: the tree content relative to the HEAD
+ * at capture time. Committing that same tree keeps the capture; any edit after
+ * it (a rework round included) needs a fresh one.
+ */
+export interface VisualCandidateObservation {
+  /** HEAD the content was measured against; null without Git history. */
+  readonly base: string | null;
+  readonly fingerprint: string;
+}
+/** Null: the candidate could not be observed (unreadable root, Git refused). */
+export type VisualCandidateObserver = (
+  scope: Readonly<ProjectExecutionScope>,
+  base?: string | null,
+) => Promise<VisualCandidateObservation | null>;
+
+export const observeVisualCandidate: VisualCandidateObserver = async (scope, base) => {
+  try {
+    const snapshot = await captureWorkingTreeCandidate({ scope, ...(base ? { baseSha: base } : {}) });
+    if (!snapshot.contentFingerprint) return null;
+    return { base: base ?? snapshot.headSha, fingerprint: snapshot.contentFingerprint };
+  } catch {
+    return null;
+  }
+};
+
+export interface VisualEvidenceDeps {
+  /** The page captured is served from the worker's own execution checkout. */
+  readonly servedFromCandidate?: (url: string, scope: Readonly<ProjectExecutionScope>) => boolean;
+  readonly observeCandidate?: VisualCandidateObserver;
+}
+
+/** Capture-time observations still running, by artifact: the handoff check waits for them. */
+const pendingCandidateBindings = new Map<string, Promise<void>>();
+/** One observation per checkout at a time: a responsive run records three captures at once. */
+const inflightObservations = new WeakMap<VisualCandidateObserver, Map<string, Promise<VisualCandidateObservation | null>>>();
+
+function sharedObservation(observe: VisualCandidateObserver,
+  scope: Readonly<ProjectExecutionScope>): Promise<VisualCandidateObservation | null> {
+  let byRoot = inflightObservations.get(observe);
+  if (!byRoot) {
+    byRoot = new Map();
+    inflightObservations.set(observe, byRoot);
+  }
+  const running = byRoot.get(scope.rootRealPath);
+  if (running) return running;
+  const observation = observe(scope).catch(() => null);
+  byRoot.set(scope.rootRealPath, observation);
+  void observation.finally(() => {
+    if (byRoot.get(scope.rootRealPath) === observation) byRoot.delete(scope.rootRealPath);
+  });
+  return observation;
+}
+
+function bindCaptureToCandidate(manager: ProjectRuntimeManager, ctx: VisualHandoffContext, artifactId: string,
+  observe: VisualCandidateObserver): void {
+  const binding: Promise<void> = sharedObservation(observe, ctx.executionScope ?? ctx.scope)
+    .then((observation) => {
+      const runtime = manager.open(ctx.scope);
+      runtime.assertWritable();
+      runtime.db.prepare(`UPDATE visual_handoff_evidence
+        SET candidate_observed_at = ?, candidate_base = ?, candidate_fingerprint = ?
+        WHERE artifact_id = ? AND candidate_observed_at IS NULL`)
+        .run(Date.now(), observation?.base ?? null, observation?.fingerprint ?? null, artifactId);
+    })
+    .catch((error: unknown) => {
+      // The row stays unbound, so it never proves a candidate: fail closed.
+      console.warn('[visual-gate] captura sem candidato registrado:', error instanceof Error ? error.message : error);
+    })
+    .finally(() => {
+      if (pendingCandidateBindings.get(artifactId) === binding) pendingCandidateBindings.delete(artifactId);
+    });
+  pendingCandidateBindings.set(artifactId, binding);
+}
+
+/** Tests and shutdown: every capture-time candidate observation has settled. */
+export async function visualCandidateBindingsSettled(): Promise<void> {
+  while (pendingCandidateBindings.size > 0) await Promise.all([...pendingCandidateBindings.values()]);
+}
+
+function capturedUrl(metadataJson: string): string | null {
+  try {
+    const metadata = JSON.parse(metadataJson) as { url?: unknown };
+    return typeof metadata.url === 'string' ? metadata.url : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Called after an authorized native browser capture, not from tool arguments. */
 export function recordVisualHandoffEvidence(ctx: VisualHandoffContext, artifactId: string,
-  manager = getMissionEventRuntimeManager()): boolean {
+  manager = getMissionEventRuntimeManager(), deps: VisualEvidenceDeps = {}): boolean {
   if (!manager || !ctx.sessionId) return false;
   const runtime = manager.open(ctx.scope);
   let requirement = ctx.visualTask;
@@ -131,15 +286,21 @@ export function recordVisualHandoffEvidence(ctx: VisualHandoffContext, artifactI
     if (bound.length === 1) requirement = plannedRequirement(ctx, createScopedTaskStore(manager, ctx.scope).getPlannedTask(bound[0].task_id));
   }
   if (!requirement) return false;
-  const row = runtime.db.prepare(`SELECT mission_id, created_at FROM browser_artifacts
-    WHERE id = ? AND artifact_type = 'screenshot'`).get(artifactId) as { mission_id: string | null; created_at: number } | undefined;
+  const row = runtime.db.prepare(`SELECT mission_id, created_at, metadata_json FROM browser_artifacts
+    WHERE id = ? AND artifact_type = 'screenshot'`).get(artifactId) as
+    { mission_id: string | null; created_at: number; metadata_json: string } | undefined;
   if (!row || row.mission_id !== (ctx.missionId ?? null)) return false;
+  const execution = ctx.executionScope ?? ctx.scope;
+  const url = capturedUrl(row.metadata_json);
+  if (!url || !(deps.servedFromCandidate ?? isRunningPreviewUrlForScope)(url, execution)) return false;
   runtime.assertWritable();
   const result = runtime.db.prepare(`INSERT OR IGNORE INTO visual_handoff_evidence
     (artifact_id, mission_id, session_id, worker_incarnation_id, execution_root, captured_at, assignment_id) VALUES (?,?,?,?,?,?,?)`)
     .run(artifactId, ctx.missionId ?? null, ctx.sessionId, ctx.workerIncarnationId ?? null,
-      ctx.executionScope?.rootRealPath ?? ctx.scope.rootRealPath, row.created_at, requirement.id);
-  return result.changes === 1;
+      execution.rootRealPath, row.created_at, requirement.id);
+  if (result.changes !== 1) return false;
+  bindCaptureToCandidate(manager, ctx, artifactId, deps.observeCandidate ?? observeVisualCandidate);
+  return true;
 }
 
 /**
@@ -155,32 +316,124 @@ export function visualEvidenceVerified(verdict: VisualHandoffVerdict | undefined
     typeof verdict.artifactId === 'string' && verdict.artifactId.length > 0;
 }
 
+/**
+ * Review 22/10: like the regression gate, a visual delivery without a valid
+ * capture goes back to the worker ONCE, with the recipe that produces one,
+ * before it is recorded as `partial`. Counted per worker and assignment and
+ * NOT reset when the partial goes through — a transport replay of that partial
+ * must not be bounced again; a verified capture clears it for the next round.
+ */
+export const VISUAL_GATE_BOUNCES_PER_ASSIGNMENT = 1;
+const MAX_TRACKED_VISUAL_BOUNCES = 512;
+const visualBounces = new Map<string, number>();
+
+export function __resetVisualHandoffBouncesForTests(): void {
+  visualBounces.clear();
+}
+
+/** Main's next step for a visual verdict: the send-back message, or null to record it as is. */
+export function visualHandoffSendBack(
+  ctx: Pick<VisualHandoffContext, 'sessionId' | 'workerIncarnationId' | 'visualTask'>,
+  verdict: VisualHandoffVerdict | undefined,
+  options: { readonly returnable?: boolean } = {},
+): string | null {
+  if (!ctx.sessionId || !verdict?.required) return null;
+  const key = `${ctx.sessionId}\0${ctx.workerIncarnationId ?? ''}\0${ctx.visualTask?.id ?? 'planned'}`;
+  if (verdict.verified) {
+    visualBounces.delete(key);
+    return null;
+  }
+  const used = visualBounces.get(key) ?? 0;
+  if (options.returnable === false || used >= VISUAL_GATE_BOUNCES_PER_ASSIGNMENT) return null;
+  visualBounces.delete(key);
+  visualBounces.set(key, used + 1);
+  while (visualBounces.size > MAX_TRACKED_VISUAL_BOUNCES) visualBounces.delete(visualBounces.keys().next().value!);
+  return `handoff NÃO aceito pelo portão visual (devolução ${used + 1}/${VISUAL_GATE_BOUNCES_PER_ASSIGNMENT}): ` +
+    `${verdict.reason}\nCapture agora: faça o build, nexus_preview_start({ dir: "<pasta do build>" }), ` +
+    'nexus_browser_open({ url: "<url do preview>" }) e nexus_browser_responsive({ paneId }); depois envie o ' +
+    'handoff de novo. Se a captura não for possível (o navegador não abre, projeto fora da tela), envie de novo ' +
+    'dizendo o motivo: a entrega entra como partial com "[verificação visual pendente]".';
+}
+
+interface EvidenceRow {
+  readonly artifact_id: string;
+  readonly candidate_observed_at: number | null;
+  readonly candidate_base: string | null;
+  readonly candidate_fingerprint: string | null;
+}
+
+export const VISUAL_CAPTURE_MISSING_REASON =
+  'A tarefa visual ainda precisa de uma captura do navegador do Nexus feita por este worker nesta execução, ' +
+  'da página servida por nexus_preview_start a partir do build desta worktree.';
+export const VISUAL_CAPTURE_STALE_REASON =
+  'A captura do navegador é de antes da última alteração do código desta worktree: capture de novo o build atual.';
+
 export async function checkVisualHandoff(ctx: VisualHandoffContext, options: {
   manager?: ProjectRuntimeManager | null;
   task?: VisualPlannedTask | null;
   assertCurrent?: () => void;
+  observeCandidate?: VisualCandidateObserver;
 } = {}): Promise<VisualHandoffVerdict> {
   const requirement = ctx.visualTask ?? plannedRequirement(ctx, options.task);
   const initialAssignment = ctx.visualTask;
   if (!requirement) return { required: false, verified: true };
-  const missing = (): VisualHandoffVerdict => ({ required: true, verified: false,
-    reason: 'A tarefa visual ainda precisa de uma captura do navegador do Nexus feita por este worker nesta execução.' });
+  const missing = (reason = VISUAL_CAPTURE_MISSING_REASON): VisualHandoffVerdict =>
+    ({ required: true, verified: false, reason });
   const manager = options.manager ?? getMissionEventRuntimeManager();
   if (!manager || !ctx.sessionId) return missing();
   options.assertCurrent?.();
   const runtime = manager.open(ctx.scope);
-  const rows = runtime.db.prepare(`SELECT artifact_id FROM visual_handoff_evidence
+  const execution = ctx.executionScope ?? ctx.scope;
+  const select = (): EvidenceRow[] => runtime.db.prepare(`SELECT artifact_id, candidate_observed_at, candidate_base,
+    candidate_fingerprint FROM visual_handoff_evidence
     WHERE session_id = ? AND mission_id IS ? AND worker_incarnation_id IS ? AND execution_root = ? AND assignment_id = ?
     ORDER BY captured_at DESC LIMIT 4`).all(ctx.sessionId, ctx.missionId ?? null, ctx.workerIncarnationId ?? null,
-    ctx.executionScope?.rootRealPath ?? ctx.scope.rootRealPath, requirement.id) as Array<{ artifact_id: string }>;
+    execution.rootRealPath, requirement.id) as EvidenceRow[];
+  // A capture taken right before the submit may still be measuring its candidate.
+  const pending = select().flatMap((row) => pendingCandidateBindings.get(row.artifact_id) ?? []);
+  if (pending.length > 0) {
+    await Promise.all(pending);
+    options.assertCurrent?.();
+  }
+  const observe = options.observeCandidate ?? observeVisualCandidate;
+  const current = new Map<string, Promise<VisualCandidateObservation | null>>();
+  const currentAt = (base: string | null): Promise<VisualCandidateObservation | null> => {
+    const key = base ?? '';
+    let observation = current.get(key);
+    if (!observation) {
+      observation = observe(execution, base).catch(() => null);
+      current.set(key, observation);
+    }
+    return observation;
+  };
   const store = createScopedBrowserArtifactStore(manager, ctx.scope);
-  for (const row of rows) {
+  let stale = false;
+  for (const row of select()) {
+    // Unbound: recorded before this version, or its observation never finished.
+    if (row.candidate_observed_at === null) {
+      stale = true;
+      continue;
+    }
     const artifact = await store.verifiedScreenshot(row.artifact_id, options.assertCurrent);
     options.assertCurrent?.();
     if (ctx.visualTask !== initialAssignment) return missing();
-    if (artifact && artifact.missionId === (ctx.missionId ?? null)) {
-      return { required: true, verified: true, artifactId: artifact.id, sha256: artifact.sha256 };
+    if (!artifact || artifact.missionId !== (ctx.missionId ?? null)) continue;
+    const now = await currentAt(row.candidate_base);
+    options.assertCurrent?.();
+    if (ctx.visualTask !== initialAssignment) return missing();
+    // Null on both sides: the checkout cannot be observed at all, as before
+    // this binding existed; it never stands in for a measured fingerprint.
+    if ((now?.fingerprint ?? null) !== row.candidate_fingerprint) {
+      stale = true;
+      continue;
     }
+    return {
+      required: true, verified: true, artifactId: artifact.id, sha256: artifact.sha256,
+      path: artifact.path, url: artifact.url, width: artifact.width, height: artifact.height,
+      capturedAt: artifact.capturedAt,
+      reviewHint: `Abra a captura em ${artifact.path} (PNG ${artifact.width}×${artifact.height} de ${artifact.url}) ` +
+        'e confira o resultado visual contra o pedido antes de aceitar a entrega; o sha256 é o da imagem que o Main verificou.',
+    };
   }
-  return missing();
+  return missing(stale ? VISUAL_CAPTURE_STALE_REASON : VISUAL_CAPTURE_MISSING_REASON);
 }

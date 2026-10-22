@@ -4,9 +4,10 @@ import path from 'node:path';
 import { getMissionDecisionHints } from './mission-decision-hints';
 import type { MissionDecisionHints } from '../../shared/orch-types';
 import { assertLicenseAccess } from '../license-enforcement';
+import { maxAgents } from '../license-access';
 import { captureMissionPaneResume } from './mission-pane-resume';
 import { rollbackWorkerContinuationBeforeBirth } from './mission-pane-resume-ownership';
-import { createVisualTaskRequirement, visualTaskRequirement } from './visual-handoff-gate';
+import { createVisualTaskRequirement, isReadOnlyVisualLane, visualTaskRequirement } from './visual-handoff-gate';
 import { assertTabSupportsOperation, isolatedWriterBaseRoot, missionExecutionScope } from './mission-execution-scope';
 import { nestedWorktreeExecution, requestedCwdInside } from './nested-worktree-execution';
 import {
@@ -54,6 +55,7 @@ import {
   disarmAutoCloseOnHandoff,
   selectScopedPaneCloseTargets,
   shouldArmAutoCloseOnHandoff,
+  shouldHoldHelperForReuse,
 } from './pane-close-scopes';
 import { armDeliveryContract, parseExpectArg } from './delivery-contract';
 import {
@@ -192,7 +194,7 @@ import { OPERATOR_CHOICE_PROOF_WINDOW_MS, operatorRecentlyNamedCli } from './ope
 import { operatorNamedCliInSubmittedPrompts } from './operator-submitted-prompts';
 import {
   judgeIdleHelperReuse,
-  listIdleHelperCandidates,
+  scanIdleHelperCandidates,
 } from './idle-helper-reuse';
 import {
   capDigestEntries,
@@ -1102,6 +1104,15 @@ interface PaneSpawnTiming {
   readonly meta: PaneSpawnTimingMeta;
 }
 
+/** F-215 + pool hit rate: what the isolated writer's worktree cost this spawn. */
+function recordIsolatedWriterTiming(spawnTiming: PaneSpawnTiming | undefined, writer: IsolatedWriterAllocation): void {
+  if (!spawnTiming) return;
+  spawnTiming.meta.pooled = writer.pooled === true;
+  if (!writer.materialize) return;
+  spawnTiming.meta.gitWorktreeMs = writer.materialize.gitWorktreeMs;
+  spawnTiming.meta.cowMs = writer.materialize.cowMs;
+}
+
 const paneSpawn: McpToolDef = {
   name: 'nexus_pane_spawn',
   description:
@@ -1248,8 +1259,11 @@ const paneSpawn: McpToolDef = {
           '(declared at birth; failure keeps the pane open for diagnosis). ' +
           'Default ON for operator helpers without a mission and for mission ' +
           'workers (the piece is done — free the RAM). Orchestrator panes and ' +
-          'operator-opened panes inside a mission never auto-close. Pass ' +
-          'false to keep a pane alive after delivery.',
+          'operator-opened panes inside a mission never auto-close. With the ' +
+          'default, an operator helper or a worker of the tab mission stays ' +
+          'open and idle for 3 minutes after a good delivery so your next ' +
+          'nexus_pane_spawn can reuse it, then closes. Pass true to close right ' +
+          'at delivery; pass false to keep a pane alive after delivery.',
       },
       expect: {
         type: 'object',
@@ -2152,10 +2166,7 @@ const paneSpawnAfterTabMission = {
               ...(baseRootRealPath ? { baseRootRealPath } : {}),
               ...(baseRef ? { baseRef } : {}),
             });
-            if (spawnTiming && isolatedWriter.materialize) {
-              spawnTiming.meta.gitWorktreeMs = isolatedWriter.materialize.gitWorktreeMs;
-              spawnTiming.meta.cowMs = isolatedWriter.materialize.cowMs;
-            }
+            recordIsolatedWriterTiming(spawnTiming, isolatedWriter);
           } catch (error) {
             // Pedido explícito (`true`) continua recusando: o chamador pediu
             // worktree. O automático é melhoria, não pré-condição — falhou, o
@@ -2573,10 +2584,7 @@ const paneSpawnAfterTabMission = {
                   ...(baseRootRealPath ? { baseRootRealPath } : {}),
                   ...(baseRef ? { baseRef } : {}),
                 });
-                if (spawnTiming && isolatedWriter.materialize) {
-                  spawnTiming.meta.gitWorktreeMs = isolatedWriter.materialize.gitWorktreeMs;
-                  spawnTiming.meta.cowMs = isolatedWriter.materialize.cowMs;
-                }
+                recordIsolatedWriterTiming(spawnTiming, isolatedWriter);
               } catch (error) {
                 // `true` explícito recusa (o chamador pediu worktree); o
                 // automático degrada para o checkout com o claim síncrono.
@@ -2736,6 +2744,20 @@ const paneSpawnAfterTabMission = {
         role: options.role,
         operatorOpened: options.operatorOpened === true ? true : undefined,
       });
+      // F-197 × F-572: o helper que entrega bem fica HELPER_REUSE_HOLD_MS vivo
+      // e desarmado para o próximo pedido do mesmo dono reutilizá-lo (helperReuse
+      // só vê panes desarmados); passado o prazo fecha como sempre fechou.
+      // Com teto de agentes na licença (Trial) a janela seguraria uma vaga e o
+      // próximo spawn de outra CLI cairia em `license_agent_limit`: só sem teto.
+      const reuseHold = autoClose && maxAgents() === null && shouldHoldHelperForReuse({
+        explicit: args.autoCloseOnHandoff === true ? true : args.autoCloseOnHandoff === false ? false : undefined,
+        operatorHand,
+        missionId: options.missionId,
+        role: options.role,
+        operatorOpened: options.operatorOpened === true ? true : undefined,
+        tabMission: missionRow ? isOperatorTabMission(missionRow) : false,
+        isolatedWriter: args.isolatedWriter === true,
+      });
       if (spawnTiming) {
         spawnTiming.meta.adapterId = options.adapterId;
         spawnTiming.meta.missionId = options.missionId;
@@ -2776,17 +2798,19 @@ const paneSpawnAfterTabMission = {
           (ctx.role === 'orchestrator' && reuseMissionId !== undefined));
       if (reuseEligible) {
         try {
+          const reuseScan = scanIdleHelperCandidates({
+            mode: reuseMissionId ? 'tab-mission' : 'operator-hand',
+            callerSessionId: ctx.sessionId!,
+            ...(reuseMissionId ? { missionId: reuseMissionId } : {}),
+            adapterId: options.adapterId,
+            readOnly: options.readOnly === true,
+            newTask: options.prompt!,
+            scope: ctx.scope,
+          });
           const reuseChoice = await judgeIdleHelperReuse({
             newTask: options.prompt!,
-            candidates: listIdleHelperCandidates({
-              mode: reuseMissionId ? 'tab-mission' : 'operator-hand',
-              callerSessionId: ctx.sessionId!,
-              ...(reuseMissionId ? { missionId: reuseMissionId } : {}),
-              adapterId: options.adapterId,
-              readOnly: options.readOnly === true,
-              newTask: options.prompt!,
-              scope: ctx.scope,
-            }),
+            candidates: reuseScan.candidates,
+            noCandidateReason: reuseScan.noCandidateReason,
             scope: ctx.scope,
             missionId: reuseMissionId ?? null,
             callerSessionId: ctx.sessionId,
@@ -2794,7 +2818,11 @@ const paneSpawnAfterTabMission = {
           if (reuseChoice) {
             const reusedContext = getContextBySession(reuseChoice.candidate.sessionId);
             const previousVisualTask = reusedContext?.visualTask;
-            const assignedVisualTask = options.visualTask ?? visualTaskRequirement(options.memoryQuery ?? options.prompt);
+            // Review 22/10: a reused reader is not charged a capture, like a spawned one.
+            const assignedVisualTask = isReadOnlyVisualLane({
+              readOnly: options.readOnly === true || reusedContext?.readOnly === true,
+              isolatedWriter: reusedContext?.isolatedWriter === true,
+            }) ? undefined : options.visualTask ?? visualTaskRequirement(options.memoryQuery ?? options.prompt);
             if (assignedVisualTask && (!reusedContext || reusedContext.missionId !== options.missionId ||
               reusedContext.scope.projectId !== ctx.scope.projectId || reusedContext.scope.checkoutId !== ctx.scope.checkoutId ||
               reusedContext.scope.rootRealPath !== ctx.scope.rootRealPath)) {
@@ -2835,7 +2863,7 @@ const paneSpawnAfterTabMission = {
               reusedAuthority.missionId === options.missionId &&
               (reuseMissionId !== undefined || reusedAuthority.operatorParentSessionId === ctx.sessionId) &&
               reusedAuthority.role !== 'orchestrator' && reusedAuthority.operatorOpened !== true) {
-              if (autoClose) armAutoCloseOnHandoff(reuseChoice.candidate.sessionId, reuseChoice.candidate.paneId);
+              if (autoClose) armAutoCloseOnHandoff(reuseChoice.candidate.sessionId, reuseChoice.candidate.paneId, { reuseHold });
               else disarmAutoCloseOnHandoff(reuseChoice.candidate.sessionId, reuseChoice.candidate.paneId);
             }
             if (spawnTiming) {
@@ -3046,7 +3074,9 @@ const paneSpawnAfterTabMission = {
         resumeBound = true;
         // ACK pendente: ainda não há sessão para armar; o braço vai no pane e
         // o handoff da sessão que nascer nele o encontra.
-        if (autoClose && pending.paneId) armAutoCloseOnHandoffForPane(pending.paneId);
+        if (autoClose && pending.paneId) {
+          armAutoCloseOnHandoffForPane(pending.paneId, { reuseHold: reuseHold && !isolatedWriter });
+        }
         isolatedWriterPending = Boolean(isolatedWriter);
         spawnedPaneId = pending.paneId ?? undefined;
         if (isolatedWriter && pending.paneId) isolatedWriter.link(pending.paneId, pending.sessionId ?? undefined);
@@ -3089,7 +3119,8 @@ const paneSpawnAfterTabMission = {
       }
       isolatedWriter?.link(spawned.paneId, spawned.sessionId ?? undefined);
       if (autoClose && spawned.sessionId) {
-        armAutoCloseOnHandoff(spawned.sessionId, spawned.paneId);
+        // Writer isolado (pedido ou auto-isolado) nunca é candidato de reuso.
+        armAutoCloseOnHandoff(spawned.sessionId, spawned.paneId, { reuseHold: reuseHold && !isolatedWriter });
       }
       if (deliveryContract && spawned.sessionId) {
         armDeliveryContract(spawned.sessionId, deliveryContract);

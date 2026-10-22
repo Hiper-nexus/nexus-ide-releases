@@ -123,6 +123,28 @@ describe('working-tree candidate snapshot', () => {
     expect(snapshot.coveredPaths).toContain('zzz-delivered.ts');
     expect(snapshot.incompleteReasons).not.toContain('delivered candidate path was not inspected: "zzz-delivered.ts"');
   });
+  // Revisão 22/10 (portão visual): a captura amarra o conteúdo da árvore, não o
+  // commit. O writer que captura e depois commita a MESMA árvore continua com
+  // a captura válida; uma edição depois dela não.
+  it('contentFingerprint against a fixed base survives committing the same tree and catches a later edit', async () => {
+    const { root, scope, run } = fixture(true);
+    fs.writeFileSync(path.join(root, 'old.ts'), 'export const old = true;\n');
+    run('add', '--', 'old.ts');
+    run('commit', '-qm', 'Old');
+    const baseSha = run('rev-parse', 'HEAD');
+    fs.writeFileSync(path.join(root, 'app.ts'), 'export const value = 2;\n');
+    fs.writeFileSync(path.join(root, 'new.ts'), 'export const fresh = true;\n');
+    fs.rmSync(path.join(root, 'old.ts'));
+    const captured = await captureWorkingTreeCandidate({ scope, baseSha });
+    expect(captured.contentFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    run('add', '-A', '--', '.');
+    run('commit', '-qm', 'Work');
+    const committed = await captureWorkingTreeCandidate({ scope, baseSha });
+    expect(committed.fingerprint).not.toBe(captured.fingerprint);
+    expect(committed.contentFingerprint).toBe(captured.contentFingerprint);
+    fs.writeFileSync(path.join(root, 'app.ts'), 'export const value = 3;\n');
+    expect((await captureWorkingTreeCandidate({ scope, baseSha })).contentFingerprint).not.toBe(captured.contentFingerprint);
+  });
 });
 
 describe('post-baseline upstream merge does not stall completion', () => {

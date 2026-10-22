@@ -144,6 +144,40 @@ describe('periodic task slow report', () => {
     }
   });
 
+  it('a bare await on I/O (outside wait) is waiting, not CPU', async () => {
+    const names: string[] = [];
+    configurePeriodicTaskSlowSink((diagnostic) => { names.push(diagnostic.name); });
+    try {
+      await runPeriodicTask('slow-bare-await', async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 80));
+      }, { sliceMs: 20 });
+      expect(names).toEqual([]);
+      expect(periodicTaskSnapshot().tasks.find((task) => task.name === 'slow-bare-await')?.sliceMsMax).toBeLessThan(20);
+    } finally {
+      configurePeriodicTaskSlowSink(null);
+      await stopPeriodicTask('slow-bare-await');
+    }
+  });
+
+  it('CPU spent before a bare await is still reported', async () => {
+    const names: string[] = [];
+    configurePeriodicTaskSlowSink((diagnostic) => { names.push(diagnostic.name); });
+    try {
+      await runPeriodicTask('slow-before-await', async () => {
+        busy(30);
+        await new Promise<void>((resolve) => setTimeout(resolve, 40));
+      }, { sliceMs: 20 });
+      expect(names).toEqual(['slow-before-await']);
+    } finally {
+      configurePeriodicTaskSlowSink(null);
+      await stopPeriodicTask('slow-before-await');
+    }
+  });
+
+  it('the report window is a minute per task name', () => {
+    expect(SLOW_REPORT_MIN_INTERVAL_MS).toBe(60_000);
+  });
+
   it('does not report a run that stayed inside its CPU slice', async () => {
     const names: string[] = [];
     configurePeriodicTaskSlowSink((diagnostic) => { names.push(diagnostic.name); });

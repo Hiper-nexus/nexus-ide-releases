@@ -164,9 +164,9 @@ it('reivindica uma worktree do pool quando disponivel no HEAD atual e agenda rep
   expect(record?.missionId).toBe(spaceId);
   expect(record?.status).toBe('ready');
 
-  // Reposição agendada em segundo plano
+  // Reposição agendada em segundo plano, até o alvo (2 no orquestrador de teste)
   await pool.idle();
-  expect(pool.size).toBe(1);
+  expect(pool.size).toBe(2);
   await pool.shutdown();
   resetIsolatedWriterPoolForTests();
 });
@@ -188,9 +188,9 @@ it('cai no fallback (registry.create) quando o pool esta vazio e mantem todas as
   expect(record?.missionId).toBe(spaceId);
   expect(record?.status).toBe('ready');
 
-  // Reposição agendada apos o create
+  // Reposição agendada apos o create, até o alvo (2 no orquestrador de teste)
   await pool.idle();
-  expect(pool.size).toBe(1);
+  expect(pool.size).toBe(2);
   await pool.shutdown();
   resetIsolatedWriterPoolForTests();
 });

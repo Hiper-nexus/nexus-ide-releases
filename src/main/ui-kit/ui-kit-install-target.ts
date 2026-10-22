@@ -2,11 +2,16 @@ import { UI_KIT_IDS, type UiKitId } from './ui-kit-cli';
 import { liveCandidates } from './ui-kit-catalog';
 import {
   pickUiKit,
+  searchTermsForTask,
   taskItemAffinity,
   type UiKitCandidate,
   type UiKitPickResult,
 } from './ui-kit-pick';
-import { boardUiLicenseStatus, type UiKitServiceDeps } from './ui-kit-service';
+import {
+  boardUiProSelectable,
+  SHADCN_DEMO_CATEGORY,
+  type UiKitServiceDeps,
+} from './ui-kit-service';
 
 /**
  * "Install what fits this task" — the Jev's kit/item choice, on the INSTALL
@@ -90,6 +95,9 @@ export function rankForTask(
   const matched: UiKitCandidate[] = [];
   const byCategory = new Map<string, UiKitCandidate[]>();
   for (const candidate of candidates) {
+    // A demo (`button-demo`, `registry:example`) is not the component: it
+    // took scarce slots of the 12 the judge sees.
+    if (candidate.category === SHADCN_DEMO_CATEGORY) continue;
     if (score(candidate) > 0) {
       matched.push(candidate);
       continue;
@@ -118,6 +126,9 @@ export interface InstallTargetRequest {
   readonly kit?: UiKitId | undefined;
   readonly cwd: string;
   readonly signal?: AbortSignal | undefined;
+  /** The caller, so the decision counts against its own decision budget. */
+  readonly sessionId?: string | undefined;
+  readonly missionId?: string | undefined;
 }
 
 export interface InstallTarget {
@@ -149,16 +160,20 @@ export async function resolveInstallTargetForTask(
   const kits = kitsToConsider(request.kit);
 
   // Only ask about the licence when BoardUI is actually in play: for a shadcn
-  // install it would spawn the vendor's MCP server for nothing.
+  // install it would spawn the vendor's MCP server for nothing. Asking puts
+  // the bundled licence in place first — a fresh machine used to answer "no
+  // licence" here and keep the pick on the free half.
   const licensed = kits.includes('boardui')
-    ? (await boardUiLicenseStatus({ cwd: request.cwd }, deps)).state === 'active'
+    ? await boardUiProSelectable({ cwd: request.cwd }, deps)
     : false;
 
-  const byKit: UiKitCandidate[][] = [];
-  for (const kit of kits) {
-    const live = await liveCandidates(kit, request.cwd, undefined, deps);
-    byKit.push([...rankForTask(request.task, live.candidates)]);
-  }
+  const taskQueries = searchTermsForTask(request.task);
+  const byKit = await Promise.all(
+    kits.map(async (kit) => {
+      const live = await liveCandidates(kit, request.cwd, undefined, deps, { taskQueries });
+      return [...rankForTask(request.task, live.candidates)];
+    }),
+  );
 
   const pick = await pickUiKit(
     {
@@ -167,6 +182,8 @@ export async function resolveInstallTargetForTask(
       availableKits: kits,
       proLicensed: licensed,
       ...(request.signal ? { signal: request.signal } : {}),
+      ...(request.sessionId ? { sessionId: request.sessionId } : {}),
+      ...(request.missionId ? { missionId: request.missionId } : {}),
     },
     {},
   );
@@ -185,6 +202,8 @@ export async function resolveInstallTargetForTask(
 export function installPickReceipt(pick: UiKitPickResult): Record<string, unknown> {
   return {
     decidedBy: pick.source,
+    ...(pick.kitDecidedBy ? { kitDecidedBy: pick.kitDecidedBy } : {}),
+    ...(pick.itemDecidedBy !== undefined ? { itemDecidedBy: pick.itemDecidedBy } : {}),
     kit: pick.kit,
     item: pick.item?.slug ?? null,
     needsKit: pick.needsKit,

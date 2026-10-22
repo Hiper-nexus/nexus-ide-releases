@@ -360,3 +360,65 @@ describe('malformed MCP JSON values', () => {
     }
   });
 });
+
+describe('one writer per project', () => {
+  it('refuses a second writing call while the first is still running, then frees the slot', async () => {
+    // An MCP client gives up on a slow install (Codex: 120 s) and the agent
+    // retries; the first install is still writing. Two writers on one
+    // lockfile is the damage this prevents.
+    let answer: ((line: unknown) => void) | null = null;
+    const server = fakeServer(
+      handshake((message, emit) => {
+        if (message.method === 'tools/call') answer = emit;
+      }),
+    );
+    const first = callMcpToolOnce(
+      { ...base(), writes: true, method: 'tools/call', tool: 'install_components', toolArguments: { components: ['button'] } },
+      { spawnProcess: () => server.child, platform: 'linux' },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+
+    await expect(
+      callMcpToolOnce(
+        { ...base(), writes: true, method: 'tools/call', tool: 'install_components', toolArguments: { components: ['badge'] } },
+        { spawnProcess: () => fakeServer(handshake(() => {})).child, platform: 'linux' },
+      ),
+    ).rejects.toMatchObject({ code: 'PROJECT_BUSY' });
+
+    // A read does not need the slot.
+    const reader = fakeServer(
+      handshake((message, emit) => {
+        if (message.method === 'tools/call') {
+          emit({ jsonrpc: '2.0', id: 2, result: { content: [{ type: 'text', text: 'ok' }] } });
+        }
+      }),
+    );
+    await expect(
+      callMcpToolOnce(
+        { ...base(), method: 'tools/call', tool: 'license_status' },
+        { spawnProcess: () => reader.child, platform: 'linux' },
+      ),
+    ).resolves.toMatchObject({ isError: false });
+
+    (answer as unknown as (line: unknown) => void)({
+      jsonrpc: '2.0',
+      id: 2,
+      result: { content: [{ type: 'text', text: 'installed' }] },
+    });
+    await first;
+
+    const again = fakeServer(
+      handshake((message, emit) => {
+        if (message.method === 'tools/call') {
+          emit({ jsonrpc: '2.0', id: 2, result: { content: [{ type: 'text', text: 'ok' }] } });
+        }
+      }),
+    );
+    await expect(
+      callMcpToolOnce(
+        { ...base(), writes: true, method: 'tools/call', tool: 'install_components', toolArguments: { components: ['badge'] } },
+        { spawnProcess: () => again.child, platform: 'linux' },
+      ),
+    ).resolves.toMatchObject({ isError: false });
+  });
+});

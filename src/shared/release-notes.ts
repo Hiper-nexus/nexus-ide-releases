@@ -12708,48 +12708,61 @@ const RELEASE_076409_FULL: AppRelease = {
 
 export const RELEASE_076409: AppRelease = RELEASE_076409_FULL;
 
-export const RELEASE_076410: AppRelease = {
+const RELEASE_076410_FULL: AppRelease = {
   version: '0.76.410',
   date: '2026-10-22',
-  codename: 'Kits de UI abrem no Windows',
+  codename: 'O navegador age e o kit acerta o pacote',
   summary:
-    'Os kits de UI iniciam no Windows mesmo com espaços e Unicode no caminho. ' +
-    'Uma conexão MCP encerrada ou uma linha JSON sem mensagem deixa de ' +
-    'derrubar o aplicativo. Mantém as melhorias de missão da 0.76.409.',
+    'Tag anotada, sem pacote Linux: o portão de segurança recusou a árvore ' +
+    '(DOMPurify 3.4.16 na produção; Electron 43.7.4 e ip-address 10.7.2 na ' +
+    'ferramenta). A tag não se move. A 0.76.411 é o pacote Linux desta ' +
+    'entrega. A 0.76.407 continua Latest como pacote macOS. A 0.76.408 no ' +
+    'espelho continua Windows. A 0.76.409 é o pacote Linux publicado anterior.',
   highlights: RELEASE_076409_FULL.highlights,
-  fixes: [
-    { title: 'Kits de UI no Windows', detail: 'Corrigido o início da CLI e do servidor MCP, preservando argumentos literais e caminhos com espaços.' },
-    { title: 'Erros do MCP ficam na chamada', detail: 'Falha de escrita na conexão e JSON sem mensagem são tratados sem derrubar o aplicativo.' },
-    ...RELEASE_076409_FULL.fixes,
-  ],
+  fixes: RELEASE_076409_FULL.fixes,
 };
 
+export const RELEASE_076410: AppRelease = RELEASE_076410_FULL;
+
 export const RELEASE_076411: AppRelease = {
-  ...RELEASE_076410,
   version: '0.76.411',
-  codename: 'Kits e avisos Chromium no Windows',
-  summary: RELEASE_076410.summary + ' O instalador também preserva os avisos do Chromium.',
-  fixes: [
-    { title: 'Avisos Chromium no instalador', detail: 'O NUPKG preserva o arquivo de licenças incluído na distribuição Electron.' },
-    ...RELEASE_076410.fixes,
+  date: '2026-10-22',
+  codename: 'O navegador age e o kit acerta o pacote',
+  summary:
+    'No desktop Linux, o kit de UI instala no pacote que o monorepo declara, ' +
+    'uma vez por projeto, e o recibo só diz instalado quando escreveu. O ' +
+    'navegador do agente deixa de simular o clique: alertas não travam o ' +
+    'pane, o input é real e a captura devolve a imagem. A entrega visual ' +
+    'chega ao juiz com essa imagem, e quem entrega bem é reusado com prazo. ' +
+    'DOMPurify sobe para 3.4.17, Electron para 43.8.3 e ip-address para ' +
+    '10.7.4. A qualificação Darwin das licenças do Electron permanece em ' +
+    '43.7.4. A 0.76.410 foi tagueada e não publicada. A 0.76.407 continua ' +
+    'Latest como pacote macOS; esta release não toma essa marca. A 0.76.408 ' +
+    'no espelho continua Windows. A 0.76.409 é o pacote Linux anterior.',
+  highlights: [
+    { title: 'O kit cai no pacote certo', detail: 'Num monorepo o componente vai para o pacote que o projeto declara. Uma instalação por projeto. Sem components.json a recusa é na hora. O recibo só diz instalado quando o arquivo foi escrito.' },
+    { title: 'O navegador age de verdade', detail: 'alert, confirm e prompt não travam o pane. Clique, hover e tecla são input real. A captura devolve a imagem. Shadow DOM, iframe da mesma origem e select entram. A recusa de localhost nomeia o preview.' },
+    { title: 'A imagem verificada chega ao juiz', detail: 'A entrega visual leva a captura amarrada ao preview e ao candidato. O portão devolve uma vez antes de rebaixar. Diff sem teste impactado volta a fechar.' },
+    { title: 'Quem entrega bem é reusado', detail: 'O helper que entrega bem ganha janela de reuso com prazo. A guarda deixa o writer isolado fazer git add e git commit. O pool de worktrees segue a licença.' },
+    { title: 'Três dependências saem do aviso', detail: 'DOMPurify 3.4.17 fecha o bypass de SAFE_FOR_TEMPLATES. Electron 43.8.3 fecha o pointer lock e os intermediários eMudhra. ip-address 10.7.4 fecha o tempo quadrático do identificador de zona. A qualificação Darwin das licenças permanece em 43.7.4.' },
+    ...RELEASE_076409_FULL.highlights,
   ],
+  fixes: RELEASE_076409_FULL.fixes,
 };
 
 export const CURRENT_RELEASE: AppRelease = {
   ...RELEASE_076411,
   version: '0.76.412',
   codename: 'Projetos locais e escolha de conta',
-  summary:
-    'Missões podem começar em projetos locais sem Git ou primeiro commit. ' +
-    'A escolha automática de conta Claude permanece automática ao salvar o pane: ' +
-    'uma conversa nova volta à regra de folga. Inclui correções dos kits e do instalador Windows.',
+  summary: 'Candidata Windows local assinada, anterior à integração do PR 161; não publicada. Missões em projetos locais e origem automática da conta preservada.',
   highlights: [
     { title: 'Comece antes do Git', detail: 'Projetos sem repositório, sem primeiro commit ou sem Git instalado iniciam missões na própria pasta. Repositórios com commit continuam usando isolamento.' },
-    ...RELEASE_076411.highlights,
   ],
   fixes: [
-    { title: 'Conta automática continua automática', detail: 'Novos panes Claude guardam a origem da escolha. Ao iniciar outra conversa, o Main pode escolher uma conta com folga. Retomadas, contas explícitas e vínculos antigos preservam a identidade.' },
-    ...RELEASE_076411.fixes,
+    { title: 'Conta automática continua automática', detail: 'Novos panes Claude guardam a origem da escolha. Conversas novas voltam à regra de folga; retomadas e escolhas explícitas preservam a identidade.' },
+    { title: 'Kits de UI no Windows', detail: 'CLI e MCP iniciados por Node nativo, com caminhos com espaços e argumentos literais.' },
+    { title: 'MCP robusto', detail: 'Erros de escrita e JSON inválido não derrubam o aplicativo.' },
+    { title: 'Avisos Chromium no instalador', detail: 'O NUPKG preserva as licenças da distribuição Electron.' },
   ],
 };
 

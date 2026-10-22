@@ -1,11 +1,39 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   assessBrowserUrl,
+  browserBlockedTargetHint,
   browserNetworkTargetKey,
   classifyBrowserAddress,
   normalizeBrowserUrl,
   redactBrowserUrl,
 } from './url-policy';
+
+describe('the refusal of a local target names the path that works', () => {
+  it('points a localhost dev server at preview_start → browser_open → responsive', async () => {
+    const decision = await assessBrowserUrl('http://localhost:5173/clientes');
+    expect(decision).toMatchObject({ allowed: false, kind: 'private-network' });
+    if (decision.allowed) throw new Error('expected a refusal');
+    const hint = browserBlockedTargetHint(decision.kind, 'http://localhost:5173/clientes');
+    expect(hint).toMatch(/nexus_preview_start\(\{ ?dir/);
+    expect(hint).toContain('nexus_browser_open');
+    expect(hint).toContain('nexus_browser_responsive');
+    expect(hint).not.toMatch(/npm run dev/);
+  });
+
+  it('points a file:// page at the same preview path', async () => {
+    const decision = await assessBrowserUrl('file:///Users/me/app/dist/index.html');
+    expect(decision).toMatchObject({ allowed: false, kind: 'unsafe-scheme' });
+    if (decision.allowed) throw new Error('expected a refusal');
+    expect(browserBlockedTargetHint(decision.kind, 'file:///Users/me/app/dist/index.html'))
+      .toContain('nexus_preview_start');
+  });
+
+  it('adds nothing to refusals that a preview would not fix', () => {
+    expect(browserBlockedTargetHint('forbidden-network', 'http://169.254.169.254/')).toBeNull();
+    expect(browserBlockedTargetHint('embedded-credentials', 'https://a:b@x.test/')).toBeNull();
+    expect(browserBlockedTargetHint('unsafe-scheme', 'javascript:alert(1)')).toBeNull();
+  });
+});
 
 describe('browser URL policy', () => {
   it('normalizes public http/https URLs and rejects active schemes or credentials', () => {

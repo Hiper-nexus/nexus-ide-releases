@@ -78,7 +78,11 @@ describe('jev-memory-distill', () => {
     })).toBeNull();
     expect(onSkip).toHaveBeenCalledOnce();
     expect(onSkip).toHaveBeenCalledWith(reason);
-    expect(listJevDecisions()).toEqual([expect.objectContaining({ decision: `skip:${reason}` })]);
+    // Pulo local (nenhuma requisição): fica no diário, mas nunca como decisão respondida.
+    expect(listJevDecisions()).toEqual([]);
+    expect(listJevDecisions({ includeSkips: true })).toEqual([
+      expect.objectContaining({ kind: 'skip', decision: `skip:${reason}`, requestCount: 0 }),
+    ]);
     expect(judge).not.toHaveBeenCalled();
   });
 
@@ -90,7 +94,9 @@ describe('jev-memory-distill', () => {
     const onSkip = vi.fn();
     expect(await distillHandoffSummary({ summary }, { judge, enabled, hasKey, onSkip })).toBeNull();
     expect(onSkip).toHaveBeenCalledWith('timeout');
-    expect(listJevDecisions()).toEqual([expect.objectContaining({ decision: 'skip:timeout' })]);
+    expect(listJevDecisions({ includeSkips: true })).toEqual([
+      expect.objectContaining({ kind: 'skip', decision: 'skip:timeout' }),
+    ]);
   });
 
   it('consulta sem resposta fica observável como jev-off, sem inventar timeout', async () => {
@@ -98,7 +104,9 @@ describe('jev-memory-distill', () => {
     const onSkip = vi.fn();
     expect(await distillHandoffSummary({ summary }, { judge, enabled, hasKey, onSkip })).toBeNull();
     expect(onSkip).toHaveBeenCalledWith('jev-off');
-    expect(listJevDecisions()).toEqual([expect.objectContaining({ decision: 'skip:jev-off' })]);
+    expect(listJevDecisions({ includeSkips: true })).toEqual([
+      expect.objectContaining({ kind: 'skip', decision: 'skip:jev-off' }),
+    ]);
   });
 
   it('rejeição de retenção é registrada como jev-skip', async () => {
@@ -106,7 +114,9 @@ describe('jev-memory-distill', () => {
     const onSkip = vi.fn();
     expect(await distillHandoffSummary({ summary }, { judge, enabled, hasKey, onSkip })).toBeNull();
     expect(onSkip).toHaveBeenCalledWith('jev-skip');
+    // O Jev respondeu "não reter": é decisão de verdade, não pulo local.
     expect(listJevDecisions()).toEqual([expect.objectContaining({ decision: 'skip:jev-skip' })]);
+    expect(listJevDecisions()[0].kind).not.toBe('skip');
   });
 
   it('diretiva depois dos primeiros 400 caracteres também bloqueia retenção', async () => {

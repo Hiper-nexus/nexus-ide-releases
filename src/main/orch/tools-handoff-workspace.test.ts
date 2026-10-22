@@ -27,6 +27,8 @@ import {
   armAutoCloseOnHandoff,
   armedAutoClosePaneId,
   disarmAutoCloseOnHandoff,
+  HELPER_REUSE_HOLD_MS,
+  reuseHoldRemainingMs,
 } from "./pane-close-scopes";
 import {
   armDeliveryContract,
@@ -147,16 +149,26 @@ describe("workspace handoff", () => {
     child.visualTask = { since: 1000, id: 'workspace-assignment' };
     const close = vi.spyOn(panes, 'requestPaneClose').mockResolvedValue(true);
     armAutoCloseOnHandoff('child', 'pane-child');
-    const first = await tool('submit').handler({ ...args, fullText: "Relatório completo: implementação em result.ts, validação executada e resultados conferidos." }, child);
+    const report = { ...args, fullText: "Relatório completo: implementação em result.ts, validação executada e resultados conferidos." };
+    // Revisão 22/10: uma devolução com o caminho da captura, nada gravado.
+    await expect(tool('submit').handler(report, child))
+      .rejects.toThrow(/portão visual \(devolução 1\/1\)[\s\S]*nexus_preview_start/);
+    expect(getProjectDomainStores(scope).handoffs.list({ includeDelivered: true })).toEqual([]);
+    const first = await tool('submit').handler(report, child);
     expect(first).toMatchObject({ status: 'partial', visualVerification: { verified: false } });
     expect(close).not.toHaveBeenCalled();
     expect(armedAutoClosePaneId('child')).toBe('pane-child');
     const proof = createScopedBrowserArtifactStore(manager, scope).recordScreenshot({ paneId: 'browser-pane',
       png: Buffer.from('Main capture fixture'), width: 1, height: 1, url: 'http://localhost:3000', title: 'UI', capturedAt: 1100 });
-    expect(recordVisualHandoffEvidence(child, proof.id)).toBe(true);
+    // The fixture has no running preview: the URL check is the only fake here.
+    expect(recordVisualHandoffEvidence(child, proof.id, undefined, { servedFromCandidate: () => true })).toBe(true);
     const second = await tool('submit').handler({ ...args, fullText: "Relatório completo: implementação em result.ts, validação executada e resultados conferidos." }, child);
     expect(second).toMatchObject({ status: 'success', visualVerification: { verified: true, artifactId: proof.id } });
-    expect(getProjectDomainStores(scope).handoffs.list({ includeDelivered: true }).map(h => h.status)).toEqual(['partial', 'success']);
+    const recorded = getProjectDomainStores(scope).handoffs.list({ includeDelivered: true });
+    expect(recorded.map(h => h.status)).toEqual(['partial', 'success']);
+    // Revisão 22/10: o pai (e o juiz da missão) recebe onde está a imagem verificada.
+    expect(recorded[1]!.artifacts).toContainEqual({ kind: 'nexus.visualVerification', payload: expect.objectContaining({
+      path: proof.path, sha256: proof.sha256, reviewHint: expect.stringContaining(proof.path) }) });
   });
 
   it("F-1310: artifacts em objeto viram nexus.workerArtifacts em vez de sumir do handoff", async () => {
@@ -270,6 +282,22 @@ describe("workspace handoff", () => {
     await vi.runAllTimersAsync();
     expect(close).toHaveBeenCalledWith("pane-child", "child");
     expect(armedAutoClosePaneId("child")).toBeNull();
+  });
+
+  it("F-197: helper com janela de reuso fica vivo e desarmado e fecha no fim da janela", async () => {
+    caller("parent");
+    const child = caller("child");
+    const close = vi.spyOn(panes, "requestPaneClose").mockResolvedValue(true);
+    armAutoCloseOnHandoff("child", "pane-child", { reuseHold: true });
+    vi.useFakeTimers();
+
+    expect(await tool("submit").handler({ ...args, fullText: "Relatório completo: implementação em result.ts, validação executada e resultados conferidos." }, child)).toMatchObject({ delivered: true });
+    await vi.advanceTimersByTimeAsync(HELPER_REUSE_HOLD_MS - 1);
+    expect(close).not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId("child")).toBeNull();
+    expect(reuseHoldRemainingMs("child", "pane-child")).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(close).toHaveBeenCalledWith("pane-child", "child");
   });
 
   it("não fecha o pane se outra sessão o ocupou após o handoff", async () => {

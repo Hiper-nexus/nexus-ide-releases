@@ -14,7 +14,26 @@ const scope: ProjectExecutionScope = Object.freeze({
   identitySource: 'manifest',
 });
 
+/** Structural NativeImage double: size, encodings and a proportional resize. */
+function fakeImage(width: number, height: number, png: Buffer = Buffer.from('png')): {
+  getSize: () => { width: number; height: number };
+  toPNG: () => Buffer;
+  toJPEG: (quality: number) => Buffer;
+  resize: (size: { width?: number; height?: number }) => ReturnType<typeof fakeImage>;
+} {
+  return {
+    getSize: () => ({ width, height }),
+    toPNG: () => png,
+    toJPEG: () => Buffer.from('jpeg'),
+    resize: (size) => {
+      const ratio = size.width ? size.width / width : (size.height ?? height) / height;
+      return fakeImage(Math.round(width * ratio), Math.round(height * ratio), png);
+    },
+  };
+}
+
 const state = vi.hoisted(() => {
+  const sessionHandlers = new Map<string, (...args: unknown[]) => void>();
   const browserSession = {
     resolveHost: vi.fn(async () => ({
       endpoints: [{ address: '93.184.216.34', port: 0 }],
@@ -22,11 +41,20 @@ const state = vi.hoisted(() => {
     setPermissionRequestHandler: vi.fn(),
     setPermissionCheckHandler: vi.fn(),
     setDevicePermissionHandler: vi.fn(),
-    on: vi.fn(),
+    // Session handlers are installed once per session (securedSessions), so
+    // keep them outside the per-test mock call log.
+    on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+      sessionHandlers.set(event, handler);
+    }),
     webRequest: {
       onBeforeRequest: vi.fn(),
       onCompleted: vi.fn((listener: unknown) => {
         guestHandlers.set('webRequest:onCompleted', [
+          listener as (...args: unknown[]) => void,
+        ]);
+      }),
+      onErrorOccurred: vi.fn((listener: unknown) => {
+        guestHandlers.set('webRequest:onErrorOccurred', [
           listener as (...args: unknown[]) => void,
         ]);
       }),
@@ -51,6 +79,8 @@ const state = vi.hoisted(() => {
     getTitle: vi.fn(() => ''),
     canGoBack: vi.fn(() => false),
     canGoForward: vi.fn(() => false),
+    goBack: vi.fn(),
+    goForward: vi.fn(),
     isLoading: vi.fn(() => false),
     isDestroyed: vi.fn(() => false),
     isCrashed: vi.fn(() => false),
@@ -91,6 +121,7 @@ const state = vi.hoisted(() => {
   };
   return {
     browserSession,
+    sessionHandlers,
     guest,
     guestHandlers,
     owner,
@@ -138,7 +169,13 @@ const state = vi.hoisted(() => {
     canVisual: vi.fn(() => false),
     visualJudge: vi.fn(async () => ({ status: 'answered' as const, signals: {}, model: 'clef', route: 'test' })),
     encodeBitmap: vi.fn((_bitmap: Buffer, _size: unknown) => ({ toPNG: () => Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2WQAAAAASUVORK5CYII=', 'base64') })),
-    views: [] as Array<{ setVisible: ReturnType<typeof vi.fn>; setBounds: ReturnType<typeof vi.fn>; getBounds: ReturnType<typeof vi.fn> }>,
+    imageFromBuffer: vi.fn((buffer: Buffer) => fakeImage(1280, 3000, buffer)),
+    views: [] as Array<{
+      setVisible: ReturnType<typeof vi.fn>;
+      setBounds: ReturnType<typeof vi.fn>;
+      getBounds: ReturnType<typeof vi.fn>;
+      webPreferences: Record<string, unknown>;
+    }>,
   };
 });
 
@@ -159,7 +196,10 @@ vi.mock('electron', () => ({
     getBounds = vi.fn(() => ({ x: 0, y: 0, width: 1280, height: 800 }));
     setBackgroundColor = vi.fn();
 
-    constructor(_options: { webPreferences: Record<string, unknown> }) {
+    readonly webPreferences: Record<string, unknown>;
+
+    constructor(options: { webPreferences: Record<string, unknown> }) {
+      this.webPreferences = options.webPreferences;
       state.views.push(this);
     }
   },
@@ -171,7 +211,7 @@ vi.mock('electron', () => ({
       state.onHandlers.set(channel, handler),
   },
   session: { fromPartition: state.fromPartition },
-  nativeImage: { createFromBitmap: state.encodeBitmap },
+  nativeImage: { createFromBitmap: state.encodeBitmap, createFromBuffer: state.imageFromBuffer },
 }));
 
 vi.mock('./browser-artifact-store', () => ({
@@ -245,10 +285,14 @@ vi.mock('./browser-visual-judgment', () => ({
 
 import {
   analyzeBrowserResponsive,
+  captureBrowserScreenshot,
   RESPONSIVE_LOAD_TIMEOUT_MS,
   clickBrowserElement,
   destroyBrowser,
   ensureBrowser,
+  historyBrowserPane,
+  hoverBrowserElement,
+  selectBrowserOption,
   loadBrowser,
   lockBrowserToExactUrl,
   openCdpRelayForPane,
@@ -583,6 +627,39 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     destroyBrowser(PANE, scope);
   });
 
+  it('asks Jev with the first-option check and returns candidates outside the 2–5 range', async () => {
+    await boot();
+    const jev = vi.fn(async (_req: unknown) => ({
+      model: 'test-model',
+      answers: { element: { type: 'choice' as const, choice: 'e1', probabilities: {}, confidence: 0.9 } },
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }));
+    const deps = { jev, jevEnabled: () => true, jevReady: () => true, recordDecision: vi.fn() };
+    const many = Array.from({ length: 8 }, (_, index) => ({
+      ref: `e${index + 1}`, tag: 'button', role: 'button', name: `Excluir ${index + 1}`, score: 0.75,
+    }));
+    const crowded = await clickBrowserElement(PANE, scope, { text: 'excluir' }, {
+      deps: { ...deps, find: vi.fn(async () => ({ paneId: PANE, matches: many, total: 8 })) },
+    });
+    expect(jev).not.toHaveBeenCalled();
+    expect(crowded.clicked).toBe(false);
+    expect(crowded.ambiguous).toBe(true);
+    expect(crowded.candidates).toHaveLength(8);
+    expect(state.runAutomation).not.toHaveBeenCalledWith(PANE, expect.anything(), 'click', expect.anything(),
+      undefined, expect.anything());
+
+    const tied = await clickBrowserElement(PANE, scope, { text: 'excluir' }, {
+      deps: { ...deps, find: vi.fn(async () => ({ paneId: PANE, matches: many.slice(0, 2), total: 2 })) },
+    });
+    expect(tied.resolvedBy).toBe('jev');
+    expect(jev.mock.calls[0][0]).toMatchObject({
+      orderCheck: { minConfidence: 0.7 },
+      timeoutMs: expect.any(Number),
+    });
+    expect((jev.mock.calls[0][0] as { timeoutMs: number }).timeoutMs).toBeLessThanOrEqual(1_500);
+    destroyBrowser(PANE, scope);
+  });
+
   it('attaches a Jev page judgment to read and fails open', async () => {
     await boot();
     const jev = vi.fn(async (_req: unknown) => ({
@@ -744,6 +821,441 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     expect(Date.now() - started).toBeLessThan(4_000);
     expect(nav.judgment).toBeNull();
     expect(nav.judgmentSkipped).toBe('budget-exceeded');
+    destroyBrowser(PANE, scope);
+  });
+
+  it('delivers a visual judgment that missed the budget on the next judged read instead of dropping it', async () => {
+    await boot();
+    const jev = vi.fn(async (_req: unknown) => ({
+      model: 'test-model', answers: {}, usage: { input_tokens: 1, output_tokens: 1 },
+    }));
+    const deps = { jev, jevEnabled: () => true, jevReady: () => true };
+    let land!: (value: { status: 'answered'; signals: Record<string, number>; model: string; route: string }) => void;
+    state.visualJudge.mockImplementationOnce(() => new Promise((resolve) => { land = resolve; }));
+    state.canVisual.mockReturnValue(true);
+    try {
+      const nav = await loadBrowser(PANE, 'https://example.test/slow', { scope, judge: true, deps });
+      expect(nav.visualJudgment).toEqual({ status: 'pending' });
+      land({ status: 'answered', signals: { visibleError: 0.1 }, model: 'clef', route: 'test' });
+      await new Promise((resolve) => setImmediate(resolve));
+      const read = await readBrowserPage(PANE, scope, { judge: true, deps });
+      expect(read.visualJudgment).toMatchObject({ status: 'answered', signals: { visibleError: 0.1 } });
+      const again = await readBrowserPage(PANE, scope, { judge: true, deps });
+      expect(again.visualJudgment).toBeUndefined();
+      expect(state.visualJudge).toHaveBeenCalledOnce();
+    } finally {
+      state.canVisual.mockReturnValue(false);
+    }
+    destroyBrowser(PANE, scope);
+  });
+
+  it('waits for the requests an action started and a quiet window before describing the page', async () => {
+    await boot();
+    const onBefore = state.browserSession.webRequest.onBeforeRequest.mock.calls.at(-1)?.[1] as
+      (details: Record<string, unknown>, callback: (response: { cancel?: boolean }) => void) => void;
+    const onCompleted = state.guestHandlers.get('webRequest:onCompleted')![0]!;
+    state.runAutomation.mockImplementationOnce(async () => {
+      // The click starts an XHR that answers only 400 ms later.
+      onBefore({ id: 7, url: 'https://example.test/api/save', resourceType: 'xhr', webContentsId: 22 }, () => {});
+      setTimeout(() => onCompleted({ id: 7, url: 'https://example.test/api/save', statusCode: 200, webContentsId: 22 }), 400);
+      return { clicked: true, element: { ref: 'e1', tag: 'button', role: 'button', name: 'Salvar' } };
+    });
+    const started = Date.now();
+    await clickBrowserElement(PANE, scope, 'e1');
+    expect(Date.now() - started).toBeGreaterThanOrEqual(400 + 250);
+
+    const quiet = Date.now();
+    await clickBrowserElement(PANE, scope, 'e1');
+    // No request and no navigation: the short grace, not the quiet window.
+    expect(Date.now() - quiet).toBeLessThan(400);
+    destroyBrowser(PANE, scope);
+  });
+
+  it('never waits past the cap for a request that never ends (long poll)', async () => {
+    await boot();
+    const onBefore = state.browserSession.webRequest.onBeforeRequest.mock.calls.at(-1)?.[1] as
+      (details: Record<string, unknown>, callback: (response: { cancel?: boolean }) => void) => void;
+    state.runAutomation.mockImplementationOnce(async () => {
+      onBefore({ id: 8, url: 'https://example.test/poll', resourceType: 'xhr', webContentsId: 22 }, () => {});
+      return { clicked: true, element: { ref: 'e1', tag: 'button', role: 'button', name: 'Abrir' } };
+    });
+    const started = Date.now();
+    await clickBrowserElement(PANE, scope, 'e1');
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeGreaterThanOrEqual(1_000);
+    expect(elapsed).toBeLessThan(2_500);
+    destroyBrowser(PANE, scope);
+  }, 10_000);
+
+  describe('real input through webContents.sendInputEvent', () => {
+    const element = { ref: 'e1', tag: 'button', role: 'button', name: 'Conta' };
+    const defaultAutomation = state.runAutomation.getMockImplementation()!;
+    function nativeAutomation(delivered: boolean, prepared: Record<string, unknown> = { token: 'i1', x: 140, y: 50, element }) {
+      state.runAutomation.mockImplementation(async (_pane: string, _wc: unknown, command: string): Promise<unknown> => {
+        if (command === 'input_prepare') return prepared;
+        if (command === 'input_confirm') return { delivered };
+        if (command === 'click') return { clicked: true, element };
+        if (command === 'press') return { pressed: true, key: 'Enter' };
+        if (command === 'hover') return { hovered: true, element };
+        throw new Error(`unexpected command ${command}`);
+      });
+    }
+    afterEach(() => {
+      delete (state.guest as { sendInputEvent?: unknown }).sendInputEvent;
+      delete (state.guest as { getZoomFactor?: unknown }).getZoomFactor;
+      state.runAutomation.mockImplementation(defaultAutomation);
+    });
+
+    it('clicks with a real mouse down/up at the element center (zoom applied) and no synthetic click', async () => {
+      await boot();
+      const sendInputEvent = vi.fn();
+      Object.assign(state.guest, { sendInputEvent, getZoomFactor: () => 1.5 });
+      nativeAutomation(true);
+      const result = await clickBrowserElement(PANE, scope, 'e1');
+      expect(sendInputEvent.mock.calls.map((call) => call[0])).toEqual([
+        { type: 'mouseMove', x: 210, y: 75 },
+        { type: 'mouseDown', x: 210, y: 75, button: 'left', clickCount: 1 },
+        { type: 'mouseUp', x: 210, y: 75, button: 'left', clickCount: 1 },
+      ]);
+      expect(result).toMatchObject({ clicked: true, input: 'native', element: { name: 'Conta' } });
+      expect(state.runAutomation.mock.calls.map((call) => call[2])).not.toContain('click');
+      destroyBrowser(PANE, scope);
+    });
+
+    it('falls back to the synthetic sequence when the page never saw a trusted event', async () => {
+      await boot();
+      Object.assign(state.guest, { sendInputEvent: vi.fn() });
+      nativeAutomation(false);
+      const result = await clickBrowserElement(PANE, scope, 'e1');
+      expect(result).toMatchObject({ clicked: true, input: 'synthetic' });
+      expect(state.runAutomation.mock.calls.map((call) => call[2])).toContain('click');
+      destroyBrowser(PANE, scope);
+    });
+
+    it('falls back without sending input when the element is covered', async () => {
+      await boot();
+      const sendInputEvent = vi.fn();
+      Object.assign(state.guest, { sendInputEvent });
+      nativeAutomation(true, { token: null, reason: 'occluded' });
+      const result = await clickBrowserElement(PANE, scope, 'e1');
+      expect(sendInputEvent).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ input: 'synthetic', nativeSkipped: 'occluded' });
+      destroyBrowser(PANE, scope);
+    });
+
+    it('presses Enter as keyDown + char "\\r" + keyUp so forms submit and fields receive text', async () => {
+      await boot();
+      const sendInputEvent = vi.fn();
+      Object.assign(state.guest, { sendInputEvent });
+      nativeAutomation(true, { token: 'i2' });
+      const result = await pressBrowserKey(PANE, scope, { key: 'Enter' });
+      expect(sendInputEvent.mock.calls.map((call) => call[0])).toEqual([
+        { type: 'keyDown', keyCode: 'Enter', modifiers: [] },
+        { type: 'char', keyCode: '\r', modifiers: [] },
+        { type: 'keyUp', keyCode: 'Enter', modifiers: [] },
+      ]);
+      expect(result).toMatchObject({ pressed: true, key: 'Enter', input: 'native' });
+      expect(state.runAutomation.mock.calls.map((call) => call[2])).not.toContain('press');
+
+      sendInputEvent.mockClear();
+      await pressBrowserKey(PANE, scope, { key: 'ArrowDown' });
+      expect(sendInputEvent.mock.calls.map((call) => call[0])).toEqual([
+        { type: 'keyDown', keyCode: 'Down', modifiers: [] },
+        { type: 'keyUp', keyCode: 'Down', modifiers: [] },
+      ]);
+
+      sendInputEvent.mockClear();
+      await pressBrowserKey(PANE, scope, { key: 'a', modifiers: ['Control'] });
+      // A shortcut never types its letter.
+      expect(sendInputEvent.mock.calls.map((call) => call[0])).toEqual([
+        { type: 'keyDown', keyCode: 'a', modifiers: ['control'] },
+        { type: 'keyUp', keyCode: 'a', modifiers: ['control'] },
+      ]);
+      destroyBrowser(PANE, scope);
+    });
+
+    it('hovers with a real mouse move so :hover and pointer handlers react', async () => {
+      await boot();
+      const sendInputEvent = vi.fn();
+      Object.assign(state.guest, { sendInputEvent });
+      nativeAutomation(true);
+      const result = await hoverBrowserElement(PANE, scope, 'e1');
+      expect(sendInputEvent.mock.calls.map((call) => call[0])).toEqual([{ type: 'mouseMove', x: 140, y: 50 }]);
+      expect(result).toMatchObject({ hovered: true, input: 'native' });
+      destroyBrowser(PANE, scope);
+    });
+  });
+
+  describe('select', () => {
+    const defaultAutomation = state.runAutomation.getMockImplementation()!;
+    afterEach(() => state.runAutomation.mockImplementation(defaultAutomation));
+
+    it('chooses a native option through the page primitive', async () => {
+      await boot();
+      state.runAutomation.mockImplementation(async (_pane: string, _wc: unknown, command: string, ...rest: unknown[]): Promise<unknown> => {
+        const args = rest[0];
+        if (command === 'select') {
+          expect(args).toEqual({ ref: 'e4', option: 'São Paulo' });
+          return { selected: true, ref: 'e4', option: { label: 'São Paulo', index: 1 } };
+        }
+        return defaultAutomation(_pane, _wc, command);
+      });
+      const result = await selectBrowserOption(PANE, scope, 'e4', { option: 'São Paulo' });
+      expect(result).toMatchObject({ selected: true, via: 'native-select', option: { label: 'São Paulo' } });
+      expect(result.changed).toBeDefined();
+      destroyBrowser(PANE, scope);
+    });
+
+    it('opens an ARIA combobox and clicks the option with that name', async () => {
+      await boot();
+      const clicked: string[] = [];
+      state.runAutomation.mockImplementation(async (_pane: string, _wc: unknown, command: string, ...rest: unknown[]): Promise<unknown> => {
+        const args = rest[0];
+        if (command === 'select') throw new Error('browser element is not a native select');
+        if (command === 'click') {
+          clicked.push((args as { ref: string }).ref);
+          return { clicked: true, element: { ref: (args as { ref: string }).ref, tag: 'div', role: 'option', name: 'x' } };
+        }
+        if (command === 'find') {
+          return {
+            matches: [
+              { ref: 'e9', tag: 'span', role: 'span', name: 'Brasil', score: 1 },
+              { ref: 'e7', tag: 'div', role: 'option', name: 'Brasil', score: 1 },
+            ],
+            total: 2,
+          };
+        }
+        return defaultAutomation(_pane, _wc, command);
+      });
+      const result = await selectBrowserOption(PANE, scope, 'e3', { option: 'Brasil' });
+      expect(clicked).toEqual(['e3', 'e7']);
+      expect(result).toMatchObject({ selected: true, via: 'aria-listbox', option: { label: 'Brasil' } });
+      destroyBrowser(PANE, scope);
+    });
+
+    it('returns the option candidates without clicking when the ARIA option is ambiguous', async () => {
+      await boot();
+      const clicked: string[] = [];
+      state.runAutomation.mockImplementation(async (_pane: string, _wc: unknown, command: string, ...rest: unknown[]): Promise<unknown> => {
+        const args = rest[0];
+        if (command === 'select') throw new Error('browser element is not a native select');
+        if (command === 'click') {
+          clicked.push((args as { ref: string }).ref);
+          return { clicked: true, element: { ref: 'e3', tag: 'button', role: 'combobox', name: 'País' } };
+        }
+        if (command === 'find') {
+          return {
+            matches: [
+              { ref: 'e7', tag: 'div', role: 'option', name: 'Guiné', score: 0.9 },
+              { ref: 'e8', tag: 'div', role: 'option', name: 'Guiné-Bissau', score: 0.9 },
+            ],
+            total: 2,
+          };
+        }
+        return defaultAutomation(_pane, _wc, command);
+      });
+      const result = await selectBrowserOption(PANE, scope, 'e3', { option: 'guine' });
+      expect(clicked).toEqual(['e3']);
+      expect(result).toMatchObject({ selected: false, ambiguous: true });
+      expect(result.candidates?.map((candidate) => candidate.ref)).toEqual(['e7', 'e8']);
+      destroyBrowser(PANE, scope);
+    });
+  });
+
+  describe('screenshot options', () => {
+    const defaultAutomation = state.runAutomation.getMockImplementation()!;
+    beforeEach(() => registerBrowserIpc({} as never));
+    afterEach(() => {
+      state.runAutomation.mockImplementation(defaultAutomation);
+      state.guest.debugger.sendCommand.mockImplementation(async (): Promise<unknown> => ({ root: {} }));
+    });
+
+    it('attaches a bounded inline image (longest side ≤ 1568) to the result', async () => {
+      await boot();
+      state.guest.capturePage.mockResolvedValueOnce(fakeImage(2560, 1600) as never);
+      const shot = await captureBrowserScreenshot(PANE, scope, undefined, { includeImage: true });
+      expect(shot.image?.mimeType).toBe('image/png');
+      expect(typeof shot.image?.data).toBe('string');
+      expect(shot.image).toMatchObject({ width: 1568, height: 980 });
+      expect(shot.width).toBe(2560);
+      destroyBrowser(PANE, scope);
+    });
+
+    it('never inlines pixels of a pane on the personal profile', async () => {
+      state.profileMode = 'personal';
+      bindResolvedRendererWorkspaceScope(state.owner, scope);
+      await boot();
+      const shot = await captureBrowserScreenshot(PANE, scope, undefined, { includeImage: true });
+      expect(shot.image).toBeUndefined();
+      expect(shot.imageOmitted).toBe('personal_profile');
+      destroyBrowser(PANE, scope);
+    });
+
+    it('captures the whole page beyond the viewport through the debugger and detaches it', async () => {
+      await boot();
+      state.guest.debugger.attach.mockClear();
+      state.guest.debugger.detach.mockClear();
+      const commands: Array<[string, unknown]> = [];
+      state.guest.debugger.sendCommand.mockImplementation(async (...call: unknown[]): Promise<unknown> => {
+        const [method, params] = call as [string, unknown];
+        commands.push([method, params]);
+        if (method === 'Page.getLayoutMetrics') return { cssContentSize: { width: 1280, height: 3000 } };
+        if (method === 'Page.captureScreenshot') return { data: Buffer.from('full').toString('base64') };
+        return {};
+      });
+      const shot = await captureBrowserScreenshot(PANE, scope, undefined, { fullPage: true });
+      expect(commands.map(([method]) => method)).toEqual(['Page.getLayoutMetrics', 'Page.captureScreenshot']);
+      expect(commands[1]![1]).toMatchObject({ captureBeyondViewport: true, clip: { x: 0, y: 0, width: 1280, height: 3000, scale: 1 } });
+      expect(state.guest.debugger.attach).toHaveBeenCalledOnce();
+      expect(state.guest.debugger.detach).toHaveBeenCalledOnce();
+      expect(shot).toMatchObject({ fullPage: true, width: 1280, height: 3000 });
+      destroyBrowser(PANE, scope);
+    });
+
+    it.each([
+      ['a wide page', { width: 20000, height: 3000 }],
+      ['a tall page', { width: 1280, height: 20000 }],
+    ])('marks %s past the capture limit as truncated, with its real size', async (_label, page) => {
+      await boot();
+      state.guest.debugger.sendCommand.mockImplementation(async (...call: unknown[]): Promise<unknown> => {
+        const [method] = call as [string];
+        if (method === 'Page.getLayoutMetrics') return { cssContentSize: page };
+        if (method === 'Page.captureScreenshot') return { data: Buffer.from('full').toString('base64') };
+        return {};
+      });
+      const shot = await captureBrowserScreenshot(PANE, scope, undefined, { fullPage: true });
+      expect(shot).toMatchObject({
+        truncated: true,
+        capturedCss: { width: Math.min(page.width, 16384), height: Math.min(page.height, 16384) },
+        viewport: page,
+      });
+      destroyBrowser(PANE, scope);
+    });
+
+    it('refuses fullPage together with an element ref instead of mislabelling the capture', async () => {
+      await boot();
+      state.guest.capturePage.mockClear();
+      await expect(
+        captureBrowserScreenshot(PANE, scope, undefined, { fullPage: true, ref: 'e1' }),
+      ).rejects.toThrow(/either fullPage or ref/);
+      expect(state.guest.capturePage).not.toHaveBeenCalled();
+      destroyBrowser(PANE, scope);
+    });
+
+    it('renders the dark theme for the capture and puts the page back afterwards', async () => {
+      await boot();
+      const media: unknown[] = [];
+      state.guest.debugger.sendCommand.mockImplementation(async (...call: unknown[]): Promise<unknown> => {
+        const [method, params] = call as [string, unknown];
+        if (method === 'Emulation.setEmulatedMedia') media.push(params);
+        return {};
+      });
+      const shot = await captureBrowserScreenshot(PANE, scope, undefined, { theme: 'dark' });
+      expect(media).toEqual([
+        { features: [{ name: 'prefers-color-scheme', value: 'dark' }] },
+        { features: [] },
+      ]);
+      expect(shot.theme).toBe('dark');
+      destroyBrowser(PANE, scope);
+    });
+
+    it('crops to one element by ref', async () => {
+      await boot();
+      state.runAutomation.mockImplementation(async (_pane: string, _wc: unknown, command: string): Promise<unknown> => {
+        if (command === 'element_rect') return { x: 100, y: 200, width: 300, height: 50 };
+        return defaultAutomation(_pane, _wc, command);
+      });
+      state.guest.capturePage.mockClear();
+      const shot = await captureBrowserScreenshot(PANE, scope, undefined, { ref: 'e5' });
+      expect(state.guest.capturePage).toHaveBeenCalledWith({ x: 92, y: 192, width: 316, height: 66 });
+      expect(shot.element).toBe('e5');
+      destroyBrowser(PANE, scope);
+    });
+  });
+
+  it('an agent pane never blocks on alert/confirm/prompt; the operator pane keeps native dialogs', async () => {
+    vi.mocked(isAgentRequestedBrowser).mockReturnValue(true);
+    await boot();
+    expect(state.views.at(-1)?.webPreferences).toMatchObject({ disableDialogs: true });
+    destroyBrowser(PANE, scope);
+    vi.mocked(isAgentRequestedBrowser).mockReturnValue(false);
+    await boot();
+    expect(state.views.at(-1)?.webPreferences).toMatchObject({ safeDialogs: true, disableDialogs: false });
+    destroyBrowser(PANE, scope);
+  });
+
+  it('goes back, forward and reloads through the action contract (after/changed/errors)', async () => {
+    await boot();
+    state.guest.canGoBack.mockReturnValue(false);
+    const none = await historyBrowserPane(PANE, scope, 'back');
+    expect(none).toMatchObject({ navigated: false, reason: 'no-history' });
+    expect(state.guest.goBack).not.toHaveBeenCalled();
+
+    state.guest.canGoBack.mockReturnValue(true);
+    const back = await historyBrowserPane(PANE, scope, 'back');
+    expect(state.guest.goBack).toHaveBeenCalledOnce();
+    expect(back).toMatchObject({ navigated: true, action: 'back' });
+    expect(back.changed).toBeDefined();
+    expect(back.errors).toBeDefined();
+
+    state.guest.canGoForward.mockReturnValue(true);
+    await historyBrowserPane(PANE, scope, 'forward');
+    expect(state.guest.goForward).toHaveBeenCalledOnce();
+    await historyBrowserPane(PANE, scope, 'reload');
+    expect(state.guest.reload).toHaveBeenCalledOnce();
+    destroyBrowser(PANE, scope);
+  });
+
+  it('reports a refused download instead of cancelling it in silence', async () => {
+    await boot();
+    const onDownload = state.sessionHandlers.get('will-download') as
+      (event: { preventDefault: () => void }, item: unknown, wc: unknown) => void;
+    const preventDefault = vi.fn();
+    onDownload({ preventDefault }, {
+      getFilename: () => 'relatorio-token=abcdefghijklmnop1234.pdf',
+      getMimeType: () => 'application/pdf',
+    }, state.guest);
+    expect(preventDefault).toHaveBeenCalled();
+    const read = await readBrowserPage(PANE, scope);
+    expect(read.errors.items.at(-1)?.message).toMatch(/download blocked/);
+    expect(read.errors.items.at(-1)?.message).toContain('application/pdf');
+    destroyBrowser(PANE, scope);
+  });
+
+  it('does not read the page for a judgment that cannot run', async () => {
+    await boot();
+    state.runAutomation.mockClear();
+    const off = await clickBrowserElement(PANE, scope, 'e1', { judge: true, deps: { jevEnabled: () => false } });
+    expect(off.judgmentSkipped).toBe('surface-disabled');
+    const noKey = await loadBrowser(PANE, 'https://example.test/app', {
+      scope, judge: true, deps: { jevEnabled: () => true, jevReady: () => false },
+    });
+    expect(noKey.judgmentSkipped).toBe('no-credential');
+    const commands = state.runAutomation.mock.calls.map((call) => call[2]);
+    expect(commands).not.toContain('read');
+    destroyBrowser(PANE, scope);
+  });
+
+  it('refuses a local dev server and names the preview path that works', async () => {
+    await boot();
+    await expect(loadBrowser(PANE, 'http://localhost:5173/', { scope }))
+      .rejects.toThrow(/private.*nexus_preview_start.*nexus_browser_open.*nexus_browser_responsive/s);
+    await expect(loadBrowser(PANE, 'file:///tmp/app/index.html', { scope }))
+      .rejects.toThrow(/nexus_preview_start/);
+    destroyBrowser(PANE, scope);
+  });
+
+  it('reports a subresource the policy blocked instead of dropping it silently', async () => {
+    await boot();
+    const onBeforeRequest = state.browserSession.webRequest.onBeforeRequest.mock.calls.at(-1)?.[1] as
+      (details: Record<string, unknown>, callback: (response: { cancel?: boolean }) => void) => void;
+    const cancelled = await new Promise<{ cancel?: boolean }>((resolve) => {
+      onBeforeRequest({ url: 'http://localhost:8787/api/clientes', resourceType: 'xhr' }, resolve);
+    });
+    expect(cancelled).toEqual({ cancel: true });
+    const read = await readBrowserPage(PANE, scope);
+    expect(read.errors.loadErrors).toBe(1);
+    expect(read.errors.items[0]?.message).toMatch(/blocked \(private-network\): http:\/\/localhost:8787/);
     destroyBrowser(PANE, scope);
   });
 

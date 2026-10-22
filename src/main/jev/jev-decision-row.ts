@@ -26,7 +26,7 @@ const rowSchema = z.looseObject({
   at: z.number().finite(),
   surface: z.string().min(1),
   model: z.string().min(1),
-  kind: z.enum(['decision', 'no-answer', 'optimization']).optional().catch(undefined),
+  kind: z.enum(['decision', 'no-answer', 'optimization', 'skip']).optional().catch(undefined),
   /** Motivo desconhecido (versão futura, edição à mão) vira ausente; a linha continua. */
   reason: z.enum(JEV_NO_ANSWER_REASONS).optional().catch(undefined),
   provider: z.enum(['jev', 'clef', 'luna']).optional().catch(undefined),
@@ -46,8 +46,29 @@ const rowSchema = z.looseObject({
   feedback: z.enum(['right', 'wrong']).optional().catch(undefined),
 });
 
+/** Model label of a row that no provider answered. */
+export const LOCAL_SKIP_MODEL = 'unavailable';
+
+type SkipShape = Pick<JevDecisionEntry, 'kind' | 'model' | 'decision' | 'requestCount' | 'inputTokens' | 'usd'>;
+
+/**
+ * A row no provider answered is a local skip, not a consultation: a memory
+ * retention that bailed out before any request, or the handoff review's
+ * `judge-unavailable` marker (the consultation already has its own no-answer
+ * row). Rows written before `kind: 'skip'` existed only carry the model label
+ * `unavailable` and were counted as answered decisions by the panel; reading
+ * them through here fixes the counts without rewriting the journal.
+ */
+export function normalizeLocalSkip<T extends SkipShape>(row: T): T {
+  if (row.kind === 'no-answer' || row.kind === 'optimization') return row;
+  const skip = row.kind === 'skip' || row.model === LOCAL_SKIP_MODEL || row.decision === 'judge-unavailable';
+  if (!skip) return row;
+  // No request left the machine: zero is measured here, not a fabricated floor.
+  return { ...row, kind: 'skip', requestCount: row.requestCount ?? 0, inputTokens: row.inputTokens ?? 0, usd: row.usd ?? 0 };
+}
+
 /** `null` when the line cannot be trusted as a journal row. */
 export function parseDecisionRow(raw: unknown): JevDecisionEntry | null {
   const parsed = rowSchema.safeParse(raw);
-  return parsed.success ? (parsed.data as unknown as JevDecisionEntry) : null;
+  return parsed.success ? normalizeLocalSkip(parsed.data as unknown as JevDecisionEntry) : null;
 }
