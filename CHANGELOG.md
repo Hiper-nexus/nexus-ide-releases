@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.76.417 — Windows: missões e agentes prontos para trabalhar
+
+Candidata Windows x64 com a base funcional 0.76.413/414 e as correções do PR #160. Assinatura e publicação são etapas de validação separadas, não presumidas por estas notas.
+
+- Missões em pastas sem Git ou sem primeiro commit usam a pasta existente, sem criar Git/commits implicitamente (F-1629).
+- A origem automática ou explícita da escolha da conta é preservada no layout e no failover (F-1630).
+- Grok deixa a própria CLI renovar sessões OIDC antigas completas e coordenáveis, mantendo a recusa de revogação/identidade ambígua (F-1636).
+- Kits: licença BoardUI no perfil Windows correto; trava por raiz de instalação do monorepo; UTF-8 entre chunks; exclusividade retida quando não há prova de fim físico do processo (F-1635/F-1637/F-1638/F-1641).
+- Captura ausente/incompleta não aprova a entrega visual (F-1639).
+- REA selecionada automaticamente para pedidos de engenharia reversa. Análise estática JS/Electron no Windows x64 requer runtime revisado separado; motores nativos opcionais não estão incluídos. O ambiente privado retido é informado, nunca descrito como removido.
+- AGY transporta o registro real de onboarding da mesma conta, preserva opt-out/configuração local e sinaliza pendência antes de automissões; nenhum aceite de termos ou telemetria é fabricado (F-1642).
+- Codex projeta a confiança já autorizada somente no perfil privado. CLI 0.163.0 em sessão nova ordinária desativa o convite Daybreak; recusas explícitas, preferências, modelos, perfis e retomadas permanecem preservados (F-1643/F-1644). O modal autenticado não foi reproduzido.
+
+Limites: computer use universal continua em branch separada, fora deste pacote. O operador dispensou somente a prova instalada N→N+1 desta entrega, por ausência de VM/Sandbox e para preservar o Nexus em uso; `installedUpgradeVerified` permanece falso. Smoke do pacote, testes e assinatura YubiKey continuam obrigatórios.
+
 ## 0.76.414 — A coleta no Linux e a colagem grande
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
