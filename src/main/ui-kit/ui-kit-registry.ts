@@ -385,48 +385,44 @@ export function resolveRegistryAuthContract(input: {
   readonly storedUrl?: string | undefined;
   readonly hasToken: boolean;
 }): UiKitRegistryAuth | undefined {
-  // A HOST CHANGE IS A CREDENTIAL BOUNDARY, and it is checked FIRST.
+  // ONE GATE, THEN THE SHAPE.
   //
-  // My previous version put this after `declared` and before the
-  // known-registry branch, which left two ways around it: `declared` comes
-  // from the caller, and a known namespace derived a contract anyway. Either
-  // one re-pointed at a new host would have let the next install release the
-  // token stored for the OLD host. Nothing is deleted from the vault to
-  // achieve this (the operator asked that their credentials not be removed):
-  // with no contract, `resolveRegistryToken` is never consulted, so the
-  // stored token is unreachable rather than gone.
-  const hostChanged =
-    input.storedUrl !== undefined &&
-    input.url !== undefined &&
-    hostOfRegistryUrl(input.storedUrl) !== hostOfRegistryUrl(input.url);
-  if (hostChanged && !input.hasToken) return undefined;
-  if (input.declared) return input.declared;
-  // Beyond the host check, the stored contract also needs the same URL: a
-  // different path on the same host is still a different registry.
-  if (input.stored && input.storedUrl !== undefined && input.storedUrl === input.url) {
-    return input.stored;
-  }
-  // AND THE PRESET ONLY VOUCHES FOR THE PRESET'S HOST.
+  // A contract is what releases the token: `buildScopedRegistryEnv` skips any
+  // registry without one, and `resolveRegistryToken` then reads this
+  // namespace's vault key and hands it to the URL's host. So the question is
+  // never "which contract" first — it is "may this URL have a credential at
+  // all". Three ways to say yes, and nothing else:
   //
-  // The host check above compares against the STORED url, so it says nothing
-  // once there is no stored row — and this branch then derived a contract for
-  // a known namespace pointed anywhere, which is the same leak by another
-  // door: the token for that namespace may still be in the vault (a removal
-  // whose vault write was refused leaves it there), and the contract is
-  // exactly what `buildScopedRegistryEnv` requires before it releases it to
-  // the URL's host. A preset is Nexus's claim about one vendor; it cannot
-  // vouch for a URL that is not theirs.
+  //   - a token is being typed NOW: the operator chose that destination;
+  //   - the URL is EXACTLY the one already stored: the credential already
+  //     goes there, and this is the re-save that must not drop its auth;
+  //   - the namespace is a preset and the URL is on the preset's own HOST:
+  //     the only URL Nexus itself vouches for.
   //
-  // The comparison is the HOST, like the one above, not the whole URL: the
-  // credential leaves this machine to a host, and the vendor moving their
-  // path is not a new party to trust. A token typed now covers any host —
-  // the operator chose where it goes.
+  // Each piece of this gate was a separate leak, found one review round
+  // apart, because the check used to sit in the middle of the shape decision
+  // instead of in front of it: `declared` comes from the caller and walked
+  // past a changed host; a known namespace derived a contract for any URL;
+  // and with NO stored row there was nothing to compare, so `declared` walked
+  // past again. Keep this gate first and whole — adding a shape branch above
+  // it reopens the class.
+  //
+  // Nothing is deleted from the vault to achieve this (the operator asked that
+  // their credentials not be removed): with no contract the token is
+  // unreachable rather than gone.
   const known = findKnownRegistry(input.namespace);
   const atPresetHost =
     known !== null &&
     (input.url === undefined ||
       hostOfRegistryUrl(known.url) === hostOfRegistryUrl(input.url));
-  if (!input.hasToken && !atPresetHost) return undefined;
+  // The whole URL, not the host: a different path on the same host is a
+  // different registry, and the stored SHAPE (a vendor's own header name) was
+  // not agreed for it. The operator retypes the token, and the panel says so.
+  const sameStoredUrl = input.storedUrl !== undefined && input.storedUrl === input.url;
+  if (!input.hasToken && !sameStoredUrl && !atPresetHost) return undefined;
+
+  if (input.declared) return input.declared;
+  if (input.stored && sameStoredUrl) return input.stored;
   return {
     kind: 'header',
     name: 'Authorization',

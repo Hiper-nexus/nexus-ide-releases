@@ -2941,15 +2941,21 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
   (`MAIN_OWNED_ORCH_SETTINGS_KEYS`) tira a chave do patch do renderer ANTES da
   mescla; `replaceOrchSettings` continua escrevendo tudo, porque é por lá que o
   IPC dedicado salva. Chave nova que só o Main escreve entra naquela lista.
-- **Fronteira de credencial é HOST, e vale até contra o preset.** `resolveRegistryAuthContract`
-  compara host (não string) como PRIMEIRA coisa: `declared` vem do chamador e
-  um namespace conhecido derivava contrato de qualquer jeito, então os dois
-  reapontados liberavam o token do host antigo. E o preset só responde pelo
-  host DELE: sem linha salva não há `storedUrl` para comparar, e aí `@shadcnuikit`
-  apontado para qualquer lugar ganhava contrato — que é exatamente o que
-  `buildScopedRegistryEnv` exige para soltar o token. Caminho diferente no mesmo
-  host passa (o fornecedor mudar de rota não é outra parte para confiar); token
-  digitado agora cobre qualquer host, porque a escolha é do operador.
+- **UM PORTÃO, e só depois a forma do contrato** (`resolveRegistryAuthContract`).
+  Contrato é o que SOLTA o token (`buildScopedRegistryEnv` pula registry sem
+  ele), então a pergunta nunca é "qual contrato" primeiro, é "esta URL pode ter
+  credencial". Três jeitos de dizer sim, e nenhum outro: token digitado AGORA
+  (o operador escolheu o destino), URL EXATAMENTE igual à guardada (a
+  credencial já vai ali — é o re-save que não pode perder a auth), ou namespace
+  de preset com a URL no HOST do preset (a única URL de que o Nexus dá fé).
+  Cada pedaço desse portão foi um vazamento à parte, achado numa rodada de
+  revisão diferente, porque a checagem morava no MEIO da decisão de forma em
+  vez de na frente dela: `declared` vem do chamador e passava por cima de host
+  trocado; namespace conhecido derivava contrato para qualquer URL; e SEM linha
+  guardada não havia o que comparar, então `declared` passava de novo. Mantenha
+  o portão primeiro e inteiro — ramo de forma acima dele reabre a classe.
+  Caminho diferente no MESMO host não passa sem token: é outro registry, e a
+  forma guardada (o header próprio de um fornecedor) não foi acordada para ele.
 - **Nada do cofre é apagado para fechar vazamento**: sem contrato o
   `resolveRegistryToken` nunca é consultado, então o token fica inalcançável em
   vez de destruído (as credenciais do operador não são nossas para apagar).

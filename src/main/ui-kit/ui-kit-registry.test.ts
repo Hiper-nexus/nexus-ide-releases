@@ -372,6 +372,23 @@ describe('a host change is a credential boundary, checked first', () => {
     ).toBeUndefined();
   });
 
+  it('beats a DECLARED contract with NO stored row at all', () => {
+    // The hole the host check could not see: it compares against the STORED
+    // url, so with no settings row there is nothing to compare and `declared`
+    // — which comes from the caller — walked straight through. A contract is
+    // exactly what releases the token still sitting in the vault for that
+    // namespace, so this is the same leak with the comparison missing instead
+    // of failed.
+    expect(
+      resolveRegistryAuthContract({
+        namespace: '@acme',
+        declared: stored,
+        url: elsewhere,
+        hasToken: false,
+      }),
+    ).toBeUndefined();
+  });
+
   it('lets a token entered for the new host through', () => {
     expect(
       resolveRegistryAuthContract({
