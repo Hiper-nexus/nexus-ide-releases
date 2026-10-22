@@ -1,8 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Mission, SquadAgent } from '../../shared/orch-types';
 import { agentPrompt } from './mission-fast-lane';
 import { evaluateHandoffEvidence } from './jev-handoff-review';
 import { mechanicalChecksStillValid } from './mission-code-completion-production';
+import {
+  armAutoCloseOnHandoff,
+  armedAutoClosePaneId,
+  closeAfterNonSuccessHandoffAck,
+  disarmAutoCloseOnHandoff,
+  scheduleAutoCloseAfterHandoff,
+} from './pane-close-scopes';
 import { visualEvidenceVerified } from './visual-handoff-gate';
 
 /**
@@ -90,6 +97,31 @@ function visualDeliveryBounces(countVisualCapture: boolean): boolean {
     .some((signal) => signal.includes('evidência de verificação'));
 }
 
+/**
+ * A devolução chega a um pane MORNO (que já sabe o que tentou) ou a um pane
+ * novo com o brief original? Dirige o agendador real.
+ */
+function reworkLandsWarm(awaitAckOnSuccess: boolean): boolean {
+  const paneOf = (sessionId: string) => (sessionId === 'w-1' ? 'pane-1' : null);
+  const closed: string[] = [];
+  const close = async (paneId: string): Promise<boolean> => {
+    closed.push(paneId);
+    return true;
+  };
+  armAutoCloseOnHandoff('w-1', 'pane-1');
+  scheduleAutoCloseAfterHandoff('w-1', 'success', paneOf, close, {
+    handoffId: 'h-1',
+    ...(awaitAckOnSuccess ? { awaitAckOnSuccess: true } : {}),
+  });
+  // O Maestro acorda, lê a entrega e devolve com a nota.
+  vi.advanceTimersByTime(1_000);
+  closeAfterNonSuccessHandoffAck('w-1', 'h-1', 'rework');
+  vi.advanceTimersByTime(1_000);
+  const warm = closed.length === 0 && armedAutoClosePaneId('w-1', 'pane-1') !== null;
+  disarmAutoCloseOnHandoff('w-1', 'pane-1');
+  return warm;
+}
+
 describe('orçamento de cerimônia: landing page como missão', () => {
   it('a verificação válida não é mais jogada fora enquanto o juiz lê', () => {
     const antes = mechanicalRuns(false);
@@ -109,6 +141,16 @@ describe('orçamento de cerimônia: landing page como missão', () => {
     const semPlano = agentPrompt(orchestrator(), mission(OBJECTIVE), [], false, '', null, []);
     expect(semPlano).toContain('Para cada tarefa ainda não despachada');
     expect(semPlano).not.toContain('Não duplique a first-wave');
+  });
+
+  it('a devolução chega a um pane morno, não a um pane novo com o brief original', () => {
+    vi.useFakeTimers();
+    try {
+      expect(reworkLandsWarm(false)).toBe(false);
+      expect(reworkLandsWarm(true)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('o orçamento total da entrega melhora, e o relatório sai nos números', () => {
