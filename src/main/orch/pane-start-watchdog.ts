@@ -699,6 +699,41 @@ export function setPaneStartKick(next: (() => void) | null): void {
   kick = next;
 }
 
+/**
+ * Revisão de 22/10: um brief "não aceito" com a sessão já usando ferramentas,
+ * ou segurando/esperando uma vaga da fila de comandos pesados, é um worker
+ * ocupado atrás da fila — não uma CLI que falhou ao começar. Fechar e
+ * rerotear jogava fora o trabalho, e o substituto esperava na mesma fila.
+ */
+export type PaneStartBusyContradiction = 'working' | 'heavy-queue' | null;
+
+export function paneStartBusyContradiction(input: {
+  readonly toolActivityCount: number;
+  readonly heavyAdmissionOpen: boolean;
+}): PaneStartBusyContradiction {
+  if (input.toolActivityCount > 0) return 'working';
+  return input.heavyAdmissionOpen ? 'heavy-queue' : null;
+}
+
+/** Content-free Main probes, registered by the supervisor; unset = no contradiction. */
+export interface PaneStartBusyEvidence {
+  toolActivityCount(sessionId: string): number;
+  heavyAdmissionOpen(sessionId: string): boolean;
+}
+let busyEvidence: PaneStartBusyEvidence | null = null;
+
+export function setPaneStartBusyEvidence(next: PaneStartBusyEvidence | null): void {
+  busyEvidence = next;
+}
+
+export function sessionBusyContradiction(sessionId: string | null): PaneStartBusyContradiction {
+  if (!sessionId || !busyEvidence) return null;
+  try {
+    return paneStartBusyContradiction({ toolActivityCount: busyEvidence.toolActivityCount(sessionId),
+      heavyAdmissionOpen: busyEvidence.heavyAdmissionOpen(sessionId) });
+  } catch { return null; }
+}
+
 export function trackPaneStart(init: PaneStartWatchInit): PaneStartWatch {
   const now = Date.now();
   pruneEarlyMarks(now);
@@ -976,4 +1011,5 @@ export function resetPaneStartWatchdogForTests(): void {
   earlyMarks.clear();
   confirmedLimits.clear();
   kick = null;
+  busyEvidence = null;
 }

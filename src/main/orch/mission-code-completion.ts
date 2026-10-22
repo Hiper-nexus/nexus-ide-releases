@@ -86,6 +86,19 @@ export function candidateRecapturePaths(
     ...(candidate.absentPaths ?? [])])].filter(file => !deleted.has(file));
 }
 
+/**
+ * Every path the candidate touches, deletions included: the input of the
+ * diff-subtractive ceremony profile. A deleted module still affects the
+ * compiler, so it must never fall out of this set the way it falls out of
+ * the read set.
+ */
+export function completeCandidatePaths(
+  candidate: Pick<WorkingTreeCandidateSnapshot, 'changedPaths' | 'deletedPaths' | 'coveredPaths' | 'unreadPaths' | 'absentPaths'>,
+): string[] {
+  return [...new Set([...candidate.changedPaths, ...candidate.deletedPaths, ...(candidate.coveredPaths ?? []),
+    ...(candidate.unreadPaths ?? []), ...(candidate.absentPaths ?? [])])];
+}
+
 function docsOnly(paths: readonly string[]): boolean {
   return paths.every(file => {
     if (/(?:^|\/)(?:CMakeLists\.txt|requirements(?:[._-][^/]*)?\.txt)$/i.test(file)) return false;

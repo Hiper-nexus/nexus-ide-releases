@@ -72,6 +72,8 @@ import {
   providerLoginDetail,
   providerLoginScreen,
   releasePaneStartWatch,
+  sessionBusyContradiction,
+  setPaneStartBusyEvidence,
   setPaneStartKick,
   shortStartError,
   startFailureBreakerAction,
@@ -107,6 +109,7 @@ import {
   momentumReadyBacklog,
 } from './mission-momentum-watchdog';
 import { hasOpenClarifyQuestion } from './mission-open-question';
+import { heavyCommandAdmissionOpenForSession } from './heavy-command-permit';
 import { hasCurrentCompletionRequest } from './operator-tab-completion';
 import { getContextBySession } from './gate';
 import { judgeMissionMomentum, momentumNudgeFromJudgment } from './jev-mission-momentum';
@@ -1397,6 +1400,9 @@ async function checkPaneStart(watch: PaneStartWatch, now: number, context?: Peri
     !watch.failure &&
     executionJudged &&
     state === 'idle' &&
+    // A quiet PTY whose command waits in the heavy queue is busy, not idle:
+    // the verdict waits for the queue (now visible as `[fila-pesada]`).
+    sessionBusyContradiction(sessionId) !== 'heavy-queue' &&
     now - (watch.turnOpenedAt ?? watch.sessionSpawnedAt ?? watch.createdAt) >=
       executionProofGraceMs(watch.adapterId)
   ) {
@@ -1814,6 +1820,12 @@ function installPaneStartTaps(): void {
   setPaneStartKick(() => {
     void checkPaneStarts(Date.now());
   });
+  // Revisão 22/10: a entrega do brief consulta isto antes de declarar
+  // `brief-rejected` e fechar um worker que já trabalha ou espera a fila.
+  setPaneStartBusyEvidence({
+    toolActivityCount: getAgentToolActivityCount,
+    heavyAdmissionOpen: heavyCommandAdmissionOpenForSession,
+  });
   disposePaneStartTaps = () => {
     untapFailure();
     untapTermination();
@@ -1821,6 +1833,7 @@ function installPaneStartTaps(): void {
     untapStatus();
     untapTurnStart();
     setPaneStartKick(null);
+    setPaneStartBusyEvidence(null);
   };
 }
 

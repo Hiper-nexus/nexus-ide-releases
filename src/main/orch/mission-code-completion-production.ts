@@ -16,7 +16,7 @@ import { MissionEventJournal } from './mission-event-journal';
 import { getMissionEventRuntimeManager } from './mission-event-emit';
 import { MissionCodeReviewRuntime, codeReviewMissionSignature } from './mission-code-review-runtime';
 import type { CodeReviewBinding } from './mission-code-review-runtime';
-import { candidateRecapturePaths, declaredLimitNote, ensureMissionCodeCompletion, type MissionCodeCandidate } from './mission-code-completion';
+import { candidateRecapturePaths, completeCandidatePaths, declaredLimitNote, ensureMissionCodeCompletion, type MissionCodeCandidate } from './mission-code-completion';
 import { enforceCivilianAutoReview, type CivilianAutoReviewOutcome } from './civilian-auto-review';
 import type { CandidateQualityDeclaredLimit } from '../context/candidate-quality-scanner';
 import type { CivilianCodeCompletionGate } from './civilian-delivery-completion';
@@ -364,6 +364,8 @@ export const runMissionCodeCompletion: CivilianCodeCompletionGate = async input 
       checked = await enforceCivilianAutoReview({ scope, mission, completionBaseSha: baseSha,
         ...(candidate.untrackedSince !== undefined ? { completionUntrackedSince: candidate.untrackedSince } : {}),
         productFiles: candidate.candidate.coveredPaths ?? candidate.candidate.changedPaths, liveOrchestratorSessionId: input.liveOrchestratorSessionId,
+        // The read set omits deletions and unread files; the ceremony profile needs every path.
+        candidatePaths: completeCandidatePaths(candidate.candidate),
         lifetime, assertCurrentAuthority: assertCurrent });
       evaluatedAt = Date.now();
       return checked;
