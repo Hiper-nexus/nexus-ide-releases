@@ -12828,10 +12828,16 @@ export const RELEASE_076414: AppRelease = RELEASE_076414_FULL;
 export const CURRENT_RELEASE: AppRelease = {
   version: '0.76.417',
   date: '2026-10-22',
-  codename: 'Windows: missões e agentes prontos para trabalhar',
-  summary: 'Atualiza o Windows com a base 0.76.413/414, corrige a inicialização de agentes, ' +
-    'permite missões em pastas sem Git e seleciona REA para pedidos de engenharia reversa.',
+  codename: 'Conta em uso sem login à toa e Windows integrado',
+  summary: 'O pane Claude da conta em uso abre quando só o relógio venceu o token, e o login é ' +
+    'pedido só com prova, com «Entrar novamente» em um clique no próprio pane (F-1642). ' +
+    'Ponytail 5.3.2 em todo trabalho de código, skills embutidas atualizadas e a base Windows ' +
+    'integrada: missões em pastas sem Git, inicialização de agentes e REA para engenharia reversa.',
   highlights: [
+    { title: 'A conta em uso abre o pane', detail: 'Token vencido só pelo relógio, com refresh token no prazo, deixa a CLI do pane renovar. Antes o pane morria com "A sessão expirou" enquanto o painel mostrava a conta "conectado". Conta da Reserva renova no spawn, e uma renovação já em andamento é esperada (F-1642).' },
+    { title: 'Login com um clique, só quando precisa', detail: 'Quando a CLI recusa a sessão ou não há refresh token no prazo, a linha da conta mostra "sessão expirada" e o cartão "Não subiu" do pane oferece «Entrar novamente» na conta certa, pelo mesmo fluxo do painel (F-1642).' },
+    { title: 'Ponytail 5.3.2 em todo código', detail: 'No contrato do worker, na skill de todo pane e no lembrete do "+ Pane", que sai também sem o Jev para pedidos de código e respeita "stop ponytail" / "modo normal" até "start ponytail".' },
+    { title: 'Skills embutidas atualizadas', detail: 'impeccable 4.7.0, superpowers 7.0.1 e bmad-templates v6.12.4. Uma skill embutida não pré-aprova ferramenta no pane: o allowed-tools do frontmatter é podado na origem.' },
     { title: 'Missões sem exigir Git', detail: 'Projetos locais e repositórios sem primeiro commit usam a pasta existente. O Nexus não cria repositório ou commit implicitamente.' },
     { title: 'Engenharia reversa seleciona REA', detail: 'Pedidos de engenharia reversa recebem a skill REA automaticamente. O lançador estático JS/Electron Windows x64 requer o runtime revisado separado; motores opcionais não vêm no pacote.' },
     { title: 'Kits e navegador atualizados', detail: 'Inclui as melhorias da base 0.76.413/414. Instalações de kits no mesmo monorepo compartilham a trava, e a exclusividade só é liberada quando o encerramento do processo é comprovado.' },
