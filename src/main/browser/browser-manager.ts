@@ -222,6 +222,12 @@ export interface BrowserEntry {
   errorSeq: number;
   /** seq of the last action start — `read` reports errors after this point. */
   errorWindowStart: number;
+  /** Bumped for every request of this pane's page that the policy let through. */
+  requestSeq: number;
+  /** Requests still open: Chromium request id → the requestSeq it started at. */
+  inFlightRequests: Map<number, number>;
+  /** Bumped when a tracked request ends: its response usually re-renders. */
+  requestEndSeq: number;
 }
 
 interface TrackedBrowserError extends BrowserErrorItem {
@@ -565,6 +571,30 @@ function privateAddressesOf(decision: BrowserUrlAllowed): Set<string> {
   );
 }
 
+/** Long-lived sockets never "finish": they must not hold an action's settle. */
+const UNSETTLED_RESOURCE_TYPES = new Set(['webSocket', 'media', 'ping', 'cspReport']);
+const MAX_TRACKED_REQUESTS = 512;
+
+function trackRequestStart(
+  entry: BrowserEntry,
+  details: { id?: number; webContentsId?: number; resourceType?: string },
+): void {
+  if (typeof details.id !== 'number') return;
+  if (details.webContentsId !== undefined && details.webContentsId !== entry.view.webContents?.id) return;
+  if (details.resourceType && UNSETTLED_RESOURCE_TYPES.has(details.resourceType)) return;
+  entry.requestSeq += 1;
+  entry.inFlightRequests.set(details.id, entry.requestSeq);
+  while (entry.inFlightRequests.size > MAX_TRACKED_REQUESTS) {
+    const oldest = entry.inFlightRequests.keys().next().value as number | undefined;
+    if (oldest === undefined) break;
+    entry.inFlightRequests.delete(oldest);
+  }
+}
+
+function trackRequestEnd(entry: BrowserEntry, id: number): void {
+  if (entry.inFlightRequests.delete(id)) entry.requestEndSeq += 1;
+}
+
 function configureSessionSecurity(entry: BrowserEntry): void {
   const session = entry.view.webContents.session;
   if (!securedSessions.has(session)) {
@@ -619,6 +649,7 @@ function configureSessionSecurity(entry: BrowserEntry): void {
             decision.allowed &&
             allowedTargetMatchesPins(decision, approvedPrivateAddresses)
           ) {
+            trackRequestStart(entry, details);
             callback({});
             return;
           }
@@ -929,6 +960,9 @@ async function createEntry(
     errors: [],
     errorSeq: 0,
     errorWindowStart: 0,
+    requestSeq: 0,
+    inFlightRequests: new Map(),
+    requestEndSeq: 0,
   };
   browsers.set(key, entry);
   win.contentView.addChildView(view);
@@ -1065,7 +1099,13 @@ async function createEntry(
     if (!isError || typeof message !== 'string' || !message) return;
     pushBrowserError(entry, { kind: 'console', message });
   });
+  // Settle tracking: a request the page opened is in flight until it
+  // completes or fails (cancelled by policy requests never start).
+  wc.session.webRequest.onErrorOccurred?.((details) => {
+    trackRequestEnd(entry, details.id);
+  });
   wc.session.webRequest.onCompleted((details) => {
+    trackRequestEnd(entry, details.id);
     if (details.webContentsId !== wc.id || details.statusCode < 400) return;
     pushBrowserError(entry, {
       kind: 'http',
@@ -1752,13 +1792,20 @@ function runBrowserAutomationForPane(
 }
 
 const NAV_SETTLE_MS = 3_000;
+/** Nothing happened after the action: same-document DOM updates only. */
 const AFTER_GRACE_MS = 150;
+/** Something happened (request, navigation): it must stay quiet this long. */
+const SETTLE_QUIET_MS = 300;
+/** Ceiling for a same-document action whose requests never end (long poll). */
+const SAME_DOCUMENT_SETTLE_CAP_MS = 1_500;
+const SETTLE_TICK_MS = 25;
 
 interface BrowserBeforeState {
   url: string;
   title: string;
   navSeq: number;
   errorStartSeq: number;
+  requestSeq: number;
 }
 
 const BROWSER_ERROR_RING_MAX = 20;
@@ -1806,41 +1853,70 @@ function snapshotBrowserBefore(entry: BrowserEntry): BrowserBeforeState {
     title: redactBrowserText(wc.getTitle() || entry.title).slice(0, 512),
     navSeq: entry.navSeq,
     errorStartSeq: entry.errorSeq,
+    requestSeq: entry.requestSeq,
   };
 }
 
+/** Requests opened since the action started that are still running. */
+function requestsOpenSince(entry: BrowserEntry, sinceSeq: number): number {
+  let open = 0;
+  for (const seq of entry.inFlightRequests.values()) if (seq > sinceSeq) open += 1;
+  return open;
+}
+
 /**
- * Post-action settle + snapshot. If a main-frame navigation started at/after
- * the action (navSeq advanced), waits for did-stop-loading with a cap;
- * otherwise waits a short grace for same-document DOM updates. Everything
- * returned is redacted exactly like a page-side read.
+ * Quiescence instead of a fixed 150 ms: an action is settled when the
+ * navigation it triggered stopped loading, the requests it opened finished,
+ * and neither moved for SETTLE_QUIET_MS. With no activity at all the short
+ * grace still applies, so a plain click stays fast. Bounded either way —
+ * reading the page while the next document is half-swapped in reported the
+ * old page as the result of the click.
+ */
+async function waitForBrowserQuiescence(entry: BrowserEntry, before: BrowserBeforeState): Promise<void> {
+  const started = Date.now();
+  let lastActivityAt = started;
+  let navSeq = entry.navSeq;
+  let requestSeq = entry.requestSeq;
+  let requestEndSeq = entry.requestEndSeq;
+  let loading = entry.loading;
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_TICK_MS));
+    const now = Date.now();
+    if (entry.view.webContents?.isDestroyed?.()) return;
+    if (
+      entry.navSeq !== navSeq ||
+      entry.requestSeq !== requestSeq ||
+      entry.requestEndSeq !== requestEndSeq ||
+      entry.loading !== loading
+    ) {
+      navSeq = entry.navSeq;
+      requestSeq = entry.requestSeq;
+      requestEndSeq = entry.requestEndSeq;
+      loading = entry.loading;
+      lastActivityAt = now;
+    }
+    const navigated = entry.navSeq > before.navSeq;
+    const active = navigated || entry.requestSeq > before.requestSeq;
+    // A page that was already loading before the action is not waited for.
+    const busy = (navigated && entry.loading) || requestsOpenSince(entry, before.requestSeq) > 0;
+    const quietNeeded = active ? SETTLE_QUIET_MS : AFTER_GRACE_MS;
+    if (!busy && now - lastActivityAt >= quietNeeded) return;
+    const cap = navigated ? NAV_SETTLE_MS : SAME_DOCUMENT_SETTLE_CAP_MS;
+    if (now - started >= cap) return;
+  }
+}
+
+/**
+ * Post-action settle + snapshot: waits for quiescence (see
+ * waitForBrowserQuiescence), then describes the page. Everything returned is
+ * redacted exactly like a page-side read.
  */
 async function settleAndDescribeAfter(
   entry: BrowserEntry,
   before: BrowserBeforeState,
-  opts: { settleMs?: number } = {},
 ): Promise<{ after: BrowserAfterState; changed: BrowserChanged }> {
   const wc = entry.view.webContents;
-  if (entry.navSeq > before.navSeq) {
-    if (entry.loading) {
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(done, opts.settleMs ?? NAV_SETTLE_MS);
-        function done(): void {
-          clearTimeout(timer);
-          wc.removeListener('did-stop-loading', onStop);
-          wc.removeListener('did-fail-load', onStop);
-          resolve();
-        }
-        function onStop(): void {
-          done();
-        }
-        wc.once('did-stop-loading', onStop);
-        wc.once('did-fail-load', onStop);
-      });
-    }
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, opts.settleMs ?? AFTER_GRACE_MS));
-  }
+  await waitForBrowserQuiescence(entry, before);
   const after: BrowserAfterState = {
     url: redactPageUrl(wc.getURL() || entry.url),
     title: redactBrowserText(wc.getTitle() || entry.title).slice(0, 512),

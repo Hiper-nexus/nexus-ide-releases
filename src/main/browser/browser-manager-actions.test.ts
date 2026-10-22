@@ -35,6 +35,11 @@ const state = vi.hoisted(() => {
           listener as (...args: unknown[]) => void,
         ]);
       }),
+      onErrorOccurred: vi.fn((listener: unknown) => {
+        guestHandlers.set('webRequest:onErrorOccurred', [
+          listener as (...args: unknown[]) => void,
+        ]);
+      }),
     },
   };
   const guestHandlers = new Map<string, Array<(...args: unknown[]) => void>>();
@@ -813,6 +818,44 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     }
     destroyBrowser(PANE, scope);
   });
+
+  it('waits for the requests an action started and a quiet window before describing the page', async () => {
+    await boot();
+    const onBefore = state.browserSession.webRequest.onBeforeRequest.mock.calls.at(-1)?.[1] as
+      (details: Record<string, unknown>, callback: (response: { cancel?: boolean }) => void) => void;
+    const onCompleted = state.guestHandlers.get('webRequest:onCompleted')![0]!;
+    state.runAutomation.mockImplementationOnce(async () => {
+      // The click starts an XHR that answers only 400 ms later.
+      onBefore({ id: 7, url: 'https://example.test/api/save', resourceType: 'xhr', webContentsId: 22 }, () => {});
+      setTimeout(() => onCompleted({ id: 7, url: 'https://example.test/api/save', statusCode: 200, webContentsId: 22 }), 400);
+      return { clicked: true, element: { ref: 'e1', tag: 'button', role: 'button', name: 'Salvar' } };
+    });
+    const started = Date.now();
+    await clickBrowserElement(PANE, scope, 'e1');
+    expect(Date.now() - started).toBeGreaterThanOrEqual(400 + 250);
+
+    const quiet = Date.now();
+    await clickBrowserElement(PANE, scope, 'e1');
+    // No request and no navigation: the short grace, not the quiet window.
+    expect(Date.now() - quiet).toBeLessThan(400);
+    destroyBrowser(PANE, scope);
+  });
+
+  it('never waits past the cap for a request that never ends (long poll)', async () => {
+    await boot();
+    const onBefore = state.browserSession.webRequest.onBeforeRequest.mock.calls.at(-1)?.[1] as
+      (details: Record<string, unknown>, callback: (response: { cancel?: boolean }) => void) => void;
+    state.runAutomation.mockImplementationOnce(async () => {
+      onBefore({ id: 8, url: 'https://example.test/poll', resourceType: 'xhr', webContentsId: 22 }, () => {});
+      return { clicked: true, element: { ref: 'e1', tag: 'button', role: 'button', name: 'Abrir' } };
+    });
+    const started = Date.now();
+    await clickBrowserElement(PANE, scope, 'e1');
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeGreaterThanOrEqual(1_000);
+    expect(elapsed).toBeLessThan(2_500);
+    destroyBrowser(PANE, scope);
+  }, 10_000);
 
   it('goes back, forward and reloads through the action contract (after/changed/errors)', async () => {
     await boot();
