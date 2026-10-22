@@ -100,9 +100,9 @@ const DESIGN_CHARTER_HEADING = '# Design Charter';
  * regras completas vivem na skill.
  */
 export const LEAN_CODE_REMINDER =
-  '[Nexus · Jev] Pedido de código: siga a skill ponytail — entenda o fluxo, ' +
-  'reuse o que já existe, nada de abstração que ninguém pediu, o menor diff ' +
-  'correto e um teste pequeno que falhe se a lógica quebrar.';
+  '[Nexus] Pedido de código: siga a skill ponytail — mapeie tudo que a mudança ' +
+  'alcança, reuse o que já existe, nada de abstração que ninguém pediu, o menor ' +
+  'diff correto, um teste pequeno, e feche dizendo o que pulou e o risco.';
 
 /**
  * Pré-filtro barato (regex, sem chamada ao Jev) para pedidos de página/
@@ -122,6 +122,20 @@ function isBrowserRequest(prompt: string): boolean {
     BROWSER_REQUEST_PATTERN.test(prompt) ||
     (BROWSER_EXTRACT_PATTERN.test(prompt) && WEB_CONTEXT_PATTERN.test(prompt))
   );
+}
+
+/**
+ * Pré-filtro barato (regex, sem chamada ao Jev) para pedido de código, no mesmo
+ * molde do de navegador acima. Sem ele, o pane "+" de quem não tem credencial
+ * do Jev — ou com o Jev desligado, fora do ar ou estourando os 2,5 s — nunca
+ * ouve falar da ponytail: a skill fica só instalada, à espera de o modelo
+ * decidir usá-la. Verbo de ESCRITA só: ler, explicar e analisar não entram.
+ */
+const CODE_REQUEST_PATTERN =
+  /\b(implement(a|e|ar)?|refator(a|e|ar)?|refactor|corrij(a|ir)|conserta(r)?|arrum(a|ar)?|ajust(a|e|ar)|escrev(a|er)|cri(a|e|ar)|adicion(a|e|ar)|remov(a|er)|apag(a|ue|ar)|migra(r)?|renomei(a|e|ar)|fix|implement|rewrite|rename|migrate)\b/iu;
+
+function isCodeRequest(prompt: string): boolean {
+  return CODE_REQUEST_PATTERN.test(prompt);
 }
 
 export const BROWSER_TOOL_HINT =
@@ -869,9 +883,14 @@ export async function handleHookDelegateRequest(
       markReminded(browserHintDeliveredAt, ctx.sessionId, now);
       parts.push(BROWSER_TOOL_HINT);
     }
+    // Com conselho, quem decide é o Jev (um "não é código" dele vale). Sem
+    // conselho nenhum, o pré-filtro decide: silêncio ali deixava o pedido de
+    // código sem a ponytail, que é o pontapé inicial de todo trabalho de código.
+    const writesCode = advice
+      ? advice.writesCode >= LEAN_REMINDER_MIN_WRITES_CODE
+      : isCodeRequest(prompt);
     if (
-      advice &&
-      advice.writesCode >= LEAN_REMINDER_MIN_WRITES_CODE &&
+      writesCode &&
       !prompt.includes(PONYTAIL_RULES_HEADING) &&
       ctx.sessionId &&
       claimLeanReminder(ctx.sessionId, now)
