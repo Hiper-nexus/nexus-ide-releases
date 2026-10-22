@@ -2970,6 +2970,68 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
   (keychain trancado) mantinha a linha fora e o token dentro, e re-adicionar o
   namespace reaproveitava a credencial "removida". A linha fica, com o motivo, e
   o painel diz qual é.
+- **Só o contrato RESOLVIDO é anexado ao registry.** `assertRegistry({ ...input,
+  ...(auth ? { auth } : {}) })` carregava o `auth` DO CHAMADOR sempre que o
+  portão respondia `undefined`: bastava mandar um `auth` no pedido para
+  reconstruir o contrato recusado, e contrato é o que solta o token. O `auth`
+  declarado é descartado antes do spread. Apareceu quando `envVar` virou
+  opcional na entrada e o tipo deixou de fechar — portão novo em volta de um
+  objeto espalhado pede esse cuidado explícito.
+- **O cofre vai primeiro, então todo caminho que não aterrissa DEVOLVE o token**
+  (`rollbackToken`, nos três pontos: persistência não confirmada, `catch` e
+  remoção). `registrySaveOutcome`/`registryRemovalOutcome` leem a linha de
+  volta, porque `replaceOrchSettings` devolve as configurações anteriores em
+  silêncio quando o schema recusa. E a devolução pode ser recusada também: aí a
+  chave é APAGADA (nenhuma credencial é o único fail-closed que resta) e a
+  mensagem diz; nem apagar funcionando, ela manda recadastrar o registry.
+- **Chave de licença passa por `assertBoardUiLicenseKey` antes do cofre**,
+  inclusive sem projeto aberto: chave malformada guardada como sucesso vencia a
+  embutida e só fazia o "Ativar" lançar depois.
+- **`Writable.write()` reporta EPIPE de forma ASSÍNCRONA.** Em
+  `ui-kit-mcp-call.ts` isso chega no stream, não no try/catch: sem escuta em
+  `child.stdin` virava exceção não tratada no MAIN. Há escuta (removida no
+  `cleanup`) e callback na escrita. O dublê do teste é EventEmitter, como o
+  stdin real — um objeto com só `write` fazia o teste passar no código errado.
+- **A busca padrão DIZ o que não cobriu** (`defaultShadcnSearchPlan` →
+  `{registries, omitted}`, `omittedRegistries` no recibo do `run`): com 16+
+  registries, "não achei" e "nem procurei lá" ficavam iguais e o agente não
+  podia nomear um namespace que nunca lhe foi dito. O catálogo mescla os lotes.
+- **O painel não engole causa nem motivo**: instalação que falha por conflito de
+  dependência ou rede deixa o diagnóstico em `output` e nenhum `error` (o
+  `<pre>` mostra a cauda), e o motivo do cofre na gravação da licença só
+  sobrevive porque o refresh de status roda apenas no sucesso.
+- **O contrato de auth é configurável no painel** (cabeçalho ou parâmetro, nome,
+  prefixo `bearer`/`raw`); a VARIÁVEL continua derivada no Main, porque o nome
+  dela seleciona qual credencial é lida. `envVar` na entrada é opcional e
+  ignorado. A cópia do painel evita a string "Bearer " com espaço: o guard do
+  teste a usa para provar que nenhuma CHAVE aparece na tela.
+- **O portão da release pede o audit de novo antes de desistir.** Medido em
+  21–22/10: os endpoints de audit do npm respondem 400 de forma INTERMITENTE —
+  duas candidatas (0.76.380 e 0.76.381) morreram nisso e uma sonda minutos
+  depois, mesmo lockfile e mesmo npm fixado, recebeu o relatório normal.
+  `attemptAudit` (`scripts/release-security-gate.mjs`) tenta 3 vezes, 2 s entre
+  elas, e para no primeiro RELATÓRIO; relatório que chega sujo reprova na
+  primeira. Só com prova de erro (saída não-zero ou erro dito no payload/stderr)
+  o relatório da árvore COMPLETA — superconjunto — substitui o de produção, e a
+  substituição vai no manifesto (`productionAuditSource`) e dentro do relatório
+  guardado. Relatório malformado com saída zero continua falha dura.
+- **O preset responde pela URL DELE, não pelo host.** Comparar host parecia
+  defensável (a credencial sai para um host e o fornecedor já a tem), mas o
+  fornecedor pode servir conteúdo de outra pessoa em outro caminho, e o
+  operador autorizou a chave para a URL que digitou. `operatorTokenForRegistry`
+  já exigia a URL exata para a chave embutida: é uma regra só.
+- **Palpite sem Jev precisa de AFINIDADE, não da ordem do catálogo**
+  (`taskItemAffinity`, fonte única usada pelo `rankForTask` e pelo fallback do
+  `pickUiKitByHeuristic`). O catálogo vivo do BoardUI tem categorias grossas
+  ('base') e nenhum slug com "dashboard": sobreposição literal era zero, tudo
+  caía no espalhamento por categoria e o primeiro era arbitrário — `tree-view`
+  instalado para um painel. A afinidade soma as palavras da tarefa MAIS os
+  conceitos que elas implicam; a escolha é a de maior afinidade; sem afinidade
+  nenhuma a resposta é nenhum item. Conceito novo entra em `TASK_CONCEPTS`.
+- **No painel, falha é a última palavra do Main**: tanto `saveLicense` quanto
+  `activateLicense` só recarregam o status no SUCESSO. A ativação recusa por
+  motivos locais (license.json ilegível, de outra máquina, impossível de
+  gravar) e o refresh os trocava pelo status genérico do fornecedor.
 - **`ui-kit-ipc.ts` É testável** (`ui-kit-ipc.test.ts`): o comentário antigo dizia
   que não, e nesse ponto cego três rodadas de revisão seguidas acharam o handler
   ignorando a resposta que os próprios helpers davam. `handleTrusted` mocka como

@@ -12555,7 +12555,7 @@ const RELEASE_076382_FULL: AppRelease = {
 
 export const RELEASE_076382: AppRelease = RELEASE_076382_FULL;
 
-export const CURRENT_RELEASE: AppRelease = {
+const RELEASE_076390_FULL: AppRelease = {
   version: '0.76.390',
   date: '2026-10-22',
   codename: 'Kits de UI: shadcn e BoardUI dentro do Nexus',
@@ -12572,4 +12572,77 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076390: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076390: AppRelease = RELEASE_076390_FULL;
+
+const RELEASE_076395_FULL: AppRelease = {
+  version: '0.76.395',
+  date: '2026-10-22',
+  codename: 'A sugestão de componente entende o pedido',
+  summary:
+    'Correção de qualidade medida sobre a 0.76.390: a sugestão de item ' +
+    'devolvia "combobox" para tela de login, tabela, barra lateral, landing e ' +
+    'configurações, porque a palavra "com" cabe dentro de "combobox". A ' +
+    'comparação passou a ser palavra a palavra; nos mesmos 15 pedidos reais, ' +
+    'login → login-01, tabela → table, barra lateral → sidebar-01 e a landing ' +
+    'passou a devolver nenhum item em vez de um errado.',
+  highlights: [
+    { title: 'Palavra de enchimento não escolhe componente', detail: 'Medido com 15 pedidos reais e o catálogo vivo (69 itens do BoardUI, 100 do shadcn). A comparação é palavra a palavra nos dois lados, com lista de enchimento e casamento por palavra inteira ou prefixo de quatro letras.' },
+    ...RELEASE_076390_FULL.highlights,
+  ],
+  fixes: RELEASE_076390_FULL.fixes,
+};
+
+export const RELEASE_076395: AppRelease = RELEASE_076395_FULL;
+
+const RELEASE_076396_FULL: AppRelease = {
+  version: '0.76.396',
+  date: '2026-10-22',
+  codename: 'A sugestão de componente entende o pedido',
+  summary:
+    'No desktop Linux, a sugestão de componente deixa de escolher "combobox" ' +
+    'por causa da palavra "com". A comparação é palavra a palavra. É a mesma ' +
+    'correção da 0.76.395, que fica como pacote macOS e continua Latest; esta ' +
+    'release não toma essa marca. A 0.76.390 é o pacote macOS anterior. A ' +
+    '0.76.385 foi tagueada e não publicada. A 0.76.382 é o pacote Linux anterior.',
+  highlights: RELEASE_076395_FULL.highlights,
+  fixes: RELEASE_076395_FULL.fixes,
+};
+
+export const RELEASE_076396: AppRelease = RELEASE_076396_FULL;
+
+const RELEASE_076405_FULL: AppRelease = {
+  version: '0.76.405',
+  date: '2026-10-22',
+  codename: 'O painel conferido a olho',
+  summary:
+    'Fecha o ciclo dos kits de UI com a última correção, achada olhando a ' +
+    'tela: o painel não imprime mais "undefined" quando falta a contagem de ' +
+    'itens grátis. Na mesma passada foram conferidos a olho os selos dos dois ' +
+    'kits, a licença com Remover, as receitas, o catálogo, o cache, a linha do ' +
+    'contrato de autenticação e a falha de instalação mostrando a saída da ' +
+    'ferramenta. A 0.76.396 é o pacote Linux da entrega anterior.',
+  highlights: [
+    { title: 'O painel nunca imprime "undefined"', detail: 'Texto de interface não interpola valor sem guarda: sem a contagem, a frase volta a ser "A metade grátis funciona sem chave nenhuma".' },
+    ...RELEASE_076396_FULL.highlights,
+  ],
+  fixes: RELEASE_076396_FULL.fixes,
+};
+
+export const RELEASE_076405: AppRelease = RELEASE_076405_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.406',
+  date: '2026-10-22',
+  codename: 'O painel nunca imprime "undefined"',
+  summary:
+    'No desktop Linux, o painel de Kits de UI deixa de imprimir "undefined" ' +
+    'quando falta a contagem de itens grátis: a frase volta a ser "A metade ' +
+    'grátis funciona sem chave nenhuma". É a mesma correção da 0.76.405, que ' +
+    'fica como pacote macOS e continua Latest; esta release não toma essa ' +
+    'marca. A 0.76.400 foi tagueada e não publicada. A 0.76.396 é o pacote ' +
+    'Linux anterior.',
+  highlights: RELEASE_076405_FULL.highlights,
+  fixes: RELEASE_076405_FULL.fixes,
+};
+
+export const RELEASE_076406: AppRelease = CURRENT_RELEASE;
