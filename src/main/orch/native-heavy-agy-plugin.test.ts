@@ -149,7 +149,15 @@ it('the generated hook denies inside Nexus and asks outside when Node or the scr
     fs.cpSync(f.options.resourceDirectory,resources,{recursive:true}); fs.writeFileSync(node,`#!/bin/sh\nexec '${process.execPath}' "$@"\n`,{mode:0o755});
     expect(await f.ensure({...f.options,node,resourceDirectory:resources})).toEqual({registered:true});
     const command=(JSON.parse(fs.readFileSync(path.join(f.destination,'hooks.json'),'utf8'))[path.basename(f.destination)].PreToolUse[0].hooks[0].command) as string;
-    const run=(token:boolean)=>JSON.parse(execFileSync('/bin/sh',['-c',command],{input:JSON.stringify({toolCall:{name:'run_command',args:{CommandLine:'make'}}}),encoding:'utf8',env:{PATH:'/usr/bin:/bin',...(token?{NEXUS_GATE_TOKEN:'finite'}:{})},timeout:5000})).decision;
+    const input=path.join(f.home,'hook-input.json');
+    fs.writeFileSync(input,JSON.stringify({toolCall:{name:'run_command',args:{CommandLine:'make'}}}));
+    const run=(token:boolean)=>{
+      // Fallbacks exit without reading stdin. A pipe races their exit (EPIPE),
+      // so provide the same payload via a fresh file descriptor on every call.
+      const stdin=fs.openSync(input,'r');
+      try { return JSON.parse(execFileSync('/bin/sh',['-c',command],{stdio:[stdin,'pipe','pipe'],encoding:'utf8',env:{PATH:'/usr/bin:/bin',...(token?{NEXUS_GATE_TOKEN:'finite'}:{})},timeout:5000})).decision; }
+      finally { fs.closeSync(stdin); }
+    };
     expect([run(false),run(true)]).toEqual(['ask','deny']);
     fs.unlinkSync(node); expect([run(false),run(true)]).toEqual(['ask','deny']);
     fs.writeFileSync(node,`#!/bin/sh\nexec '${process.execPath}' "$@"\n`,{mode:0o755}); fs.unlinkSync(path.join(resources,'agy-tool-hook.cjs'));
