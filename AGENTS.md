@@ -556,7 +556,9 @@ saber isto antes de mexer:
      contexto de código: marcador forte (`STRONG_CODE_CONTEXT_PATTERN`:
      função, componente, endpoint, `crase`, arquivo `.ts`, `.json`…) basta; o
      ambíguo (teste, bug, API, commit, branch) só conta se o pedido não for um
-     texto (mensagem, relatório, resumo, PRD…). "Refatorar" basta sozinho.
+     texto (mensagem, relatório, resumo, PRD…). Uma ORDEM de refatorar
+     ("refatore o checkout", "please refactor…") basta sozinha; "explique a
+     refatoração" e "do not refactor" não.
      "Escreva o PRD", "write a commit message" e "crie um bug report" ficam
      calados. Antes o silêncio do Jev valia como "não é código" e o pane
      ficava só com a skill instalada.

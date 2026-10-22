@@ -303,6 +303,11 @@ describe('hook /hook/delegate', () => {
       'create a bug report for the checkout issue',
       'write an API summary for the partners',
       'escreva o relatório de testes da sprint',
+      'explain the refactor',
+      'write a summary of the refactor',
+      'do not refactor; just review the plan',
+      'explique a refatoração do checkout',
+      'refatore o texto do e-mail de boas-vindas',
     ])('sem conselho do Jev, escrita que não é código não recebe o lembrete: %s', async (prompt) => {
       __resetLeanRemindersForTests();
       expect(JSON.stringify((await handleHookDelegateRequest(operator, { prompt }, { advise: vi.fn(async () => null) })).payload))
@@ -316,6 +321,8 @@ describe('hook /hook/delegate', () => {
       'corrija o bug do login',
       'adicione um endpoint de exportação na API',
       'refatore o checkout',
+      'please refactor the payments module',
+      'pode refatorar o login?',
       'edit this component',
       'change the endpoint',
       'modify the validation function',
