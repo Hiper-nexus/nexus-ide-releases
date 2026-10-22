@@ -593,12 +593,12 @@ describe('handleMcpMessage', () => {
     expect(read).not.toHaveBeenCalled();
     expect(handoff).not.toHaveBeenCalled();
     expect(
-      (readResponse?.result as { content: Array<{ text: string }> })
-        .content[0]?.text,
+      (readResponse?.result as { content: Array<{ text: string }> } | undefined)
+        ?.content[0]?.text,
     ).toContain('session_authority_revoked');
     expect(
-      (handoffResponse?.result as { content: Array<{ text: string }> })
-        .content[0]?.text,
+      (handoffResponse?.result as { content: Array<{ text: string }> } | undefined)
+        ?.content[0]?.text,
     ).toContain('session_authority_revoked');
   });
 

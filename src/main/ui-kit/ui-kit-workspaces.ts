@@ -58,6 +58,28 @@ function hasPackageJson(dir: string): boolean {
   }
 }
 
+/** Child package directories of `base`, one level deep. */
+function childDirs(root: string, base: string): readonly string[] {
+  try {
+    return fs
+      .readdirSync(path.join(root, base), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules')
+      .map((entry) => (base ? `${base}/${entry.name}` : entry.name));
+  } catch {
+    return [];
+  }
+}
+
+/** `apps/*` / `packages/**` → their children; an exact dir → itself; other globs → nothing. */
+function expandPattern(root: string, pattern: string): readonly string[] {
+  const glob = /^(.*?)\/\*\*?$/.exec(pattern);
+  if (glob) {
+    const base = glob[1] ?? '';
+    return base.includes('*') ? [] : childDirs(root, base);
+  }
+  return pattern.includes('*') ? [] : [pattern];
+}
+
 /** `apps/*` and `packages/**` expand one level; `!x` excludes; exact dirs pass. */
 export function listUiKitWorkspaces(root: string): readonly string[] {
   const found = new Set<string>();
@@ -66,24 +88,7 @@ export function listUiKitWorkspaces(root: string): readonly string[] {
     const negated = raw.startsWith('!');
     const pattern = (negated ? raw.slice(1) : raw).replace(/\\/g, '/').replace(/\/+$/, '');
     if (!pattern || pattern.startsWith('/') || pattern.split('/').includes('..')) continue;
-    const targets: string[] = [];
-    const glob = /^(.*?)\/\*\*?$/.exec(pattern);
-    if (glob) {
-      const base = glob[1] ?? '';
-      if (base.includes('*')) continue;
-      try {
-        for (const entry of fs.readdirSync(path.join(root, base), { withFileTypes: true })) {
-          if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
-            targets.push(base ? `${base}/${entry.name}` : entry.name);
-          }
-        }
-      } catch {
-        continue;
-      }
-    } else if (!pattern.includes('*')) {
-      targets.push(pattern);
-    }
-    for (const rel of targets) (negated ? excluded : found).add(rel);
+    for (const rel of expandPattern(root, pattern)) (negated ? excluded : found).add(rel);
   }
   return [...found]
     .filter((rel) => !excluded.has(rel))
