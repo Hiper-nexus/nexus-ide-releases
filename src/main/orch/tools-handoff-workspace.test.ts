@@ -153,7 +153,8 @@ describe("workspace handoff", () => {
     expect(armedAutoClosePaneId('child')).toBe('pane-child');
     const proof = createScopedBrowserArtifactStore(manager, scope).recordScreenshot({ paneId: 'browser-pane',
       png: Buffer.from('Main capture fixture'), width: 1, height: 1, url: 'http://localhost:3000', title: 'UI', capturedAt: 1100 });
-    expect(recordVisualHandoffEvidence(child, proof.id)).toBe(true);
+    // The fixture has no running preview: the URL check is the only fake here.
+    expect(recordVisualHandoffEvidence(child, proof.id, undefined, { servedFromCandidate: () => true })).toBe(true);
     const second = await tool('submit').handler({ ...args, fullText: "Relatório completo: implementação em result.ts, validação executada e resultados conferidos." }, child);
     expect(second).toMatchObject({ status: 'success', visualVerification: { verified: true, artifactId: proof.id } });
     expect(getProjectDomainStores(scope).handoffs.list({ includeDelivered: true }).map(h => h.status)).toEqual(['partial', 'success']);
