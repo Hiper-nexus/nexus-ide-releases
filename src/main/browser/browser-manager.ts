@@ -574,10 +574,19 @@ function configureSessionSecurity(entry: BrowserEntry): void {
     });
     session.setPermissionCheckHandler(() => false);
     session.setDevicePermissionHandler(() => false);
-    session.on('will-download', (event) => {
+    session.on('will-download', (event, item, webContents) => {
       // Browser automation has no download primitive. Prevent a click from
-      // writing an attacker-selected file without a dedicated confirmation.
+      // writing an attacker-selected file without a dedicated confirmation —
+      // but say so: a silent cancel read as "the button does nothing".
       event.preventDefault();
+      const owner = webContents ? browserEntryForWebContents(webContents) : null;
+      if (!owner) return;
+      const name = typeof item?.getFilename === 'function' ? item.getFilename() : '';
+      const mime = typeof item?.getMimeType === 'function' ? item.getMimeType() : '';
+      pushBrowserError(owner.entry, {
+        kind: 'load',
+        message: `download blocked (no download in automation): ${name || 'file'}${mime ? ` (${mime})` : ''}`,
+      });
     });
   }
 
@@ -2607,6 +2616,34 @@ export async function clickBrowserElement(
     },
     options,
   );
+}
+
+export type BrowserHistoryAction = 'back' | 'forward' | 'reload';
+
+/**
+ * `back` / `forward` / `reload` for the agent, with the same after/changed/
+ * errors contract as any action. History only revisits pages this pane already
+ * loaded; network fetches still pass the session's request policy. A pane
+ * locked to one exact review URL never walks away from it.
+ */
+export async function historyBrowserPane(
+  paneId: string,
+  scope: ProjectExecutionScope,
+  action: BrowserHistoryAction,
+  options?: BrowserActionOptions,
+): Promise<Record<string, unknown> & { paneId: string; navigated: boolean }> {
+  const entry = withEntry(paneId, scope);
+  const wc = entry.view.webContents;
+  if (entry.exactNavigationLock && action !== 'reload') {
+    throw new Error('automated design-review browser is locked to its approved local preview URL');
+  }
+  const can = action === 'back' ? wc.canGoBack() : action === 'forward' ? wc.canGoForward() : true;
+  if (!can) return { paneId, navigated: false, action, reason: 'no-history' };
+  const before = snapshotBrowserBefore(entry);
+  if (action === 'back') wc.goBack();
+  else if (action === 'forward') wc.goForward();
+  else wc.reload();
+  return attachAfterAndMaybePage(entry, before, { paneId, navigated: true, action }, options);
 }
 
 export interface BrowserFillResult {

@@ -15,6 +15,7 @@ const scope: ProjectExecutionScope = Object.freeze({
 });
 
 const state = vi.hoisted(() => {
+  const sessionHandlers = new Map<string, (...args: unknown[]) => void>();
   const browserSession = {
     resolveHost: vi.fn(async () => ({
       endpoints: [{ address: '93.184.216.34', port: 0 }],
@@ -22,7 +23,11 @@ const state = vi.hoisted(() => {
     setPermissionRequestHandler: vi.fn(),
     setPermissionCheckHandler: vi.fn(),
     setDevicePermissionHandler: vi.fn(),
-    on: vi.fn(),
+    // Session handlers are installed once per session (securedSessions), so
+    // keep them outside the per-test mock call log.
+    on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+      sessionHandlers.set(event, handler);
+    }),
     webRequest: {
       onBeforeRequest: vi.fn(),
       onCompleted: vi.fn((listener: unknown) => {
@@ -51,6 +56,8 @@ const state = vi.hoisted(() => {
     getTitle: vi.fn(() => ''),
     canGoBack: vi.fn(() => false),
     canGoForward: vi.fn(() => false),
+    goBack: vi.fn(),
+    goForward: vi.fn(),
     isLoading: vi.fn(() => false),
     isDestroyed: vi.fn(() => false),
     isCrashed: vi.fn(() => false),
@@ -91,6 +98,7 @@ const state = vi.hoisted(() => {
   };
   return {
     browserSession,
+    sessionHandlers,
     guest,
     guestHandlers,
     owner,
@@ -249,6 +257,7 @@ import {
   clickBrowserElement,
   destroyBrowser,
   ensureBrowser,
+  historyBrowserPane,
   loadBrowser,
   lockBrowserToExactUrl,
   openCdpRelayForPane,
@@ -802,6 +811,44 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     } finally {
       state.canVisual.mockReturnValue(false);
     }
+    destroyBrowser(PANE, scope);
+  });
+
+  it('goes back, forward and reloads through the action contract (after/changed/errors)', async () => {
+    await boot();
+    state.guest.canGoBack.mockReturnValue(false);
+    const none = await historyBrowserPane(PANE, scope, 'back');
+    expect(none).toMatchObject({ navigated: false, reason: 'no-history' });
+    expect(state.guest.goBack).not.toHaveBeenCalled();
+
+    state.guest.canGoBack.mockReturnValue(true);
+    const back = await historyBrowserPane(PANE, scope, 'back');
+    expect(state.guest.goBack).toHaveBeenCalledOnce();
+    expect(back).toMatchObject({ navigated: true, action: 'back' });
+    expect(back.changed).toBeDefined();
+    expect(back.errors).toBeDefined();
+
+    state.guest.canGoForward.mockReturnValue(true);
+    await historyBrowserPane(PANE, scope, 'forward');
+    expect(state.guest.goForward).toHaveBeenCalledOnce();
+    await historyBrowserPane(PANE, scope, 'reload');
+    expect(state.guest.reload).toHaveBeenCalledOnce();
+    destroyBrowser(PANE, scope);
+  });
+
+  it('reports a refused download instead of cancelling it in silence', async () => {
+    await boot();
+    const onDownload = state.sessionHandlers.get('will-download') as
+      (event: { preventDefault: () => void }, item: unknown, wc: unknown) => void;
+    const preventDefault = vi.fn();
+    onDownload({ preventDefault }, {
+      getFilename: () => 'relatorio-token=abcdefghijklmnop1234.pdf',
+      getMimeType: () => 'application/pdf',
+    }, state.guest);
+    expect(preventDefault).toHaveBeenCalled();
+    const read = await readBrowserPage(PANE, scope);
+    expect(read.errors.items.at(-1)?.message).toMatch(/download blocked/);
+    expect(read.errors.items.at(-1)?.message).toContain('application/pdf');
     destroyBrowser(PANE, scope);
   });
 
