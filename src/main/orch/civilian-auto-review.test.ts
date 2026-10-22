@@ -12,6 +12,7 @@ import {
   blockingFindingsOf,
   CIVILIAN_REPAIR_BUDGET_PER_MISSION,
   civilianAutoReviewEvidenceNote,
+  COMPLETION_REGRESSION_BUDGETS_MS,
   describeFindingsForOperator,
   enforceCivilianAutoReview,
   resolveAutoReviewBaseSha,
@@ -812,6 +813,82 @@ it('strict completion executes its tests even when the optional worker fast gate
     await enforceCivilianAutoReview({ mission: missionFixture(), scope, productFiles: ['app.ts'], completionBaseSha: BASE_SHA }, { ...dependencies, regressionGate: null });
     expect(run).not.toHaveBeenCalled();
   } finally { run.mockRestore(); enabled.mockRestore(); }
+});
+
+describe('strict completion regression budget', () => {
+  const strictInput = (id: string) => ({ mission: missionFixture({ id }), scope, productFiles: ['app.ts'], completionBaseSha: BASE_SHA,
+    liveOrchestratorSessionId: 'maestro' });
+  const outOfTime = (budget: number, notRun: RegressionGateResult['notRun'] = {
+    causes: ['test-deadline'], mapMs: 1_000, testBudgetMs: budget - 1_000, byDistance: [] }) =>
+    regressionResult({ status: 'unavailable', testsRun: ['src/a.test.ts'], testsNotRun: ['src/b.test.ts'], notRun,
+      coverage: { indexComplete: true, skippedTests: [] }, durationMs: budget, headSha: HEAD_SHA, baseSha: BASE_SHA });
+
+  it('gives completion a budget sized for the whole impacted suite with E2E, not the 120 s of a worker handoff', async () => {
+    __resetCivilianAutoReviewForTests();
+    const gate = vi.fn(async () => regressionResult({ coverage: { indexComplete: true, skippedTests: [] }, headSha: HEAD_SHA, baseSha: BASE_SHA }));
+    await enforceCivilianAutoReview(strictInput('mission-budget-first'), { ...deps().dependencies, regressionGate: gate });
+    expect(gate).toHaveBeenCalledWith(expect.objectContaining({ includeE2E: true, timeoutMs: COMPLETION_REGRESSION_BUDGETS_MS[0] }));
+  });
+
+  it('a suite that runs out of time is reported as a timeout, never as a code repair, and the next try gets more time', async () => {
+    __resetCivilianAutoReviewForTests();
+    const { dependencies, calls } = deps();
+    const budgets: number[] = [];
+    const gate = vi.fn(async (input: { timeoutMs?: number }) => { budgets.push(input.timeoutMs!); return outOfTime(input.timeoutMs!); });
+    for (let attempt = 0; attempt < COMPLETION_REGRESSION_BUDGETS_MS.length - 1; attempt++) {
+      const result = await enforceCivilianAutoReview(strictInput('mission-budget-escalation'), { ...dependencies, regressionGate: gate });
+      expect(result).toMatchObject({ kind: 'defer-to-roster-review', retryable: true });
+      if (result.kind === 'defer-to-roster-review') expect(result.reason).toMatch(/não couberam no prazo/u);
+    }
+    expect(budgets).toEqual(COMPLETION_REGRESSION_BUDGETS_MS.slice(0, -1));
+    const last = await enforceCivilianAutoReview(strictInput('mission-budget-escalation'), { ...dependencies, regressionGate: gate });
+    expect(budgets.at(-1)).toBe(COMPLETION_REGRESSION_BUDGETS_MS.at(-1));
+    // At the ceiling the refusal is final and still names the real cause.
+    expect(last).toMatchObject({ kind: 'defer-to-roster-review' });
+    if (last.kind === 'defer-to-roster-review') { expect(last.retryable).not.toBe(true); expect(last.reason).toMatch(/não couberam no prazo/u); }
+    expect(calls.repairs).toEqual([]);
+  });
+
+  it('an import map cut by the deadline is a timeout even when every selected test ran', async () => {
+    __resetCivilianAutoReviewForTests();
+    const { dependencies, calls } = deps();
+    const result = await enforceCivilianAutoReview(strictInput('mission-budget-map'), { ...dependencies,
+      regressionGate: async (input: { timeoutMs?: number }) => ({ ...outOfTime(input.timeoutMs!, null), testsNotRun: [],
+        coverage: { indexComplete: false, skippedTests: [] } }) });
+    expect(result).toMatchObject({ kind: 'defer-to-roster-review', retryable: true });
+    expect(calls.repairs).toEqual([]);
+  });
+
+  it('a native suite cut by the deadline (retryable, no per-test causes) escalates instead of looping on the same budget', async () => {
+    __resetCivilianAutoReviewForTests();
+    const budgets: number[] = [];
+    const gate = async (input: { timeoutMs?: number }) => { budgets.push(input.timeoutMs!);
+      return { ...outOfTime(input.timeoutMs!, null), retryable: true, testsNotRun: ['(go suite: .)'] }; };
+    const first = await enforceCivilianAutoReview(strictInput('mission-budget-native'), { ...deps().dependencies, regressionGate: gate });
+    if (first.kind !== 'defer-to-roster-review') throw new Error(first.kind);
+    expect(first.reason).toMatch(/não couberam no prazo/u);
+    await enforceCivilianAutoReview(strictInput('mission-budget-native'), { ...deps().dependencies, regressionGate: gate });
+    expect(budgets).toEqual(COMPLETION_REGRESSION_BUDGETS_MS.slice(0, 2));
+  });
+
+  it('real findings still go to repair, without blaming the runner for the timeout', async () => {
+    __resetCivilianAutoReviewForTests();
+    const { dependencies, calls } = deps({ analyze: async () => analysis([finding('high', 'src/pay.ts')]) });
+    const result = await enforceCivilianAutoReview(strictInput('mission-budget-finding'), { ...dependencies,
+      regressionGate: async (input: { timeoutMs?: number }) => outOfTime(input.timeoutMs!) });
+    expect(result.kind).toBe('repair-dispatched');
+    expect(calls.repairs[0]).toContain('src/pay.ts');
+    expect(calls.repairs[0]).not.toContain('Testes aplicáveis não foram verificados');
+  });
+
+  it('a runner that could not run keeps its own repair path', async () => {
+    __resetCivilianAutoReviewForTests();
+    const { dependencies, calls } = deps();
+    const result = await enforceCivilianAutoReview(strictInput('mission-budget-runner'), { ...dependencies,
+      regressionGate: async () => ({ ...outOfTime(10_000, { causes: ['runner'], mapMs: 1, testBudgetMs: 1, byDistance: [] }), durationMs: 10 }) });
+    expect(result.kind).toBe('repair-dispatched');
+    expect(calls.repairs[0]).toContain('Testes aplicáveis não foram verificados');
+  });
 });
 
 it('strict admission retries never consume repair budget or dispatch code repair', async () => {

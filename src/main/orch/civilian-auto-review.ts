@@ -23,6 +23,7 @@ import { deliverAgentPrompt } from './tool-util';
 import { createCompletionCheckExecutors } from './completion-check-executors';
 import {
   isRegressionGateEnabled,
+  MIN_TEST_BUDGET_MS,
   runRegressionGate,
   type RegressionGateResult,
 } from '../regression-gate/regression-gate';
@@ -49,6 +50,13 @@ import {
 export const CIVILIAN_REPAIR_BUDGET_PER_MISSION = 2;
 /** Após despachar reparo, espera o Maestro trabalhar antes de re-escanear. */
 export const CIVILIAN_REPAIR_COOLDOWN_MS = 90_000;
+/**
+ * Strict completion runs EVERY impacted test, E2E included, on the whole
+ * mission delta. The 120 s default of a worker handoff did not fit, and the
+ * overrun came back as "restore the runner" repairs. Each attempt that runs
+ * out of time gets the next budget; past the last, the refusal says timeout.
+ */
+export const COMPLETION_REGRESSION_BUDGETS_MS = [300_000, 600_000, 1_200_000] as const;
 
 const BLOCKING_SEVERITIES = new Set(['critical', 'high']);
 /** No commit claim: working-tree scanner binds these projects to its file snapshot. */
@@ -125,6 +133,7 @@ export interface CivilianAutoReviewDependencies {
         readonly declaredFiles: readonly string[];
         readonly baseSha?: string;
         readonly includeE2E?: boolean;
+        readonly timeoutMs?: number;
         readonly trustedDependencyRoot?: string;
         readonly authority?: McpToolInvocation;
         readonly signal?: AbortSignal;
@@ -139,10 +148,44 @@ export interface CivilianAutoReviewDependencies {
 
 const repairBudgets = new Map<string, { used: number }>();
 const repairCooldowns = new Map<string, number>();
+/** Index into COMPLETION_REGRESSION_BUDGETS_MS; only grows for a mission. */
+const regressionBudgetLevels = new Map<string, number>();
 
 export function __resetCivilianAutoReviewForTests(): void {
   repairBudgets.clear();
   repairCooldowns.clear();
+  regressionBudgetLevels.clear();
+}
+
+function completionRegressionBudgetMs(missionId: string): number {
+  return COMPLETION_REGRESSION_BUDGETS_MS[regressionBudgetLevels.get(missionId) ?? 0]!;
+}
+
+/**
+ * Unverified only for lack of time: no counted failure, every unrun test was
+ * cut by a deadline, or the gate spent the import-map share of the budget
+ * (the map stops `MIN_TEST_BUDGET_MS` before the end) without naming another
+ * cause. A missing runner, config or sandbox is not a timeout.
+ */
+function regressionRanOutOfTime(regression: RegressionGateResult, budgetMs: number): boolean {
+  if (regression.status !== 'unavailable' || regression.failures.length > 0) return false;
+  const causes = regression.notRun?.causes ?? [];
+  if (causes.some(cause => cause !== 'map-deadline' && cause !== 'test-deadline')) return false;
+  return causes.length > 0 || regression.durationMs >= budgetMs - MIN_TEST_BUDGET_MS;
+}
+
+/** Next attempt gets the next budget; past the last, the refusal is final and still says timeout. */
+function completionRegressionTimeout(missionId: string, budgetMs: number): CivilianAutoReviewOutcome {
+  const level = regressionBudgetLevels.get(missionId) ?? 0;
+  const minutes = (ms: number) => `${Math.round(ms / 60_000)} min`;
+  const next = COMPLETION_REGRESSION_BUDGETS_MS[level + 1];
+  if (next !== undefined) {
+    regressionBudgetLevels.set(missionId, level + 1);
+    return { kind: 'defer-to-roster-review', retryable: true,
+      reason: `Os testes impactados não couberam no prazo de ${minutes(budgetMs)}. O Nexus tentará novamente com ${minutes(next)}; nenhum reparo de código foi solicitado.` };
+  }
+  return { kind: 'defer-to-roster-review',
+    reason: `Os testes impactados não couberam no prazo de ${minutes(budgetMs)} da verificação de conclusão; a entrega não foi certificada e nenhum reparo de código foi solicitado. Rode a suíte lenta por conta própria, divida a entrega ou marque a missão como concluída.` };
 }
 
 function repairBudgetRemaining(missionId: string): boolean {
@@ -482,6 +525,7 @@ export async function enforceCivilianAutoReview(
         ? runRegressionGate
         : null;
   let regression: RegressionGateResult | null = null;
+  const regressionBudgetMs = strictCompletion ? completionRegressionBudgetMs(input.mission.id) : undefined;
   if (regressionGate && (observedHead || strictCompletion)) {
     try {
       regression = await launch(() => regressionGate({
@@ -491,7 +535,7 @@ export async function enforceCivilianAutoReview(
         ...(observedHead ? { baseSha } : {}),
         trustedDependencyRoot: input.scope.rootRealPath,
         authority: { signal: input.lifetime?.signal, assertCurrentAuthority: assertCurrent },
-        ...(strictCompletion ? { includeE2E: true } : {}),
+        ...(regressionBudgetMs !== undefined ? { includeE2E: true, timeoutMs: regressionBudgetMs } : {}),
         ...(input.lifetime ? { signal: input.lifetime.signal } : {}),
       }));
     } catch (error) {
@@ -499,6 +543,10 @@ export async function enforceCivilianAutoReview(
       console.warn('[civilian-auto-review] portão de regressão falhou (ignorado):', error);
     }
   }
+  // Out of time is not a defect of the code: it never becomes the "restore the
+  // runner" repair below. Real findings still go to repair first.
+  const regressionOutOfTime = regressionBudgetMs !== undefined && regression !== null &&
+    regressionRanOutOfTime(regression, regressionBudgetMs);
   // Missing execution or incomplete discovery is never evidence of N/A.
   const noApplicableTests = regression !== null && regressionProvesNoApplicableTests(regression, changedFiles, requirements.tests);
   if (strictCompletion && regression && (
@@ -510,7 +558,7 @@ export async function enforceCivilianAutoReview(
       warnings: [...regression.warnings, 'cobertura de testes aplicáveis não comprovada integralmente'],
     };
   }
-  if (strictCompletion && (mechanical.some(check => check.retryable) || regression?.retryable)) {
+  if (strictCompletion && (mechanical.some(check => check.retryable) || regression?.retryable && !regressionOutOfTime)) {
     return { kind: 'defer-to-roster-review', retryable: true,
       reason: 'Verificações aguardando recursos ou encerramento de processos anteriores. O Nexus tentará novamente; nenhum reparo de código foi solicitado.' };
   }
@@ -522,7 +570,7 @@ export async function enforceCivilianAutoReview(
       .map(check => ({ severity: 'high' as const, category: 'correctness' as const, file: 'package.json', criterionRefs: [], invariantRefs: ['required-check-executed'],
         evidence: `Verificação obrigatória não executada: ${check.summary}`,
         recommendation: 'Restaure o compilador/configuração ou lockfile declarado e execute novamente a verificação.' })),
-    ...(regression?.status === 'unavailable' ? [{ severity: 'high' as const, category: 'correctness' as const, file: regression.testsNotRun[0] ?? 'package.json',
+    ...(regression?.status === 'unavailable' && !regressionOutOfTime ? [{ severity: 'high' as const, category: 'correctness' as const, file: regression.testsNotRun[0] ?? 'package.json',
       criterionRefs: [], invariantRefs: ['required-tests-executed'], evidence: 'Testes aplicáveis não foram verificados integralmente.',
       recommendation: 'Restaure runner, configuração e pré-requisitos dos testes impactados (inclusive E2E) e solicite nova verificação.' }] : []),
   ] : [];
@@ -533,6 +581,9 @@ export async function enforceCivilianAutoReview(
     ...regressionToReviewFindings(regression),
   ];
   assertCurrent();
+  if (blocking.length === 0 && regressionBudgetMs !== undefined && regressionOutOfTime) {
+    return completionRegressionTimeout(input.mission.id, regressionBudgetMs);
+  }
   if (blocking.length === 0) {
     const has = (file: string) => existsSync(join(root, file));
     const packagePresent = has('package.json');
