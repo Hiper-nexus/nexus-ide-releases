@@ -122,4 +122,46 @@ describe('F-908: cwd atual dos processos', () => {
     expect(await listProcessCwds({ ...opts, procRoot: path.join(proc, 'ausente') })).toBeNull();
     expect(await listProcessCwds({ platform: 'win32' })).toBeNull();
   });
+
+  describe('procfs: o par systemd --user e (sd-pam) do próprio usuário', () => {
+    // Medido no runner Linux do GitHub (22/10): os únicos processos do uid
+    // com cwd ilegível. Aqui o cwd é um arquivo comum, então o readlink falha
+    // (EINVAL) como o EACCES real, enquanto comm, stat e cmdline são legíveis,
+    // como no procfs de verdade.
+    const procWith = (entries: ReadonlyArray<{ pid: number; comm?: string; ppid?: number; args?: string[]; cwd?: string }>) => {
+      const proc = tmp();
+      for (const entry of entries) {
+        const dir = path.join(proc, String(entry.pid));
+        fs.mkdirSync(dir);
+        if (entry.cwd) fs.symlinkSync(entry.cwd, path.join(dir, 'cwd'));
+        else fs.writeFileSync(path.join(dir, 'cwd'), '');
+        if (entry.comm !== undefined) {
+          fs.writeFileSync(path.join(dir, 'comm'), `${entry.comm}\n`);
+          fs.writeFileSync(path.join(dir, 'stat'), `${entry.pid} (${entry.comm}) S ${entry.ppid ?? 1} ${entry.pid} 0 0 -1`);
+          fs.writeFileSync(path.join(dir, 'cmdline'), `${(entry.args ?? []).join('\0')}\0`);
+        }
+      }
+      return proc;
+    };
+    const probe = (proc: string) => listProcessCwds({ platform: 'linux', procRoot: proc, privateAncestors: [proc] });
+    const manager = { pid: 876, comm: 'systemd', ppid: 1, args: ['/usr/lib/systemd/systemd', '--user'] };
+    const sdPam = { pid: 889, comm: '(sd-pam)', ppid: 876, args: ['(sd-pam)'] };
+    const shell = { pid: 1798, cwd: '/home/runner/work' };
+
+    it.skipIf(!posix || process.getuid?.() === 0)('o par ilegível não derruba a prova dos outros processos', async () => {
+      expect(await probe(procWith([manager, sdPam, shell]))).toEqual(['/home/runner/work']);
+    });
+
+    it.skipIf(!posix || process.getuid?.() === 0)('qualquer outro cwd ilegível do mesmo uid continua sem prova', async () => {
+      // (sd-pam) cujo pai não é o gerenciador: o nome sozinho não basta.
+      expect(await probe(procWith([{ ...sdPam, ppid: 1798 }, shell]))).toBeNull();
+      // Gerenciador sem `--user` ou fora do PID 1.
+      expect(await probe(procWith([{ ...manager, args: ['/usr/lib/systemd/systemd'] }, shell]))).toBeNull();
+      expect(await probe(procWith([{ ...manager, ppid: 1798 }, sdPam, shell]))).toBeNull();
+      // Um dev server não-dumpable (node com setcap) dentro da worktree.
+      expect(await probe(procWith([manager, sdPam, shell, { pid: 2400, comm: 'node', ppid: 1798, args: ['node', 'dev.js'] }]))).toBeNull();
+      // Sem comm/stat/cmdline legíveis não há como reconhecer o par.
+      expect(await probe(procWith([{ pid: 876 }, shell]))).toBeNull();
+    });
+  });
 });
