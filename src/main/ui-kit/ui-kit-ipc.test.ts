@@ -47,7 +47,9 @@ vi.mock('../orch/workspace-path', () => ({ activeWorkspaceRoot: () => workspace.
  * whoever runs this suite.
  */
 const license = vi.hoisted(() => ({
-  deactivate: vi.fn(async () => ({ ok: true, stored: false })),
+  deactivate: vi.fn<
+    () => Promise<{ ok: boolean; stored: boolean; detail?: string }>
+  >(async () => ({ ok: true, stored: false })),
   status: vi.fn(async () => ({ state: 'active' as const, stored: true, masked: '••••9999' })),
 }));
 vi.mock('./ui-kit-service', async (importOriginal) => {

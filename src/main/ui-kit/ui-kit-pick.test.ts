@@ -438,7 +438,7 @@ describe('the judge saying "neither kit fits" is a decision', () => {
       {
         enabled: () => true,
         hasKey: () => true,
-        record: () => {},
+        record: () => '',
         runJudge: async () =>
           ({
             model: 'jev-test',
@@ -463,7 +463,7 @@ describe('the judge saying "neither kit fits" is a decision', () => {
       {
         enabled: () => true,
         hasKey: () => true,
-        record: () => {},
+        record: () => '',
         runJudge: async () =>
           ({
             model: 'jev-test',
