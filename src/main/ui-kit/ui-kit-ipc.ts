@@ -58,9 +58,11 @@ import {
   activateBoardUiLicense,
   activateEffectiveBoardUiLicense,
   boardUiLicenseStatus,
+  boardUiProSelectable,
   deactivateBoardUiLicense,
   installItems,
   planInstallItems,
+  provisionBundledBoardUiLicense,
 } from './ui-kit-service';
 import {
   operatorTokenForRegistry,
@@ -153,6 +155,9 @@ async function buildStatus(): Promise<UiKitStatusView> {
 
   let license: UiKitLicenseView = emptyLicense();
   if (cwd) {
+    // The bundled licence first: a fresh machine used to show the green "chave
+    // do Nexus" chip next to a licence that was not on disk yet.
+    provisionBundledBoardUiLicense(serviceDeps());
     const status = await boardUiLicenseStatus({ cwd }, serviceDeps());
     license = {
       state: status.state,
@@ -279,7 +284,29 @@ async function buildCatalog(
   }
 }
 
+/**
+ * Put the bundled BoardUI licence in place once the app is up.
+ *
+ * Operator 22/10: Pro unlocked on every machine, with nothing to click. Local
+ * (one read, at most one atomic write, no vendor process), never on the boot
+ * path itself and never fatal — every door that asks about Pro provisions
+ * again on its own, so a failure here only costs the first answer.
+ */
+function scheduleBundledLicenceProvisioning(): void {
+  setImmediate(() => {
+    try {
+      // Default deps on purpose: the vault is asked by presence only, which
+      // never decrypts — a Keychain read on the main thread at boot is what
+      // `hasSecret` exists to avoid.
+      provisionBundledBoardUiLicense();
+    } catch {
+      // A machine whose config dir cannot be written keeps the old behaviour.
+    }
+  });
+}
+
 export function registerUiKitIpc(): void {
+  scheduleBundledLicenceProvisioning();
   handleTrusted(UI_KIT_CHANNELS.status, async (): Promise<UiKitStatusView> => {
     try {
       return await buildStatus();
@@ -333,10 +360,10 @@ export function registerUiKitIpc(): void {
           if (!recipe) {
             return { ok: false, installed: [], error: `unknown recipe: ${recipeId}` };
           }
-          const license =
+          const proLicensed =
             kit === 'boardui'
-              ? await boardUiLicenseStatus({ cwd }, serviceDeps())
-              : null;
+              ? await boardUiProSelectable({ cwd }, serviceDeps())
+              : false;
           const catalog = await buildCatalog(kit, undefined, false);
           const resolved = resolveUiKitRecipe({
             recipe,
@@ -348,7 +375,7 @@ export function registerUiKitIpc(): void {
               category: entry.category,
               tier: entry.tier,
             })),
-            proLicensed: license?.state === 'active',
+            proLicensed,
           });
           if (dryRun === true || resolved.install.length === 0) {
             return installViewFromPlan(resolved);

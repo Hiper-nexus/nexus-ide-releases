@@ -90,7 +90,7 @@ export function boardUiSlug(name: string): string {
 }
 
 /**
- * The FREE catalogue, taken from `boardui list` on 2026-10-21.
+ * The catalogue: the free half taken from `boardui list` on 2026-10-21.
  *
  * It used to be derived from the website's display names, and that was wrong
  * in ways that broke installs: `revenue-chart` instead of `revenue-chart-card`,
@@ -98,19 +98,30 @@ export function boardUiSlug(name: string): string {
  * identifier carries a `template-` prefix. A slug is a vendor identifier — it
  * is READ from the vendor, never spelled from a label.
  *
- * Pro items are deliberately ABSENT: `boardui list` without a licence does not
- * publish them, so any Pro entry here would be invented. `boardUiTierOf`
- * therefore answers `null` for them, and the caller must resolve the tier
- * against the live catalogue (see `resolveBoardUiTier`) rather than assume
- * free — assuming free is how an unlicensed install reaches the vendor and
- * fails with a message nobody can act on.
+ * The Pro items come from the vendor too, never from a label: `boardui list`
+ * does not publish them even WITH a licence, so they were read from the MCP
+ * `list_components` on a machine with the operator's licence provisioned
+ * (2026-10-22: "Pro license active — these install like free items"). Leaving
+ * them out is what kept a licensed fleet on the free half: the pick, the
+ * recipes and the catalogue only ever saw candidates from this list, so the
+ * Pro templates the key pays for could only be installed by an agent that
+ * already knew their exact identifier.
+ *
+ * `boardUiTierOf` still answers `null` for anything not listed here, and the
+ * caller resolves that against the live catalogue (`resolveBoardUiTier`)
+ * rather than assuming free.
  */
 function item(
   slug: string,
   name: string,
   category: BoardUiCategory,
+  tier: BoardUiTier = 'free',
 ): BoardUiItem {
-  return { slug, name, category, tier: 'free' };
+  return { slug, name, category, tier };
+}
+
+function pro(slug: string, name: string, category: BoardUiCategory): BoardUiItem {
+  return item(slug, name, category, 'pro');
 }
 
 export const BOARDUI_CATALOG_SNAPSHOT: readonly BoardUiItem[] = [
@@ -183,19 +194,57 @@ export const BOARDUI_CATALOG_SNAPSHOT: readonly BoardUiItem[] = [
   item('chevrons', 'Chevrons', 'foundation'),
   item('logo', 'Logo', 'foundation'),
   item('agent-runtime', 'Agent Runtime', 'foundation'),
+  // Pro components.
+  pro('web-search', 'Web Search', 'block'),
+  pro('task-list', 'Task List', 'block'),
+  pro('composer', 'Composer', 'block'),
+  pro('composer-panel', 'Composer Panel', 'block'),
+  pro('composer-attachments', 'Composer Attachments', 'block'),
+  pro('agent-progress', 'Agent Progress', 'block'),
+  pro('agent-limits-card', 'Agent Limits Card', 'block'),
+  pro('questionnaire', 'Questionnaire', 'block'),
+  pro('calendar', 'Calendar', 'block'),
+  pro('earnings-chart-card', 'Earnings Chart Card', 'chart'),
+  pro('line-chart-card', 'Line Chart Card', 'chart'),
+  pro('contributions-card', 'Contributions Card', 'chart'),
+  pro('radar-chart-card', 'Radar Chart Card', 'chart'),
+  pro('radial-chart-card', 'Radial Chart Card', 'chart'),
+  pro('funnel-chart-card', 'Funnel Chart Card', 'chart'),
+  pro('sankey-chart-card', 'Sankey Chart Card', 'chart'),
+  pro('stage-bars-card', 'Stage Bars Card', 'chart'),
+  pro('bar-list-card', 'Bar List Card', 'chart'),
+  pro('area-chart-card', 'Area Chart Card', 'chart'),
+  pro('combo-chart-card', 'Combo Chart Card', 'chart'),
+  pro('scatter-chart-card', 'Scatter Chart Card', 'chart'),
+  pro('heatmap-chart-card', 'Heatmap Chart Card', 'chart'),
+  pro('steps-card', 'Steps Card', 'chart'),
+  pro('sleep-score-card', 'Sleep Score Card', 'chart'),
+  pro('activity-rings-card', 'Activity Rings Card', 'chart'),
+  pro('most-active-days-card', 'Most Active Days Card', 'chart'),
+  pro('project-board', 'Project Board', 'block'),
+  pro('agent-avatar', 'Agent Avatar', 'block'),
+  pro('agent-creator', 'Agent Creator', 'block'),
+  pro('multi-agent-chat', 'Multi-agent Chat', 'block'),
+  // Pro templates (full pages).
+  pro('template-multi-agent-chat', 'Multi-agent Chat Template', 'template'),
+  pro('template-home-dashboard', 'Home Dashboard Template', 'template'),
+  pro('template-project-board', 'Project Board Template', 'template'),
+  pro('template-marketing', 'Marketing Dashboard Template', 'template'),
+  pro('template-finance', 'Finance Dashboard Template', 'template'),
+  pro('template-hr', 'HR Dashboard Template', 'template'),
+  pro('template-medical-profile', 'Medical Profile Template', 'template'),
+  pro('template-ai-chat', 'AI Chat Template', 'template'),
+  pro('template-ai-profile', 'AI Profile Template', 'template'),
+  pro('template-ai-image-generation', 'AI Image Generation Template', 'template'),
 ];
 
 export function boardUiFreeItems(): readonly BoardUiItem[] {
   return BOARDUI_CATALOG_SNAPSHOT.filter((entry) => entry.tier === 'free');
 }
 
-/**
- * Deliberately empty: `boardui list` without a licence does not publish the Pro
- * items, so naming any here would be inventing vendor identifiers — which is
- * precisely the defect this snapshot was rebuilt to remove.
- */
+/** The Pro half, read from the vendor with the licence active. */
 export function boardUiProItems(): readonly BoardUiItem[] {
-  return [];
+  return BOARDUI_CATALOG_SNAPSHOT.filter((entry) => entry.tier === 'pro');
 }
 
 /**

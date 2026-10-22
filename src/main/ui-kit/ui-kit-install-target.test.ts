@@ -10,6 +10,8 @@ import {
   resolveInstallTargetForTask,
 } from './ui-kit-install-target';
 import { resetBoardUiFreeListCacheForTests, type UiKitServiceDeps } from './ui-kit-service';
+import type { BoardUiLicenseFile } from './boardui-license-file';
+import { operatorBoardUiLicenseFile } from './ui-kit-operator-keys';
 
 const judge = vi.hoisted(() => ({ fn: vi.fn() }));
 vi.mock('../jev/jev-client', () => ({
@@ -47,12 +49,36 @@ afterEach(() => {
 
 /** The shadcn `--json` shape, plus BoardUI's text listing. */
 function harness(
-  over: { licence?: string } = {},
-): { deps: UiKitServiceDeps; runs: UiKitCliRunRequest[] } {
+  over: { licence?: string; vaultKey?: string | null } = {},
+): {
+  deps: UiKitServiceDeps;
+  runs: UiKitCliRunRequest[];
+  mcpTools: string[];
+  licenceWrites: BoardUiLicenseFile[];
+} {
   const runs: UiKitCliRunRequest[] = [];
+  const mcpTools: string[] = [];
+  const licenceWrites: BoardUiLicenseFile[] = [];
+  let licenceFile: BoardUiLicenseFile | null = null;
+  const vaultKey = over.vaultKey === undefined ? 'BUI-KEY' : over.vaultKey;
   return {
     runs,
+    mcpTools,
+    licenceWrites,
     deps: {
+      // Never the real config root: the operator's own licence lives there.
+      boardUiLicenseFile: {
+        read: () => (licenceFile ? { status: 'parsed', file: licenceFile } : { status: 'absent' }),
+        write: (payload) => {
+          licenceWrites.push(payload);
+          licenceFile = payload;
+          return { ok: true };
+        },
+        remove: () => {
+          licenceFile = null;
+          return { ok: true };
+        },
+      },
       runCli: async (request) => {
         runs.push(request);
         if (request.kit === 'boardui') {
@@ -69,12 +95,15 @@ function harness(
           code: 0,
         };
       },
-      callMcp: async () => ({
-        result: {},
-        text: over.licence ?? 'license: inactive',
-        isError: false,
-      }),
-      getSecret: () => 'BUI-KEY',
+      callMcp: async (request) => {
+        mcpTools.push(request.tool ?? '');
+        return {
+          result: {},
+          text: over.licence ?? 'license: inactive',
+          isError: false,
+        };
+      },
+      getSecret: () => vaultKey,
       setSecret: () => ({ ok: true }),
       cacheOptions: { rootDir: dir },
     },
@@ -175,6 +204,43 @@ describe('resolveInstallTargetForTask', () => {
 
     expect(result.ok).toBe(false);
     expect(result.pick.needsKit).toBe(false);
+  });
+});
+
+describe('the bundled BoardUI key on a fresh machine', () => {
+  // Operator 22/10: "não tem que ficar só os free, tem que ficar tudo
+  // liberado usando a key". A fresh machine used to answer the licence
+  // question BEFORE anything provisioned it, so the pick kept to free items.
+
+  it('provisions the licence and lets the pick choose a Pro template', async () => {
+    surface.key = false; // the offline rule is enough to show the gate open
+    const h = harness({ vaultKey: null });
+
+    const result = await resolveInstallTargetForTask(
+      { task: 'template de dashboard financeiro com fluxo de caixa', kit: 'boardui', cwd },
+      h.deps,
+    );
+
+    expect(h.licenceWrites).toEqual([operatorBoardUiLicenseFile()]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.target.items).toEqual(['template-finance']);
+    expect(result.pick.needsLicense).toBe(false);
+    // The licence file on disk is the answer; no vendor round trip to decide.
+    expect(h.mcpTools).not.toContain('license_status');
+  });
+
+  it('still asks the vendor when the operator typed their own key', async () => {
+    surface.key = false;
+    const h = harness({ licence: 'Pro license valid and active' });
+
+    await resolveInstallTargetForTask(
+      { task: 'dashboard financeiro com fluxo de caixa', kit: 'boardui', cwd },
+      h.deps,
+    );
+
+    expect(h.licenceWrites).toEqual([]);
+    expect(h.mcpTools).toContain('license_status');
   });
 });
 

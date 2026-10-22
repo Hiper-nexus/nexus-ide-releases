@@ -54,6 +54,7 @@ import {
   isProvisionedBoardUiLicense,
   realBoardUiLicenseFileOps,
   type BoardUiLicenseFileOps,
+  type BoardUiLicenseRead,
 } from './boardui-license-file';
 import {
   cachedItemIsStale,
@@ -100,6 +101,22 @@ function vault(deps: UiKitServiceDeps): {
     get: deps.getSecret ?? ((key) => secrets.getSecret(key)),
     set: deps.setSecret ?? ((key, value) => secrets.setSecret(key, value)),
   };
+}
+
+/**
+ * Whether the vault holds a value for `key`, WITHOUT decrypting it when the
+ * real vault answers: boot runs this, and a Keychain decrypt on the main
+ * thread there is what `hasSecret` exists to avoid. Injected vaults (tests,
+ * the panel's seam) only offer `get`, which is cheap for them.
+ */
+function vaultHasKey(deps: UiKitServiceDeps, key: string): boolean {
+  if (deps.getSecret) {
+    const value = deps.getSecret(key);
+    return Boolean(value && value.trim().length > 0);
+  }
+  const secrets =
+    require('../persistence/secrets-store') as typeof import('../persistence/secrets-store');
+  return secrets.hasSecret(key);
 }
 
 /**
@@ -849,25 +866,9 @@ async function ensureActiveBoardUiLicense(
   // Corrupted bytes are the one exception: the CLI reads no licence from
   // them either, and provisioning heals instead of destroying.
   const ops = boardUiLicenseFileOps(deps);
-  const existing = ops.read();
-  if (existing.status === 'unreadable') {
-    return {
-      ok: false,
-      stored: false,
-      detail:
-        'the BoardUI licence file on this machine could not be read; Nexus did not touch it. ' +
-        'Fix or remove it yourself if you want the operator licence provisioned here.',
-    };
-  }
-  const existingFile = existing.status === 'parsed' ? existing.file : null;
-  if (existingFile && !isProvisionedBoardUiLicense(existingFile, operatorBoardUiLicenseFile())) {
-    return {
-      ok: false,
-      stored: false,
-      detail:
-        'this machine has its own BoardUI licence file; Nexus did not touch it. ' +
-        'Remove it yourself if you want the operator licence provisioned here.',
-    };
+  const verdict = provisioningVerdict(ops.read());
+  if (verdict.kind === 'refuse') {
+    return { ok: false, stored: false, detail: verdict.detail };
   }
   invalidateBoardUiFreeList();
   // PROVISION, don't activate: writing the operator's licence file where the
@@ -896,6 +897,148 @@ async function ensureActiveBoardUiLicense(
         : after.detail ??
           'operator licence file provisioned; the vendor could not be reached to confirm it',
   };
+}
+
+/**
+ * Whether the operator's payload may be written over what is on disk.
+ *
+ * The FILE decides, never the vendor's verdict: see `ensureActiveBoardUiLicense`.
+ * Absence must be positively established (ENOENT), a file that is not already
+ * our payload is left exactly as it is, and an unreadable one refuses like a
+ * native file — the atomic write renames over it with directory permission
+ * alone. Corrupted bytes are the one exception: the CLI reads no licence from
+ * them either, so writing heals instead of destroying.
+ */
+type ProvisioningVerdict =
+  | { readonly kind: 'write' }
+  | { readonly kind: 'ours' }
+  | {
+      readonly kind: 'refuse';
+      readonly reason: 'native-file' | 'unreadable-file';
+      readonly detail: string;
+    };
+
+function provisioningVerdict(existing: BoardUiLicenseRead): ProvisioningVerdict {
+  if (existing.status === 'unreadable') {
+    return {
+      kind: 'refuse',
+      reason: 'unreadable-file',
+      detail:
+        'the BoardUI licence file on this machine could not be read; Nexus did not touch it. ' +
+        'Fix or remove it yourself if you want the operator licence provisioned here.',
+    };
+  }
+  const file = existing.status === 'parsed' ? existing.file : null;
+  if (!file) return { kind: 'write' };
+  if (isProvisionedBoardUiLicense(file, operatorBoardUiLicenseFile())) return { kind: 'ours' };
+  return {
+    kind: 'refuse',
+    reason: 'native-file',
+    detail:
+      'this machine has its own BoardUI licence file; Nexus did not touch it. ' +
+      'Remove it yourself if you want the operator licence provisioned here.',
+  };
+}
+
+export type BundledLicenceProvision =
+  | { readonly status: 'written' }
+  | { readonly status: 'present' }
+  | {
+      readonly status: 'skipped';
+      readonly reason:
+        | 'own-key'
+        | 'no-bundled-key'
+        | 'native-file'
+        | 'unreadable-file'
+        | 'write-failed';
+      readonly detail?: string;
+    };
+
+/**
+ * Put the operator's BoardUI licence file in place on this machine.
+ *
+ * Operator decision 22/10/2026: "a key BoardUI para ficar disponível para
+ * todos PCs … tem que ficar tudo liberado usando a key". Provisioning used to
+ * happen only inside an install of an item the gate already knew was Pro, so
+ * a fresh machine answered "no licence" to every door that asked FIRST — the
+ * task pick, the recipes, the panel — and those then kept to the free half.
+ *
+ * Local by construction, which is what lets it run at boot and in front of
+ * every licence question: one file read and at most one atomic write, no
+ * vendor process, no network, no seat (the vendor counts seats at activation
+ * only). The same file rule as the activation door applies, so a machine's
+ * own licence is never touched, and a key the operator typed into the vault
+ * stands it aside — that one activates with the vendor.
+ */
+export function provisionBundledBoardUiLicense(
+  deps: UiKitServiceDeps = {},
+): BundledLicenceProvision {
+  if (vaultHasKey(deps, BOARDUI_LICENSE_SECRET)) return { status: 'skipped', reason: 'own-key' };
+  if (!hasOperatorBoardUiLicenseKey()) return { status: 'skipped', reason: 'no-bundled-key' };
+  const ops = boardUiLicenseFileOps(deps);
+  const verdict = provisioningVerdict(ops.read());
+  if (verdict.kind === 'refuse') {
+    return { status: 'skipped', reason: verdict.reason, detail: verdict.detail };
+  }
+  if (verdict.kind === 'ours') return { status: 'present' };
+  const write = ops.write(operatorBoardUiLicenseFile());
+  if (!write.ok) {
+    return {
+      status: 'skipped',
+      reason: 'write-failed',
+      detail: write.error ?? 'could not provision the operator licence file',
+    };
+  }
+  // The free listing was captured under the old licence state.
+  invalidateBoardUiFreeList();
+  return { status: 'written' };
+}
+
+/**
+ * Whether Pro is unlocked on this machine, from the disk alone — the question
+ * a READ-ONLY lane may ask: one file read, no vendor process, no write.
+ *
+ * - `licence-file`: a BoardUI licence file is in place (ours or the machine's
+ *   own). The vendor validates it at download time.
+ * - `bundled-key`: nothing on disk yet, but the key ships with Nexus and the
+ *   first effectful door puts it there.
+ * - `null`: neither can be shown from here.
+ */
+export function boardUiProUnlockedLocally(
+  deps: UiKitServiceDeps = {},
+): 'licence-file' | 'bundled-key' | null {
+  try {
+    const read = boardUiLicenseFileOps(deps).read();
+    if (read.status === 'parsed' && read.file) return 'licence-file';
+    if (read.status === 'unreadable') return null;
+    if (!vaultHasKey(deps, BOARDUI_LICENSE_SECRET) && hasOperatorBoardUiLicenseKey()) {
+      return 'bundled-key';
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * "May a Pro item be CHOSEN here?" — the question the pick and the recipes ask
+ * before deciding, as opposed to the install gate's "may this one be
+ * installed".
+ *
+ * The bundled licence is put in place first, so a fresh machine answers yes.
+ * When that file is ours, it IS the answer: asking the vendor would spawn its
+ * MCP server (~3 s) only to read back what we just wrote, and the install
+ * gate asks the vendor anyway before anything Pro lands. A machine with its
+ * own licence (typed key, native file) still asks the vendor.
+ */
+export async function boardUiProSelectable(
+  input: { readonly cwd: string; readonly signal?: AbortSignal },
+  deps: UiKitServiceDeps = {},
+): Promise<boolean> {
+  const provision = provisionBundledBoardUiLicense(deps);
+  if (provision.status === 'written' || provision.status === 'present') return true;
+  const status = await boardUiLicenseStatus(input, deps);
+  return status.state === 'active';
 }
 
 /**
@@ -1211,7 +1354,11 @@ export async function resolveBoardUiTier(
   cwd: string,
   deps: UiKitServiceDeps = {},
 ): Promise<'free' | 'pro' | 'unknown'> {
-  if (boardUiTierOf(slug) === 'free') return 'free';
+  // The snapshot's answer when it has one: a Pro item read from the vendor is
+  // Pro, and `boardui list` never publishes Pro items (not even licensed), so
+  // spawning it to learn that would only cost a second and a half.
+  const known = boardUiTierOf(slug);
+  if (known) return known;
   const free = await listBoardUiFreeSlugs(cwd, deps);
   if (!free) return 'unknown';
   // Present in the listing reads as FREE. That is only sound because the

@@ -47,7 +47,7 @@ export const UI_KIT_RECIPES: readonly UiKitRecipe[] = [
         key: 'shell',
         label: 'Shell and sidebar',
         match: ['sidebar', 'shell', 'app-sidebar', 'nav'],
-        boardui: ['sidebar'],
+        boardui: ['sidebar', 'app-shell'],
       },
       {
         key: 'overview',
@@ -59,7 +59,11 @@ export const UI_KIT_RECIPES: readonly UiKitRecipe[] = [
         key: 'charts',
         label: 'Charts',
         match: ['chart-area', 'chart-bar', 'chart-line', 'chart'],
-        boardui: ['revenue-chart', 'orders-chart'],
+        // Pro first: with the licence that ships with Nexus a recipe reaches
+        // the richer cards; without it the resolver skips them for the free
+        // ones. `revenue-chart`/`orders-chart` were spelled from labels and
+        // never existed.
+        boardui: ['area-chart-card', 'line-chart-card', 'revenue-chart-card', 'orders-chart-card'],
       },
       {
         key: 'table',
@@ -97,7 +101,11 @@ export const UI_KIT_RECIPES: readonly UiKitRecipe[] = [
         key: 'charts',
         label: 'Charts',
         match: ['chart-area', 'chart-bar', 'chart-line', 'chart'],
-        boardui: ['revenue-chart', 'orders-chart'],
+        // Pro first: with the licence that ships with Nexus a recipe reaches
+        // the richer cards; without it the resolver skips them for the free
+        // ones. `revenue-chart`/`orders-chart` were spelled from labels and
+        // never existed.
+        boardui: ['area-chart-card', 'line-chart-card', 'revenue-chart-card', 'orders-chart-card'],
       },
       {
         key: 'table',

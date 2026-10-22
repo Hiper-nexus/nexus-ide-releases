@@ -54,6 +54,13 @@ vi.mock('../decision-models/decision-availability', () => ({
   hasDecisionCredential: () => true,
 }));
 
+/** The licence as the disk shows it; the real file lives in the real config root. */
+const licenceOnDisk = vi.hoisted(() => ({ value: null as 'licence-file' | 'bundled-key' | null }));
+vi.mock('../ui-kit/ui-kit-service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../ui-kit/ui-kit-service')>()),
+  boardUiProUnlockedLocally: () => licenceOnDisk.value,
+}));
+
 const { buildUiKitTools } = await import('./tools-ui-kit');
 const { setUiKitCacheRootResolver, writeCachedItem } = await import(
   '../ui-kit/ui-kit-cache'
@@ -69,6 +76,7 @@ function tool(name: string) {
 }
 
 beforeEach(() => {
+  licenceOnDisk.value = null;
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ui-kit-ro-'));
   setUiKitCacheRootResolver(() => root);
 });
@@ -84,7 +92,7 @@ describe('nexus_ui_kit_catalog is read-only in fact, not only by label', () => {
       ctx,
     )) as { items: unknown[]; offline: boolean; hint: string };
 
-    expect(out.items).toHaveLength(69);
+    expect(out.items).toHaveLength(109);
     expect(out.offline).toBe(true);
     expect(out.hint).toContain('ships with Nexus');
   });
@@ -157,11 +165,24 @@ describe('nexus_ui_kit_catalog is read-only in fact, not only by label', () => {
     const out = (await tool('nexus_ui_kit_catalog').handler(
       { kit: 'boardui', task: 'a revenue dashboard with charts' },
       ctx,
-    )) as { recommendation: { licenceNotChecked: boolean; kit: string | null } };
+    )) as { recommendation: { licence: string; kit: string | null } };
 
     // Asking the vendor whether Pro is active would spawn its MCP server.
-    expect(out.recommendation.licenceNotChecked).toBe(true);
+    expect(out.recommendation.licence).toBe('not-checked');
     expect(out.recommendation.kit).toBe('boardui');
+  });
+
+  it('opens the Pro half when the licence is on disk or ships with Nexus', async () => {
+    licenceOnDisk.value = 'bundled-key';
+
+    const out = (await tool('nexus_ui_kit_catalog').handler(
+      { kit: 'boardui', task: 'template de dashboard financeiro' },
+      ctx,
+    )) as { recommendation: { item: string | null; needsLicense: boolean; licence: string } };
+
+    expect(out.recommendation.item).toBe('template-finance');
+    expect(out.recommendation.needsLicense).toBe(false);
+    expect(out.recommendation.licence).toBe('bundled-key');
   });
 });
 

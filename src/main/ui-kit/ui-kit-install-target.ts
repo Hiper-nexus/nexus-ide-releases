@@ -6,7 +6,7 @@ import {
   type UiKitCandidate,
   type UiKitPickResult,
 } from './ui-kit-pick';
-import { boardUiLicenseStatus, type UiKitServiceDeps } from './ui-kit-service';
+import { boardUiProSelectable, type UiKitServiceDeps } from './ui-kit-service';
 
 /**
  * "Install what fits this task" — the Jev's kit/item choice, on the INSTALL
@@ -149,9 +149,11 @@ export async function resolveInstallTargetForTask(
   const kits = kitsToConsider(request.kit);
 
   // Only ask about the licence when BoardUI is actually in play: for a shadcn
-  // install it would spawn the vendor's MCP server for nothing.
+  // install it would spawn the vendor's MCP server for nothing. Asking puts
+  // the bundled licence in place first — a fresh machine used to answer "no
+  // licence" here and keep the pick on the free half.
   const licensed = kits.includes('boardui')
-    ? (await boardUiLicenseStatus({ cwd: request.cwd }, deps)).state === 'active'
+    ? await boardUiProSelectable({ cwd: request.cwd }, deps)
     : false;
 
   const byKit: UiKitCandidate[][] = [];

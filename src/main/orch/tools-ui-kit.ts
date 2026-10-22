@@ -22,11 +22,15 @@ import {
 import { pickUiKitByHeuristic } from '../ui-kit/ui-kit-pick';
 import { listCachedItems, readCachedItem } from '../ui-kit/ui-kit-cache';
 import {
+  activateEffectiveBoardUiLicense,
   boardUiCandidates,
   readItemSource,
   boardUiLicenseStatus,
+  boardUiProSelectable,
+  boardUiProUnlockedLocally,
   callBoardUiTool,
   installItems,
+  provisionBundledBoardUiLicense,
   runShadcnCommand,
   shadcnSearchNamespaces,
 } from '../ui-kit/ui-kit-service';
@@ -143,8 +147,9 @@ export function buildUiKitTools(): McpToolDef[] {
       name: 'nexus_ui_kit_catalog',
       description:
         'Browse the UI kits available to this project: shadcn/ui (free, any ' +
-        'registry) and BoardUI (free items plus Pro items that need the ' +
-        "operator's licence). OFFLINE and read-only: BoardUI's whole catalog " +
+        'registry) and BoardUI (free items plus Pro components and full-page ' +
+        'templates, unlocked by the licence that ships with Nexus). OFFLINE ' +
+        "and read-only: BoardUI's whole catalog " +
         'ships with Nexus, and for shadcn this lists what has been downloaded ' +
         "— the live registry is nexus_ui_kit_run { command: 'search' }. Also " +
         'lists the ready-made recipes (super admin, dashboard, auth). Pass ' +
@@ -191,13 +196,16 @@ export function buildUiKitTools(): McpToolDef[] {
           // call — none of which may cause egress or a write. The spawn guard
           // in the tests never saw it, because the Jev travels by fetch.
           //
-          // `proLicensed` is left false for the same reason the list is
-          // offline: asking the vendor would spawn its MCP server. The Pro
-          // gate then falls back to a free item and reports `needsLicense`,
-          // which is the honest answer from a read-only lane.
+          // The licence is read from DISK, never asked of the vendor: that
+          // would spawn its MCP server. A licence file in place, or the key
+          // that ships with Nexus (which the install door provisions), opens
+          // the Pro half; otherwise the gate falls back to a free item and
+          // reports `needsLicense`.
+          const proUnlocked = boardUiProUnlockedLocally();
           const seen = new Set(items.map((entry) => entry.slug));
           const pick = pickUiKitByHeuristic({
             task,
+            proLicensed: proUnlocked !== null,
             candidates: [
               ...items,
               // Cross-kit on purpose: asked for a dashboard with kit shadcn,
@@ -208,7 +216,9 @@ export function buildUiKitTools(): McpToolDef[] {
               ...(cachedOnly
                 ? []
                 : boardUiCandidates().filter((entry) => !seen.has(entry.slug))),
-            ].slice(0, 60),
+              // No cap: the rule is a local loop, and the 60 that used to be
+              // here cut the whole Pro half of the snapshot (it sits last).
+            ],
           });
           recommendation = {
             needsKit: pick.needsKit,
@@ -218,7 +228,9 @@ export function buildUiKitTools(): McpToolDef[] {
             blocked: pick.blockedItem?.slug ?? null,
             decidedBy: pick.source,
             reason: pick.reason,
-            licenceNotChecked: true,
+            // How the Pro half was judged from here: a licence file on disk,
+            // the key bundled with Nexus, or not at all.
+            licence: proUnlocked ?? 'not-checked',
             // Said plainly: this lane never asks a model, so the answer is the
             // offline rule and nothing left this machine.
             offlineRuleOnly: true,
@@ -248,9 +260,10 @@ export function buildUiKitTools(): McpToolDef[] {
               ? "This is the offline view: BoardUI's catalog ships with Nexus, " +
                 'and for shadcn it lists only what has been downloaded. For the ' +
                 "live registry run nexus_ui_kit_run { command: 'search' }."
-              : "BoardUI's catalog ships with Nexus, so this list is complete. " +
-                "For the vendor's live list use nexus_ui_kit_boardui " +
-                "{ tool: 'list_components' }.",
+              : "BoardUI's catalog ships with Nexus — free and Pro, read from " +
+                'the vendor on 2026-10-22 — and the Pro items are unlocked by ' +
+                'the licence that ships with Nexus. For the vendor\'s live list ' +
+                "use nexus_ui_kit_boardui { tool: 'list_components' }.",
           ...(recommendation ? { recommendation } : {}),
         };
       },
@@ -424,14 +437,14 @@ export function buildUiKitTools(): McpToolDef[] {
         }
         const kit = parseKit(args);
         const cwd = cwdFor(ctx);
-        const license =
-          kit === 'boardui' ? await boardUiLicenseStatus({ cwd }, serviceDeps()) : null;
+        const proLicensed =
+          kit === 'boardui' ? await boardUiProSelectable({ cwd }, serviceDeps()) : false;
         const listed = await liveCandidates(kit, cwd, undefined, serviceDeps());
         const resolved = resolveUiKitRecipe({
           recipe,
           kit,
           candidates: listed.candidates,
-          proLicensed: license?.state === 'active',
+          proLicensed,
         });
 
         const plan = {
@@ -618,19 +631,25 @@ export function buildUiKitTools(): McpToolDef[] {
         // After the refusal: resolving the scope is work, and a refusal should
         // not depend on it.
         const cwd = cwdFor(ctx);
-        if (tool === 'activate_license' || tool === 'license_status') {
-          // Never take a key from a model, and never hand one back.
-          const status = await boardUiLicenseStatus({ cwd }, serviceDeps());
-          if (tool === 'license_status') return status;
-          if (!status.stored) {
-            return {
-              ok: false,
-              reason: 'no_license_stored',
-              hint:
-                'Store the BoardUI licence in Settings → UI kits first. The ' +
-                'free items need no key.',
-            };
-          }
+        // Never take a key from a model, and never hand one back.
+        if (tool === 'license_status') {
+          // The bundled licence first, so "is Pro active?" answers for this
+          // machine as it will be at install time rather than before boot
+          // provisioning caught up.
+          provisionBundledBoardUiLicense(serviceDeps());
+          return await boardUiLicenseStatus({ cwd }, serviceDeps());
+        }
+        if (tool === 'activate_license') {
+          // The same core as the panel: a typed key activates with the
+          // vendor; the key bundled with Nexus is PROVISIONED (no seat). This
+          // used to refuse "no licence stored" whenever the vault was empty —
+          // i.e. on every machine that runs on the bundled key.
+          const activated = await activateEffectiveBoardUiLicense({ cwd }, serviceDeps());
+          return {
+            ok: activated.ok,
+            ...(activated.provisioned ? { provisioned: true } : {}),
+            ...(activated.detail ? { detail: activated.detail.slice(0, 400) } : {}),
+          };
         }
         // Same reason as the shadcn `view` above: this is where the cache
         // gains BoardUI entries, so `get_component` goes through the caching

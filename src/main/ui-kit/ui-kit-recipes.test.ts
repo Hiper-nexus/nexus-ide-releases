@@ -6,6 +6,7 @@ import {
   resolveUiKitRecipe,
   UI_KIT_RECIPES,
 } from './ui-kit-recipes';
+import { boardUiTierOf } from './boardui-source';
 
 function shadcn(slug: string, category = 'ui'): UiKitCandidate {
   return { kit: 'shadcn', slug, label: slug, category, tier: 'free' };
@@ -189,7 +190,8 @@ describe('resolveUiKitRecipe — BoardUI and the Pro gate', () => {
   const CATALOG = [
     boardui('sidebar'),
     boardui('stat-cards'),
-    boardui('revenue-chart'),
+    boardui('revenue-chart-card'),
+    boardui('area-chart-card', 'pro'),
     boardui('data-table'),
     boardui('auth-card'),
     boardui('settings-modal'),
@@ -208,9 +210,34 @@ describe('resolveUiKitRecipe — BoardUI and the Pro gate', () => {
     );
     expect(byRole.shell).toBe('sidebar');
     expect(byRole.overview).toBe('stat-cards');
-    expect(byRole.charts).toBe('revenue-chart');
+    // No licence: the Pro chart card is skipped for the free one.
+    expect(byRole.charts).toBe('revenue-chart-card');
     expect(byRole.auth).toBe('auth-card');
     expect(resolved.unresolved).toEqual([]);
+  });
+
+  it('reaches the Pro chart card with the licence that ships with Nexus', () => {
+    const resolved = resolveUiKitRecipe({
+      recipe: findUiKitRecipe('super-admin')!,
+      kit: 'boardui',
+      candidates: CATALOG,
+      proLicensed: true,
+    });
+
+    expect(resolved.install).toContain('area-chart-card');
+    expect(resolved.install).not.toContain('revenue-chart-card');
+  });
+
+  it('names only slugs the vendor actually publishes', () => {
+    // `revenue-chart` / `orders-chart` were spelled from labels and did not
+    // exist; every role slug has to be in the vendor-read snapshot.
+    for (const recipe of UI_KIT_RECIPES) {
+      for (const role of recipe.roles) {
+        for (const slug of role.boardui ?? []) {
+          expect(boardUiTierOf(slug), `${recipe.id}/${role.key}: ${slug}`).not.toBeNull();
+        }
+      }
+    }
   });
 
   it('falls back to a free item and flags the role that wanted Pro', () => {

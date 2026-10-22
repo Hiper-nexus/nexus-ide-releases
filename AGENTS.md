@@ -2889,9 +2889,28 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
     leu; `parsed` com `file: null` (corrompido) é o único que reescreve — a CLI
     do vendor também não lê licença de bytes corrompidos, provisionar CURA. A
     porta do painel ainda pré-checa `license_status` para
-    retornar cedo com a mensagem do próprio fornecedor. Auto-provisionamento de
-    bundle só nas PORTAS DE INSTALL (`autoActivate: true`);
-    `planInstallItems`/dry-run não tocam o arquivo.
+    retornar cedo com a mensagem do próprio fornecedor.
+  - **Pro liberado em TODO PC, sem clique (operador, 22/10/2026: "tem que
+    ficar tudo liberado usando a key").** Provisionar só nas portas de install
+    deixava a frota na metade grátis: a escolha por tarefa, as receitas e o
+    painel perguntavam pela licença ANTES de qualquer coisa colocá-la no
+    disco, ouviam "sem licença" e escolhiam só grátis.
+    `provisionBundledBoardUiLicense` (local: uma leitura, no máximo uma
+    escrita atômica, nenhum processo do fornecedor, nenhum assento) roda no
+    boot (`registerUiKitIpc`, por `setImmediate`, cofre consultado por
+    PRESENÇA — `hasSecret`, nunca decifra no boot) e na frente de toda pergunta
+    "Pro serve aqui?" (`boardUiProSelectable`: task pick, receitas, painel,
+    `license_status` do agente). Mesma regra de arquivo da ativação: nativo e
+    ilegível intocados, chave digitada no cofre fica de fora (ativa no
+    fornecedor). Com o NOSSO arquivo no disco a escolha não chama o fornecedor
+    (~3 s); o portão de install continua conferindo antes de baixar Pro. O
+    catálogo read-only lê o arquivo do disco (`boardUiProUnlockedLocally`,
+    sem processo, sem escrita). "Remover" numa máquina provisionada continua
+    local e volta no próximo boot/instalação: com a chave embutida, Pro é o
+    estado normal. Prova de 22/10 num PC novo simulado (XDG isolado, cofre
+    vazio): provisão `written` → Jev escolhe `template-finance` sem
+    `needsLicense` → `license_status` ativo → instalação do template Pro com
+    arquivos no projeto.
   - "Remover" numa máquina provisionada é LOCAL, sempre
     (`isProvisionedBoardUiLicense`: chave E instanceId do payload embutido):
     apaga o arquivo + esquece o cofre, NUNCA chama `deactivate_license` —
@@ -3047,17 +3066,21 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
   rótulo.** O retrato do BoardUI saía dos nomes de exibição do site e estava
   errado de um jeito que quebrava install: `revenue-chart` em vez de
   `revenue-chart-card`, um `color` que não existe, e os templates Pro, cujo
-  identificador real leva o prefixo `template-`. Hoje ele vem de `boardui list`
-  (69 itens grátis) e NÃO tem item Pro: sem licença o `list` não os publica, e
-  qualquer entrada Pro ali seria inventada.
-- **Tier desconhecido é portão, não "grátis".** `boardUiTierOf` responde `null`
+  identificador real leva o prefixo `template-`. Hoje a metade grátis vem de
+  `boardui list` (69 itens) e a Pro (30 componentes + 10 templates) do
+  `list_components` do MCP com a licença ativa (22/10): o `boardui list` NÃO
+  publica Pro nem com licença (medido), e o retrato só-grátis era o motivo de
+  a frota licenciada nunca ver um template Pro na escolha. Item novo do
+  fornecedor entra lendo os dois de novo, nunca soletrado.
+- **Tier desconhecido é portão, não "grátis".** `boardUiTierOf` responde o
+  tier do retrato quando o conhece (Pro sem processo nenhum) e `null`
   para o que o retrato não conhece, e `resolveBoardUiTier` resolve contra o
   catálogo AO VIVO: ausente da lista grátis é Pro, fornecedor inalcançável é
   `unknown` — e o portão trata `unknown` como precisando de licença. Assumir
   grátis é como um install sem licença chega ao fornecedor e volta com uma
   mensagem que ninguém consegue agir.
-- **A metade grátis funciona sem chave nenhuma** — shadcn inteiro e ~45 itens do
-  BoardUI. Item Pro sem licença não instala nada em silêncio: cai no grátis
+- **A metade grátis funciona sem chave nenhuma** — shadcn inteiro e os 69 itens
+  grátis do BoardUI. Item Pro sem licença não instala nada em silêncio: cai no grátis
   equivalente, devolve `needsLicense` e nomeia o barrado. Doc e copy novas nunca
   escrevem que o kit "precisa de chave".
 - **`license_status` sem alcançar a CLI é `unknown`, nunca `absent`:** dizer
