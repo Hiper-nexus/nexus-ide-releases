@@ -24,7 +24,9 @@ import {
 } from '../adapters/claude-credential';
 import { rememberNativeOAuthCredential } from '../adapters/native-oauth-keychain';
 import {
+  claudeAccessTokenExpired,
   claudeBlobIsExpiredUnhealable,
+  claudeBlobIsRenewable,
   claudeBlobNeedsRefresh,
   forceRefreshClaudeOauthBlob,
   refreshClaudeOauthBlob,
@@ -98,6 +100,7 @@ import {
   hasManagedClaudeAuth,
   managedClaudeAuthDirectory,
   managedClaudeAuthHasCredential,
+  managedClaudeScopeKeychainReadable,
   materializeManagedClaudeAuth,
   readManagedClaudeAuthAsync,
   removeManagedClaudeAuth,
@@ -556,25 +559,63 @@ export type AccountSpawnPreparation =
     }
   | { ok: false; error: string };
 
+/**
+ * What a CLI renewal run left behind. `refused` is the CLI itself saying the
+ * session is dead — the only CLI outcome that proves re-login (F-1416) — and
+ * only counts when the store it ran on was readable afterwards: a locked or
+ * denied Keychain also makes the CLI say "not logged in".
+ */
+interface ClaudeCliRenewal {
+  blob: string | null;
+  refused: boolean;
+}
+
 /** One CLI run in the account's managed scope; the CLI refreshes under its own lock. */
-async function renewManagedClaudeAuthThroughCli(accountId: string): Promise<string | null> {
+async function renewManagedClaudeAuthThroughCli(accountId: string): Promise<ClaudeCliRenewal> {
   try {
-    await probeClaudeCliUsage({ env: managedClaudeCliEnv(managedClaudeAuthDirectory(accountId)) });
-    return await readManagedClaudeAuthAsync(accountId, { fresh: true });
+    const probe = await probeClaudeCliUsage({ env: managedClaudeCliEnv(managedClaudeAuthDirectory(accountId)) });
+    const blob = await readManagedClaudeAuthAsync(accountId, { fresh: true });
+    // O arquivo-espelho segue legível com o Keychain do escopo travado.
+    const refused = probe.failure === 'auth-expired' && blob !== null &&
+      await managedClaudeScopeKeychainReadable(accountId);
+    return { blob, refused };
   } catch {
-    return null;
+    return { blob: null, refused: false };
   }
 }
 
 /** Same, for the native store — only while that store still belongs to the account. */
-async function renewNativeClaudeAuthThroughCli(accountId: string): Promise<string | null> {
+async function renewNativeClaudeAuthThroughCli(accountId: string): Promise<ClaudeCliRenewal> {
   try {
-    await probeClaudeCliUsage();
+    // Perfil nativo de verdade: sem herdar config dir ou token de outra conta
+    // do processo Main (mesmo run da cota, F-1416).
+    const probe = await probeClaudeCliUsage({ nativeProfile: true });
     invalidateClaudeCredentialCache();
     const native = readNativeClaudeSnapshot();
-    return native.account?.id === accountId ? native.blob : null;
+    const blob = native.account?.id === accountId ? native.blob : null;
+    return { blob, refused: probe.failure === 'auth-expired' && blob !== null };
   } catch {
-    return null;
+    return { blob: null, refused: false };
+  }
+}
+
+/**
+ * F-1642: o spawn provou que a conta precisa de login (a CLI recusou, ou não
+ * há refresh token no prazo). Sem isto o painel seguia "Em uso" e
+ * "conectado" enquanto todo pane morria com "expirou" — a linha nunca
+ * oferecia «Entrar novamente». Mesmo cooldown de auth que a sonda de cota usa.
+ * Nunca sobrescreve um cooldown vivo: a quarentena de identidade e um limite
+ * de uso longo dizem mais do que esta marca.
+ */
+function markClaudeSessionExpired(accountId: string, source: string): void {
+  const account = accounts.get(accountId);
+  // A quarentena de identidade vive no `lastError` e dura além do cooldown.
+  if (!account || isClaudeIdentityMismatch(account) ||
+      (account.cooldownUntil !== undefined && account.cooldownUntil > Date.now())) return;
+  try {
+    setCooldown(accountId, Date.now() + 12 * 60 * 60 * 1000, `oauth session expired — ${source}`);
+  } catch {
+    // Metadado que não gravou não transforma a recusa em aceite.
   }
 }
 
@@ -594,11 +635,23 @@ export function claudeAccountIsNativeLogin(
   return snapshot.account?.id === account.id;
 }
 
+/**
+ * Veredito de identidade do spawn Claude. `renewable` (F-1642): access token
+ * vencido pelo relógio, refresh token no prazo, linhagem só desta conta e no
+ * escopo cuja CLI a renova. Ninguém provou sessão morta, então o pane abre e
+ * a CLI dele renova sob o próprio lock — a mesma régua da cota (F-1416).
+ * `auth-expired` é sessão PROVADA morta (pede login, com o botão do pane);
+ * `auth-unproven` recusa o pane sem essa prova (401 sobre token no prazo,
+ * refresh que falhou agora, linhagem que o cofre não provou).
+ */
+export type ClaudeSpawnIdentity =
+  | 'match' | 'renewable' | 'mismatch' | 'auth-expired' | 'auth-unproven' | 'unavailable';
+
 /** Validate the same scoped credential the CLI will read before a managed Claude spawn. */
 export async function verifyManagedClaudeAccountForSpawn(
   accountId: string,
   onVerified?: (blob: string) => void,
-): Promise<'match' | 'mismatch' | 'auth-expired' | 'unavailable'> {
+): Promise<ClaudeSpawnIdentity> {
   const account = getAccount(accountId);
   if (!account || account.adapterId !== 'claude' || account.mode !== 'subscription') {
     return 'unavailable';
@@ -614,26 +667,55 @@ export async function verifyManagedClaudeAccountForSpawn(
   const nativeBlob = !managed && native.account?.id === accountId ? native.blob : null;
   // Store nativo ilegível (Keychain travado) não é sessão expirada.
   if (nativeLogin && !nativeBlob) return 'unavailable';
-  const originalSaved = getSecret(CRED_PREFIX + accountId);
+  let originalSaved = getSecret(CRED_PREFIX + accountId);
   let credential = nativeLogin
     ? nativeBlob
     : freshestClaudeCredential(scoped, nativeBlob, originalSaved);
-  let result = await probeClaudeCredentialIdentity(credential, account.email);
+  let result: ClaudeSpawnIdentity = await probeClaudeCredentialIdentity(credential, account.email);
+  // Linhagem (refresh token) que a CLI recusou: só prova algo sobre ela.
+  let refusedLineage: string | null = null;
   if (result === 'auth-expired' && (managed || nativeLogin) && credential &&
       claudeBlobNeedsRefresh(credential, Date.now())) {
     // F-639: access token vencido com refresh token não é sessão perdida. A
     // CLI é dona da renovação (.oauth_refresh.lock): um run dela no store que
     // o pane vai usar renova, e a identidade é provada de novo sobre o token
-    // novo. "Entre novamente" só quando nem a própria CLI conseguiu.
-    const renewed = nativeLogin
+    // novo.
+    const renewal = nativeLogin
       ? await renewNativeClaudeAuthThroughCli(accountId)
       : await renewManagedClaudeAuthThroughCli(accountId);
-    if (renewed && renewed !== credential) {
-      credential = nativeLogin ? renewed : freshestClaudeCredential(renewed, originalSaved);
+    refusedLineage = renewal.refused ? claudeRefreshToken(renewal.blob) : null;
+    if (renewal.blob && renewal.blob !== credential) {
+      credential = nativeLogin ? renewal.blob : freshestClaudeCredential(renewal.blob, originalSaved);
       result = await probeClaudeCredentialIdentity(credential, account.email);
     }
   }
-  if (result === 'match' && (!sameClaudeAccountIdentity(account) ||
+  if (result === 'auth-expired' && !nativeLogin) {
+    // F-1642: Reserva só no cofre, ou escopo com OUTRA linhagem mais velha
+    // que o cofre: quem renova é o cofre, por HTTP, com as guardas de linhagem
+    // de `ensureFreshClaudeSubscription` (nunca o login nativo nem linhagem
+    // compartilhada) e prova da conta no token novo antes de gravá-lo. Um
+    // irmão que publicou a renovação enquanto esta verificação corria também
+    // conta: o token novo é provado aqui de novo.
+    const refreshed = await ensureFreshClaudeSubscription(accountId);
+    const vaultNow = getSecret(CRED_PREFIX + accountId);
+    if (refreshed || vaultNow !== originalSaved) {
+      originalSaved = vaultNow;
+      credential = managed
+        ? freshestClaudeCredential(await readManagedClaudeAuthAsync(accountId), originalSaved)
+        : originalSaved;
+      result = await probeClaudeCredentialIdentity(credential, account.email);
+    }
+  }
+  if (result === 'auth-expired') {
+    const expiry = expiredClaudeSpawnVerdict(accountId, credential, originalSaved, managed, refusedLineage);
+    result = expiry.verdict === 'renewable' || expiry.provedDead ? expiry.verdict : 'auth-unproven';
+    // Um re-login que chegou durante a verificação é o estado mais novo.
+    if (expiry.provedDead && sameClaudeAccountIdentity(account) &&
+        getSecret(CRED_PREFIX + accountId) === originalSaved) {
+      markClaudeSessionExpired(accountId, 'pane Claude');
+    }
+  }
+  if ((result === 'match' || result === 'renewable') && (!sameClaudeAccountIdentity(account) ||
       getSecret(CRED_PREFIX + accountId) !== originalSaved)) return 'unavailable';
   if (result === 'mismatch') {
     markClaudeIdentityMismatch(accountId, 'pane Claude');
@@ -645,12 +727,47 @@ export async function verifyManagedClaudeAccountForSpawn(
     if (originalSaved === null && hasSecret(CRED_PREFIX + accountId)) return 'unavailable';
     if (!setSecret(CRED_PREFIX + accountId, credential).ok) return 'unavailable';
   }
-  if (result === 'match' && credential) {
+  if ((result === 'match' || result === 'renewable') && credential) {
     onVerified?.(credential);
-  } else if (result === 'match') {
+  } else if (result === 'match' || result === 'renewable') {
     return 'unavailable';
   }
   return result;
+}
+
+/**
+ * Depois de toda renovação possível, o token continua vencido. Re-login só
+ * com prova (F-1416): a CLI recusou ESTA linhagem, ou o access token venceu
+ * pelo relógio sem refresh token no prazo — e aí a linha do painel passa a
+ * oferecer «Entrar novamente». Sem prova, só a linhagem que o cofre provou
+ * para esta conta, no escopo cuja CLI a renova, abre o pane (`renewable`):
+ * o relógio não diz de quem é um token vencido.
+ */
+function expiredClaudeSpawnVerdict(
+  accountId: string,
+  credential: string | null,
+  vault: string | null,
+  managed: boolean,
+  refusedLineage: string | null,
+): { verdict: 'renewable' | 'auth-expired'; provedDead: boolean } {
+  if (!credential) return { verdict: 'auth-expired', provedDead: false };
+  const now = Date.now();
+  const lineage = claudeRefreshToken(credential);
+  if ((refusedLineage !== null && refusedLineage === lineage) ||
+      (claudeAccessTokenExpired(credential, now) && !claudeBlobIsRenewable(credential, now))) {
+    return { verdict: 'auth-expired', provedDead: true };
+  }
+  // Só o relógio (vencido ou a menos do skew) — nunca um 401 do provedor
+  // sobre token no prazo. Cofre puro já teve a renovação HTTP dele; uma falha
+  // recente dela, ou a mesma linhagem em outro store (F-615/F-645), faria a
+  // CLI do pane consumir o refresh token de quem também o carrega.
+  if (!managed || !lineage || lineage !== claudeRefreshToken(vault) ||
+      !claudeBlobNeedsRefresh(credential, now) ||
+      hasRecentClaudeRefreshFailure(accountId, now) ||
+      claudeLineageSharedElsewhere(accountId, credential)) {
+    return { verdict: 'auth-expired', provedDead: false };
+  }
+  return { verdict: 'renewable', provedDead: false };
 }
 
 interface ClaudeOauthCredential {
@@ -972,7 +1089,12 @@ export function prepareAccountForSpawn(
   }
 }
 
-const claudeRefreshInFlight = new Set<string>();
+/**
+ * Uma renovação por conta, compartilhada: quem chega com ela em voo (sweeper,
+ * spawn, cota) espera o MESMO resultado em vez de desistir — o spawn recusava
+ * como "expirou" enquanto o irmão estava a um passo de gravar o token novo.
+ */
+const claudeRefreshInFlight = new Map<string, Promise<boolean>>();
 
 /**
  * Última falha de renovação por conta (só tentativas reais, nunca skips).
@@ -1084,8 +1206,23 @@ export async function ensureFreshClaudeSubscription(
   const blob = getSecret(CRED_PREFIX + accountId);
   if (typeof blob !== 'string' || !blob) return false;
   if (!options.force && !claudeBlobNeedsRefresh(blob, now)) return false;
-  if (claudeRefreshInFlight.has(accountId)) return false;
-  claudeRefreshInFlight.add(accountId);
+  const inFlight = claudeRefreshInFlight.get(accountId);
+  if (inFlight) return inFlight;
+  const run = refreshClaudeVaultLineage(account, blob, now, refreshImpl, options)
+    .finally(() => claudeRefreshInFlight.delete(accountId));
+  claudeRefreshInFlight.set(accountId, run);
+  return run;
+}
+
+/** O corpo da renovação HTTP do cofre; `ensureFreshClaudeSubscription` a serializa por conta. */
+async function refreshClaudeVaultLineage(
+  account: Account,
+  blob: string,
+  now: number,
+  refreshImpl: ((blob: string, now: number) => Promise<string | null>) | undefined,
+  options: { force?: boolean },
+): Promise<boolean> {
+  const accountId = account.id;
   try {
     // Refresh rotates an opaque grant. Prove the current access token belongs
     // to this account before touching that grant. An expired access token
@@ -1132,8 +1269,6 @@ export async function ensureFreshClaudeSubscription(
   } catch {
     markClaudeRefreshFailed(account);
     return false;
-  } finally {
-    claudeRefreshInFlight.delete(accountId);
   }
 }
 

@@ -1,4 +1,5 @@
 import { clearPaneBirthElapsedForPane } from '../lib/pane-birth-display';
+import { parseAccountReloginRequest, type AccountReloginRequest } from '../../shared/account-relogin';
 
 /**
  * Último erro concreto de spawn de cada pane (ex.: a cerca do pty-manager
@@ -8,16 +9,25 @@ import { clearPaneBirthElapsedForPane } from '../lib/pane-birth-display';
  * failed)" — o operador precisa saber O QUE fazer, não que algo vago falhou.
  */
 const paneSpawnErrors = new Map<string, string>();
+/**
+ * F-1642: a conta que a recusa disse precisar de login. Anda junto do erro da
+ * MESMA tentativa — gravar um erro sem conta apaga a conta da anterior.
+ */
+const paneSpawnRelogins = new Map<string, AccountReloginRequest>();
 const listeners = new Set<() => void>();
 
-export function recordPaneSpawnError(paneId: string, error: string): void {
+export function recordPaneSpawnError(paneId: string, error: string, relogin?: unknown): void {
   paneSpawnErrors.set(paneId, error);
+  const account = parseAccountReloginRequest(relogin);
+  if (account) paneSpawnRelogins.set(paneId, account);
+  else paneSpawnRelogins.delete(paneId);
   clearPaneBirthElapsedForPane(paneId);
   for (const listener of listeners) listener();
 }
 
 export function clearPaneSpawnError(paneId: string): void {
   paneSpawnErrors.delete(paneId);
+  paneSpawnRelogins.delete(paneId);
   for (const listener of listeners) listener();
 }
 
@@ -25,7 +35,13 @@ export function clearPaneSpawnError(paneId: string): void {
 export function takePaneSpawnError(paneId: string): string | null {
   const error = paneSpawnErrors.get(paneId) ?? null;
   paneSpawnErrors.delete(paneId);
+  paneSpawnRelogins.delete(paneId);
   return error;
+}
+
+/** Conta a reautenticar para a última recusa deste pane, sem consumir. */
+export function peekPaneSpawnRelogin(paneId: string): AccountReloginRequest | null {
+  return paneSpawnRelogins.get(paneId) ?? null;
 }
 
 /**

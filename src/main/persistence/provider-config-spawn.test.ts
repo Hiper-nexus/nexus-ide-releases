@@ -71,7 +71,7 @@ const spawnDeps = vi.hoisted(() => ({
   activeClaudeAuthEnv: vi.fn<() => Record<string, string> | null>(() => ({
     CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active',
   })),
-  verifyClaudeAccount: vi.fn<(_id: string, onVerified?: (blob: string) => void) => Promise<'match' | 'mismatch' | 'auth-expired' | 'unavailable'>>(
+  verifyClaudeAccount: vi.fn<(_id: string, onVerified?: (blob: string) => void) => Promise<'match' | 'renewable' | 'mismatch' | 'auth-expired' | 'auth-unproven' | 'unavailable'>>(
     async (_id, onVerified) => { onVerified?.('verified-claude-blob'); return 'match'; },
   ),
   resolveCliBinary: vi.fn((runner: string): { binPath: string } | null =>
@@ -525,6 +525,7 @@ import {
   hasRuntimeKey,
 } from './provider-config-store';
 import { fetchLiveProviderWindows } from '../quota/provider-live-usage';
+import { parseAccountReloginRequest } from '../../shared/account-relogin';
 
 function sheetHost(visible: boolean) {
   return { isDestroyed: () => false, isVisible: () => visible, isFocusable: () => true };
@@ -2123,6 +2124,64 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     await expect(prepareProviderSpawnAuthoritative('claude', { accountId: account.id }))
       .resolves.toMatchObject({ ok: false, error: expect.stringContaining('outra conta Claude') });
     expect(spawnDeps.prepareAccount).not.toHaveBeenCalled();
+  });
+
+  // F-1642: o pane da conta em uso abre com o token que só o relógio venceu;
+  // a recusa sobra para quando a conta precisa mesmo de login, e nomeia ela.
+  it.each([
+    ['renewable', true],
+    ['auth-expired', false],
+    ['auth-unproven', false],
+  ] as const)('Claude identity %s: pane opens = %s', async (identity, opens) => {
+    const account = { id: 'acct-b', adapterId: 'claude', label: 'conta b',
+      mode: 'subscription', upstream: 'anthropic', email: 'b@example.com', createdAt: 1 };
+    spawnDeps.listAccounts.mockReturnValue([account]);
+    spawnDeps.getActiveAccount.mockReturnValue(account);
+    spawnDeps.getAccount.mockReturnValue(account);
+    spawnDeps.pickAvailableForFailover.mockReturnValue({ account });
+    spawnDeps.prepareAccount.mockReturnValue({ ok: true, account,
+      authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '/fixture/accounts/claude/b' } });
+    spawnDeps.verifyClaudeAccount.mockImplementationOnce(async (_id, onVerified) => {
+      onVerified?.('expired-renewable-blob');
+      return identity;
+    });
+
+    const prepared = await prepareProviderSpawnAuthoritative('claude');
+    if (opens) {
+      expect(prepared).toMatchObject({ ok: true, overrides: { selectedAccountId: 'acct-b' } });
+      // A credencial verificada é a que o materialize fixa (F-1401).
+      expect(spawnDeps.prepareAccount.mock.calls.at(-1)?.[3])
+        .toMatchObject({ expectedClaudeBlob: 'expired-renewable-blob' });
+    } else if (identity === 'auth-expired') {
+      expect(prepared).toMatchObject({ ok: false,
+        error: expect.stringMatching(/“conta b” expirou — use «Entrar novamente» nessa conta/),
+        // A conta CERTA chega ao cartão do pane: só id e rótulo, sem e-mail.
+        relogin: { adapterId: 'claude', accountId: 'acct-b', accountLabel: 'conta b' } });
+      expect(JSON.stringify(prepared)).not.toContain('b@example.com');
+      expect(spawnDeps.prepareAccount).not.toHaveBeenCalled();
+    } else {
+      // Sem prova de sessão morta: recusa, mas nem diz "expirou" nem oferece o
+      // login em um clique (revisão do PR #165).
+      expect(prepared).toMatchObject({ ok: false,
+        error: expect.stringMatching(/Não deu para confirmar a sessão de “conta b”/) });
+      expect(prepared).not.toHaveProperty('relogin');
+      expect(spawnDeps.prepareAccount).not.toHaveBeenCalled();
+    }
+  });
+
+  it('rótulo de conta no limite de 128 caracteres ainda chega ao botão do pane', async () => {
+    const label = 'c'.repeat(128);
+    const account = { id: 'acct-long', adapterId: 'claude', label,
+      mode: 'subscription', upstream: 'anthropic', email: 'l@example.com', createdAt: 1 };
+    spawnDeps.listAccounts.mockReturnValue([account]);
+    spawnDeps.getActiveAccount.mockReturnValue(account);
+    spawnDeps.getAccount.mockReturnValue(account);
+    spawnDeps.pickAvailableForFailover.mockReturnValue({ account });
+    spawnDeps.verifyClaudeAccount.mockResolvedValueOnce('auth-expired');
+
+    const prepared = await prepareProviderSpawnAuthoritative('claude');
+    expect(parseAccountReloginRequest((prepared as { relogin?: unknown }).relogin))
+      .toMatchObject({ accountId: 'acct-long', accountLabel: label });
   });
 
   it('checks the automatically selected Claude account before preparing its credential', async () => {

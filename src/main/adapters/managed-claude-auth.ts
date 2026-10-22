@@ -136,6 +136,23 @@ export function managedClaudeAuthHasCredential(
   return probe(managedClaudeKeychainService(directory));
 }
 
+/**
+ * F-1642: o store que a CLI do escopo usa foi lido de verdade? No macOS a CLI
+ * lê o item de Keychain do escopo e ignora o arquivo-espelho; com o item
+ * presente e a leitura negada ou travada, a CLI também diz "not logged in", e
+ * isso não prova nada sobre a sessão da conta. Mesma régua da cota.
+ */
+export async function managedClaudeScopeKeychainReadable(accountId: string): Promise<boolean> {
+  if (process.platform !== 'darwin' || !hasManagedClaudeAuth(accountId)) return true;
+  const service = managedClaudeKeychainService(managedClaudeAuthDirectory(accountId));
+  if (!keychainItemExists(service)) return true;
+  try {
+    return Boolean(await readNativeOAuthCredential(service, undefined, { bypassCache: true }));
+  } catch {
+    return false;
+  }
+}
+
 /** Só atributos (`-s`, sem `-w`): confirma existência sem custar prompt. */
 function keychainItemExists(service: string): boolean {
   if (process.platform !== 'darwin') return false;

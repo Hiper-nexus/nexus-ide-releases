@@ -8,6 +8,7 @@ import { useConfirmStore } from '../../state/confirm-store';
 import { useUsageStore, EMPTY_USAGE_SNAPSHOT } from '../../state/usage-store';
 import { openCliLoginTerminal } from './cli-login-terminal';
 import { AccountsManager } from './AccountsManager';
+import { useAccountReloginIntentStore } from '../../state/account-relogin-intent';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -102,6 +103,49 @@ describe('AccountsManager', () => {
     Reflect.deleteProperty(window, 'nexus');
     document.body.innerHTML = '';
     vi.restoreAllMocks();
+  });
+
+  // F-1642: o cartão "Não subiu" do pane pede o login de uma conta. Quem
+  // atende é o mesmo «Entrar novamente» desta linha, com as mesmas guardas.
+  describe('pedido de login vindo do pane (F-1642)', () => {
+    const contaB = () => account({ id: 'acct-b', label: 'conta b', email: 'b@example.com', needsRelogin: true });
+    const native = () => account({ id: 'acct-native', label: 'conta adm', active: false });
+
+    afterEach(() => useAccountReloginIntentStore.setState({ pending: null }));
+
+    it('abre o login da conta pedida, como reautenticação, e consome o pedido', async () => {
+      useAccountStore.setState({ accounts: [contaB(), native()] });
+      vi.mocked(openCliLoginTerminal).mockClear();
+      useAccountReloginIntentStore.getState().request({ adapterId: 'claude', accountId: 'acct-b', accountLabel: 'conta b' });
+      const { root } = mount();
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(openCliLoginTerminal).toHaveBeenCalledTimes(1);
+      expect(openCliLoginTerminal).toHaveBeenCalledWith(expect.objectContaining({
+        adapterId: 'claude', reauthenticate: true,
+      }));
+      expect(useAccountReloginIntentStore.getState().pending).toBeNull();
+      act(() => root.unmount());
+    });
+
+    it('pedido de outra CLI ou de conta que não existe mais não abre login', async () => {
+      useAccountStore.setState({ accounts: [contaB()] });
+      vi.mocked(openCliLoginTerminal).mockClear();
+      useAccountReloginIntentStore.getState().request({ adapterId: 'codex', accountId: 'acct-b', accountLabel: 'conta b' });
+      const first = mount();
+      await act(async () => { await Promise.resolve(); });
+      act(() => first.root.unmount());
+      useAccountReloginIntentStore.getState().request({ adapterId: 'claude', accountId: 'acct-gone', accountLabel: 'velha' });
+      const second = mount();
+      await act(async () => { await Promise.resolve(); });
+
+      expect(openCliLoginTerminal).not.toHaveBeenCalled();
+      act(() => second.root.unmount());
+    });
   });
 
   it('shows implicit native session when vault is empty', async () => {

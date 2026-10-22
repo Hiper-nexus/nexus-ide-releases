@@ -1478,7 +1478,7 @@ function startSpawn(
           return null;
         }
         host.spawnStarted = false;
-        recordPaneSpawnError(pane.id, res.error);
+        recordPaneSpawnError(pane.id, res.error, res.relogin);
         // Spent orch tokens leave a permanent dead pane on Reiniciar — drop
         // them. E o operador NÃO é o garbage collector do grant: com missão
         // conhecida, a autoridade fresca é reemitida SOZINHA pelo mesmo

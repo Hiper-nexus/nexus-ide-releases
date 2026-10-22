@@ -72,6 +72,17 @@ export function claudeBlobIsRenewable(blob: string, now: number): boolean {
 }
 
 /**
+ * F-1642: access token com `expiresAt` conhecido e já vencido pelo relógio.
+ * Distingue "venceu" de "o provedor recusou um token no prazo" (401/403, que
+ * também vem de escopo OAuth sem `user:profile`) — só o primeiro, sem refresh
+ * token no prazo, prova sessão morta.
+ */
+export function claudeAccessTokenExpired(blob: string, now: number): boolean {
+  const expiresAt = parseBlob(blob)?.oauth.expiresAt;
+  return typeof expiresAt === 'number' && Number.isFinite(expiresAt) && expiresAt <= now;
+}
+
+/**
  * Refresh token do blob quando a renovação é necessária (access token perto
  * de expirar, já expirado, ou sem expiresAt confiável). null = nada a fazer.
  */

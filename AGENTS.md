@@ -325,13 +325,24 @@ saber isto antes de mexer:
   recebe o arquivo (`nativeCredentialsInPlace`).
 - **Token de acesso vencido não é sessão perdida (F-639).** Com refresh token,
   o spawn deixa a própria CLI renovar (um run no store que o pane vai usar) e
-  prova a identidade no token novo; "entre novamente" só se nem ela conseguiu.
-  Na Reserva (só cofre, sem CLI dona), `ensureFreshClaudeSubscription` renova
-  por HTTP sem prova prévia apenas se o refresh token não estiver no login
-  nativo nem em outra linha do cofre, e o token novo prova a conta antes de
-  entrar no cofre. Escopo gerenciado vencido com OUTRA linhagem, mais velha
-  que o cofre, não bloqueia essa cura (a cota cai para o passo 3); com a
-  mesma linhagem, a CLI continua sendo a única que renova.
+  prova a identidade no token novo. Na Reserva (só cofre, sem CLI dona),
+  `ensureFreshClaudeSubscription` renova por HTTP sem prova prévia apenas se o
+  refresh token não estiver no login nativo nem em outra linha do cofre, e o
+  token novo prova a conta antes de entrar no cofre; o spawn também a chama.
+  Escopo gerenciado vencido com OUTRA linhagem, mais velha que o cofre, não
+  bloqueia essa cura (a cota cai para o passo 3); com a mesma linhagem, a CLI
+  continua sendo a única que renova.
+- **Spawn e cota usam a mesma régua de re-login (F-1642).** Um run da CLI que
+  não renovou NÃO prova sessão morta. Sem prova, o escopo gerenciado abre o
+  pane como `renewable` (blob fixado, a CLI do pane renova) só com o MESMO
+  refresh token que o cofre provou para a conta, fora de outro store e sem
+  refresh falho recente: o relógio não diz de quem é um token vencido. Prova
+  é a CLI recusar ESSA linhagem (store legível depois do run) ou access token
+  vencido sem refresh token no prazo; 401 sobre token no prazo não prova. Com
+  prova, `markClaudeSessionExpired` grava o cooldown de auth (nunca por cima de
+  um cooldown vivo) e a recusa leva `relogin` ao cartão "Não subiu", cujo botão
+  pede o «Entrar novamente» do `AccountsManager` (nunca um login paralelo).
+  Recusa sem prova é `auth-unproven`: manda tentar de novo e não tem botão.
 - **«Entrar novamente» da mesma conta abre o login mesmo se o snapshot vivo
   falhar.** O aviso «Não consegui guardar a conta atual» continua quando o
   cadastro de uma segunda conta não consegue gravar a primeira, e quando o

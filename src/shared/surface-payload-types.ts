@@ -1,5 +1,6 @@
 import type { DecisionProvider } from './decision-models';
 import type { LicenseErrorCode, LicenseDenialReason } from './license-errors';
+import type { AccountReloginRequest } from './account-relogin';
 import type { SpawnRouteInfo } from './spawn-route';
 import type { MachineResources } from './machine-resources';
 /**
@@ -644,7 +645,14 @@ export type SpawnResult =
       /** F-992: avisos de versão da CLI (faixa quebrada, modelo novo demais); não bloqueiam. */
       warnings?: string[];
     }
-  | { ok: false; error: string; code?: LicenseErrorCode; blockedReason?: LicenseDenialReason };
+  | {
+      ok: false;
+      error: string;
+      code?: LicenseErrorCode;
+      blockedReason?: LicenseDenialReason;
+      /** F-1642: a conta que precisa de login; o cartão do pane oferece «Entrar novamente». */
+      relogin?: AccountReloginRequest;
+    };
 
 export interface PtyDataEvent {
   sessionId: string;
