@@ -5,6 +5,7 @@ import {
   PANE_BOOT_OUTPUT_SCAN_CHARS,
   sanitizePaneBootOutput,
 } from './pane-boot-output';
+import { cpuTimeMs } from '../../test/cpu-time';
 
 describe('sanitized boot output', () => {
   it('redacts credentials across lines before selecting the last 40 lines', () => {
@@ -90,11 +91,11 @@ describe('F-788: cauda do boot em tempo linear (lição do F-764)', () => {
   ];
 
   it.each(inputs)('%s: cauda curta em tempo linear', (_label, text) => {
-    // Aquece: a compilação/tier-up da regex não é o que está sendo medido.
-    sanitizePaneBootOutput(text);
-    const startedAt = performance.now();
     const tail = sanitizePaneBootOutput(text);
-    const elapsedMs = performance.now() - startedAt;
+    // CPU, melhor de duas depois de aquecer (o tier-up da regex não é o que se
+    // mede): no runner do CI o relógio de parede leu 68 ms de fila numa
+    // varredura de ~3 ms.
+    const elapsedMs = cpuTimeMs(() => sanitizePaneBootOutput(text));
     expect(tail.length).toBeLessThanOrEqual(PANE_BOOT_OUTPUT_MAX_CHARS);
     expect(tail.split('\n').length).toBeLessThanOrEqual(PANE_BOOT_OUTPUT_MAX_LINES + 1);
     // A versão que redigia o texto inteiro levava ~70 ms aqui e ~1 s em 64 KB.
