@@ -318,6 +318,37 @@ afterEach(() => {
 });
 
 describe('mcp-server governed CLI profile wiring', () => {
+  it.each(['opened', 'approved'] as const)('F-1643: emits private Codex trust only for %s Main authority', (kind) => {
+    const root = tempRoot(), home = path.join(root, 'home');
+    const cwd = fs.realpathSync(root);
+    privateRuntimePaths.userData = root;
+    vi.stubEnv('HOME', home); vi.stubEnv('USERPROFILE', home);
+    const bound = kind === 'opened' ? authority(cwd, false) : sealedMissionAuthority(cwd);
+    const decoration = prepareAgentSpawnDecoration(adapter('codex'), { kind: 'cli-agent', cols: 80, rows: 24 }, bound);
+    try {
+      expect((decoration as AgentSpawnDecoration & { codexStartupPolicy?: unknown })?.codexStartupPolicy).toMatchObject({
+        projectTrust: { cwdRealPath: cwd, workspaceRootRealPath: cwd, basis: kind === 'opened' ? 'opened-workspace' : 'approved-mission' },
+        daybreak: 'suppress-unrequested',
+      });
+    } finally { decoration?.onSpawnFailed?.(); }
+  });
+
+  it.each(['hardened', 'unsealed', 'outside', 'legacy'] as const)('F-1643: does not emit Codex trust for %s authority', (kind) => {
+    const root = tempRoot(), home = path.join(root, 'home');
+    const cwd = fs.realpathSync(root);
+    privateRuntimePaths.userData = root;
+    vi.stubEnv('HOME', home); vi.stubEnv('USERPROFILE', home);
+    if (kind === 'hardened') homePolicyDeps.getOrchSettings.mockReturnValue({ squadCliPolicy: 'governed' });
+    let bound = kind === 'unsealed' ? authority(cwd, true) : sealedMissionAuthority(cwd);
+    if (kind === 'outside') bound = { ...bound, cwd: path.dirname(cwd) };
+    if (kind === 'legacy') bound = { ...bound, source: 'legacy-squad' };
+    const decoration = prepareAgentSpawnDecoration(adapter('codex'), { kind: 'cli-agent', cols: 80, rows: 24 }, bound);
+    try {
+      expect(decoration).not.toHaveProperty('codexStartupPolicy.projectTrust');
+      if (kind === 'hardened') expect(decoration).not.toHaveProperty('codexStartupPolicy');
+    } finally { decoration?.onSpawnFailed?.(); }
+  });
+
   it.runIf(process.platform === 'darwin').each(['kimi', 'custom-grok'] as const)('F-1101: Main does not select Grok Bash for adapter %s', id => {
     const root = tempRoot(), home = path.join(root, 'home'), cwd = path.join(root, 'workspace'); fs.mkdirSync(cwd);
     privateRuntimePaths.userData = root; vi.stubEnv('HOME', home);

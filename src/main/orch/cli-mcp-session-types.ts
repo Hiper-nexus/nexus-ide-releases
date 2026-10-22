@@ -2,7 +2,18 @@ import type { GovernedCliProfileOptions } from './governed-cli-profile';
 import type { CodexNativeAuthority } from '../pty/codex-native-authority';
 import type { McpHubSpawnServer } from '../mcp-hub/mcp-hub-spawn';
 
+/** Main-only projection into a disposable Codex home; never an IPC input. */
+export interface CodexStartupPolicy {
+  readonly projectTrust?: {
+    readonly cwdRealPath: string;
+    readonly workspaceRootRealPath: string;
+    readonly basis: 'opened-workspace' | 'approved-mission';
+  };
+  readonly daybreak: 'preserve' | 'suppress-unrequested';
+}
+
 export interface CliMcpSessionOptions extends GovernedCliProfileOptions {
+  codexStartupPolicy?: CodexStartupPolicy;
   /** Exact Main-selected scheduling keys; never the complete provider env. */
   heavyCommandEnv?: Readonly<Record<string, string>>;
   home?: string;

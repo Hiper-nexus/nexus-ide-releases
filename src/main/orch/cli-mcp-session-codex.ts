@@ -24,6 +24,7 @@ import type {
 import { resolveGovernedCliProfile } from './governed-cli-profile';
 import { codexPermissionProfileFor } from '../pty/codex-native-authority';
 import { installCodexPrivateHookTrust } from './codex-private-hook-trust';
+import { codexStartupConfig } from './codex-startup-policy';
 
 function heavyCommandShellPolicy(env: Readonly<Record<string, string>> | undefined): Record<string, string> {
   const selected: Record<string, string> = {};
@@ -643,7 +644,8 @@ export function prepareCodexGovernedSession(
  * `blocked_user` decision that was correct for the hang, wrong for product.
  *
  * This preparer is deliberately thinner than `prepareCodexGovernedSession`:
- * no filesystem deny table, no Seatbelt profile, no project-trust rewrite.
+ * no filesystem deny table or Seatbelt profile. Main may project exact workspace
+ * trust and suppress unsolicited Daybreak in this private config only.
  * It only stages a private CODEX_HOME with auth linked and `mcp_servers`
  * stripped. Nexus still arrives via the existing `-c mcp_servers.nexus_*`
  * argv injection from `codexMcpArgs`.
@@ -686,12 +688,18 @@ export function prepareCodexOperatorMissionHome(
       // A malformed user config degrades to an empty private config — Nexus
       // still injects via argv, so the worker remains callable.
       let userConfig: Record<string, unknown> = {};
+      let userConfigReadable = true;
       try {
         userConfig = readTomlObject(path.join(providerHome, 'config.toml'));
       } catch {
         userConfig = {};
+        userConfigReadable = false;
       }
       const { mcp_servers: _drop, ...rest } = userConfig;
+      const baseConfig = options.preserveUserMcp ? userConfig : rest;
+      const startupConfig = userConfigReadable
+        ? codexStartupConfig(baseConfig, options, providerHome)
+        : baseConfig;
       const contextWindow =
         typeof userConfig.model_context_window === 'number'
           ? Math.max(userConfig.model_context_window, 1_000_000)
@@ -703,7 +711,7 @@ export function prepareCodexOperatorMissionHome(
       writePrivateFileAtomic(
         path.join(artifactDir, 'config.toml'),
         `${stringify({
-          ...(options.preserveUserMcp ? userConfig : rest),
+          ...startupConfig,
           model_context_window: contextWindow,
           model_auto_compact_token_limit: autoCompactLimit,
           sqlite_home: providerSessionHome,
