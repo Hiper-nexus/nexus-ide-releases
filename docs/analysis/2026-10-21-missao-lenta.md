@@ -74,15 +74,19 @@ prove aparência: as duas cobranças não podiam ser satisfeitas juntas.
 pelo Main conta como evidência. A rubrica passa a nomear a captura observada
 como prova válida de entrega visual.
 
-### 4. A doutrina só ensinava a devolver (MEDIDO)
+### 4. A doutrina só ensinava a devolver, e a prova não cabia na aparência (MEDIDO)
 
 Nas três portas (kickoff, instruções permanentes, lembrete de turno) a prova
 exigida era literalmente "rode o teste que prova a correção", e o único gesto
 de ACK ensinado era `verdict:"rework"`. **O aceite nunca era ensinado.** Então
 o laço tinha uma saída só, e ela custa outra rodada inteira do worker.
 
-**Corrigido:** a prova passa a ser a que cabe — teste para comportamento,
-captura do navegador para aparência — e as três portas mandam aceitar com
+**Corrigido:** o Maestro continua RODANDO o teste que prova a correção — isso
+é regra do operador de 02/10 ("verifica, não confia") e a primeira versão deste
+fix a tinha enfraquecido para "exija a prova que cabe", o que permitiria aceitar
+a palavra do worker sem ninguém executar nada (apontado na revisão do PR 159).
+O que mudou é só a exceção de APARÊNCIA, onde esse teste não existe: ali a prova
+é a captura do navegador. E as três portas passam a mandar aceitar com
 `nexus_handoff_ack accepted`, devolvendo só com defeito concreto.
 
 ### 5. Um turno de abertura desperdiçado (MEDIDO)
@@ -122,6 +126,27 @@ pode **somar** exigência, nunca tirar. Não há caminho subtrativo.
 qualidade, e o operador quer "um serviço bem feito". Depois da causa 1, o
 custo repetido já não se paga a cada tentativa, então a urgência caiu. A
 recomendação está na seção final.
+
+## O que a revisão do PR impediu
+
+Sete achados da revisão automática viraram correção ou recusa fundamentada.
+Dois merecem registro porque eram eu enfraquecendo regra documentada do
+operador para resolver o caso visual:
+
+- **"O Maestro RODA o teste"** (regra de 02/10) tinha virado "exija a prova que
+  cabe". Isto é doutrina, não portão mecânico: sem rede embaixo, permitiria
+  integrar mudança de comportamento com a palavra do worker. Restaurado, com a
+  exceção de aparência preservada.
+- **O texto da rubrica `has_verification` do Jev** não pode mudar sem reavaliar
+  nas 105 entregas do HiperGO, e esse corpus não está no repositório. Revertido:
+  o fix visual é um FATO determinístico (`facts.hasVisualEvidence`), que não
+  depende de probabilidade nenhuma.
+
+Também apareceram dois defeitos meus de leitura — `verified: true` numa tarefa
+não visual não é captura observada, e `readOnly` não é "não escreve"
+(`isolatedWriter` vence o rótulo, F-1318) — e um de alcance: ao levar o
+`success` para o caminho de espera, tornei comum um defeito latente do ramo de
+`rework`, que limpava a rede de segurança da sessão sem conferir o handoff.
 
 ## Correção que NÃO fiz, e por quê
 
