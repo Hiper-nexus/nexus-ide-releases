@@ -1,5 +1,5 @@
 import { JSDOM } from 'jsdom';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createBrowserAutomation } from './browser-automation';
 
 type BrowserDomWindow = Window & typeof globalThis;
@@ -174,6 +174,18 @@ describe('isolated browser automation', () => {
     await expect(automation.run('fill', { ref: input!.ref, text: '123456' })).rejects.toThrow(
       /refusing/,
     );
+  });
+
+  it('waits on DOM mutations instead of re-walking the page every 50 ms', async () => {
+    const { dom, automation } = fixture();
+    const timers = vi.spyOn(dom.window, 'setTimeout');
+    const waiting = automation.run('wait', { condition: 'text', value: 'nunca aparece', timeoutMs: 1_000 });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    // An idle page costs at most the fallback tick, not eight full text walks.
+    expect(timers.mock.calls.length).toBeLessThanOrEqual(3);
+    dom.window.document.querySelector('#status')!.textContent = 'nunca aparece';
+    await expect(waiting).resolves.toMatchObject({ matched: true, condition: 'text' });
+    timers.mockRestore();
   });
 
   it('waits for visible text and enforces output bounds', async () => {
@@ -364,6 +376,97 @@ describe('isolated browser automation', () => {
     dom.window.close();
   });
 
+  it('synthetic click fires the pointer/mouse down-up sequence before click (Radix opens on pointerdown)', async () => {
+    const { dom, automation } = fixture();
+    const read = (await automation.run('read', {})) as { elements: Array<{ ref: string; name: string }> };
+    const button = read.elements.find((element) => element.name === 'Salvar')!;
+    const seen: string[] = [];
+    const el = dom.window.document.querySelector('#save')!;
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      el.addEventListener(type, (event) => {
+        seen.push(type);
+        if (type === 'pointerdown') expect((event as MouseEvent).button).toBe(0);
+      });
+    }
+    await automation.run('click', { ref: button.ref });
+    expect(seen).toEqual(['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']);
+  });
+
+  it('a pointerdown that cancels the default suppresses the mouse compatibility events, not the click', async () => {
+    const { dom, automation } = fixture();
+    const read = (await automation.run('read', {})) as { elements: Array<{ ref: string; name: string }> };
+    const button = read.elements.find((element) => element.name === 'Salvar')!;
+    const seen: string[] = [];
+    const el = dom.window.document.querySelector('#save')!;
+    el.addEventListener('pointerdown', (event) => event.preventDefault());
+    for (const type of ['mousedown', 'mouseup', 'click']) el.addEventListener(type, () => seen.push(type));
+    await automation.run('click', { ref: button.ref });
+    expect(seen).toEqual(['click']);
+  });
+
+  it('prepares a native click: scrolls into view, returns the center point and a delivery token', async () => {
+    const trusted = new WeakSet<Event>();
+    const { dom, automation } = (() => {
+      const base = fixture();
+      return {
+        dom: base.dom,
+        automation: createBrowserAutomation(base.dom.window as unknown as BrowserDomWindow, {
+          isTrustedInputEvent: (event) => trusted.has(event),
+        }),
+      };
+    })();
+    const read = (await automation.run('read', {})) as { elements: Array<{ ref: string; name: string }> };
+    const ref = read.elements.find((element) => element.name === 'Salvar')!.ref;
+    const el = dom.window.document.querySelector('#save') as HTMLElement;
+    let scrolled = false;
+    el.scrollIntoView = () => { scrolled = true; };
+    el.getBoundingClientRect = () => ({ left: 100, top: 40, width: 80, height: 20, right: 180, bottom: 60, x: 100, y: 40, toJSON: () => ({}) });
+    const prepared = (await automation.run('input_prepare', { ref, kind: 'click' })) as {
+      token: string; x: number; y: number; element: { name: string };
+    };
+    expect(scrolled).toBe(true);
+    expect(prepared).toMatchObject({ x: 140, y: 50, element: { name: 'Salvar' } });
+    expect(prepared.token).toMatch(/^i\d+$/);
+
+    // The trusted mousedown is what proves the native event reached the page.
+    const down = new dom.window.MouseEvent('mousedown', { bubbles: true });
+    trusted.add(down);
+    el.dispatchEvent(down);
+    await expect(automation.run('input_confirm', { token: prepared.token })).resolves.toEqual({ delivered: true });
+
+    const again = (await automation.run('input_prepare', { ref, kind: 'click' })) as { token: string };
+    el.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
+    await expect(automation.run('input_confirm', { token: again.token })).resolves.toEqual({ delivered: false });
+  });
+
+  it('element_rect scrolls the element into view and returns its box for a cropped capture', async () => {
+    const { dom, automation } = fixture();
+    const read = (await automation.run('read', {})) as { elements: Array<{ ref: string; name: string }> };
+    const ref = read.elements.find((element) => element.name === 'Salvar')!.ref;
+    const el = dom.window.document.querySelector('#save') as HTMLElement;
+    let scrolled = false;
+    el.scrollIntoView = () => { scrolled = true; };
+    el.getBoundingClientRect = () => ({ left: 12.4, top: 30, width: 80.2, height: 20, right: 92.6, bottom: 50, x: 12.4, y: 30, toJSON: () => ({}) });
+    await expect(automation.run('element_rect', { ref })).resolves.toEqual({ x: 12.4, y: 30, width: 80.2, height: 20 });
+    expect(scrolled).toBe(true);
+  });
+
+  it('does not offer a native point for a covered or zero-size element', async () => {
+    const { dom, automation } = fixture();
+    const read = (await automation.run('read', {})) as { elements: Array<{ ref: string; name: string }> };
+    const ref = read.elements.find((element) => element.name === 'Salvar')!.ref;
+    const el = dom.window.document.querySelector('#save') as HTMLElement;
+    el.getBoundingClientRect = () => ({ left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0, x: 0, y: 0, toJSON: () => ({}) });
+    await expect(automation.run('input_prepare', { ref, kind: 'click' }))
+      .resolves.toMatchObject({ token: null, reason: 'no-geometry' });
+    el.getBoundingClientRect = () => ({ left: 10, top: 10, width: 50, height: 20, right: 60, bottom: 30, x: 10, y: 10, toJSON: () => ({}) });
+    const overlay = dom.window.document.createElement('div');
+    dom.window.document.body.append(overlay);
+    (dom.window.document as unknown as { elementFromPoint: () => Element }).elementFromPoint = () => overlay;
+    await expect(automation.run('input_prepare', { ref, kind: 'click' }))
+      .resolves.toMatchObject({ token: null, reason: 'occluded' });
+  });
+
   it('hover dispatches the mouse over sequence on a previously read ref', async () => {
     const { dom, automation } = fixture();
     const read = (await automation.run('read', {})) as {
@@ -435,6 +538,67 @@ describe('isolated browser automation', () => {
     expect(read.alerts.length).toBeLessThanOrEqual(10);
     const invalid = read.alerts.find((a) => a.text === 'CPF');
     expect(invalid?.role).toBe('textbox');
+  });
+
+  it('describes invalid, expanded, selected and aria-checked state on elements', async () => {
+    const dom = new JSDOM(
+      `<!doctype html><body>
+        <input aria-invalid="true" aria-label="CPF">
+        <button aria-expanded="true">Conta</button>
+        <div role="tab" aria-selected="true">Planos</div>
+        <button role="switch" aria-checked="true">Modo escuro</button>
+      </body>`,
+      { url: 'https://example.test/', pretendToBeVisual: true },
+    );
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    const read = (await automation.run('read', {})) as {
+      elements: Array<{ name: string; invalid?: boolean; expanded?: boolean; selected?: boolean; checked?: boolean }>;
+    };
+    const byName = (name: string) => read.elements.find((element) => element.name === name);
+    expect(byName('CPF')?.invalid).toBe(true);
+    expect(byName('Conta')?.expanded).toBe(true);
+    expect(byName('Planos')?.selected).toBe(true);
+    expect(byName('Modo escuro')?.checked).toBe(true);
+  });
+
+  it('lists ARIA widgets that component kits render instead of native controls', async () => {
+    const dom = new JSDOM(
+      `<!doctype html><body>
+        <div role="menu">
+          <div role="menuitem" tabindex="-1">Perfil</div>
+          <div role="menuitemcheckbox" aria-checked="false">Notificações</div>
+          <div role="menuitemradio" aria-checked="true">Português</div>
+        </div>
+        <div role="tablist"><div role="tab">Mensal</div></div>
+        <div role="listbox"><div role="option">Brasil</div></div>
+        <div role="combobox">Escolha o país</div>
+        <div role="slider" aria-label="Volume"></div>
+        <div role="treeitem">src</div>
+        <div tabindex="0">Cartão clicável</div>
+        <div tabindex="-1">Contêiner de foco</div>
+        <div contenteditable="">Editor</div>
+        <select aria-label="Estado"><option>SP</option><option>RJ</option></select>
+        <select aria-label="Tags" multiple><option>novo</option></select>
+      </body>`,
+      { url: 'https://example.test/', pretendToBeVisual: true },
+    );
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    const read = (await automation.run('read', {})) as {
+      elements: Array<{ name: string; role: string; editable?: boolean }>;
+    };
+    const names = read.elements.map((element) => element.name);
+    for (const name of ['Perfil', 'Notificações', 'Português', 'Mensal', 'Brasil',
+      'Escolha o país', 'Volume', 'src', 'Cartão clicável', 'Editor', 'Estado', 'novo']) {
+      expect(names).toContain(name);
+    }
+    // Container focus and the options of a collapsed dropdown are not targets.
+    expect(names).not.toContain('Contêiner de foco');
+    expect(names).not.toContain('SP');
+    expect(read.elements.find((element) => element.name === 'Editor')?.editable).toBe(true);
+    const found = (await automation.run('find', { text: 'perfil', role: 'menuitem' })) as {
+      matches: Array<{ name: string }>;
+    };
+    expect(found.matches.map((match) => match.name)).toEqual(['Perfil']);
   });
 
   it('find scores accessible names and filters by role without CSS selectors', async () => {
@@ -667,5 +831,135 @@ describe('layout_audit (responsividade)', () => {
       clipped: [],
       truncated: false,
     });
+  });
+});
+
+describe('shadow DOM and same-origin iframes', () => {
+  function deepFixture() {
+    const dom = new JSDOM(
+      `<!doctype html><body>
+        <h1>Loja</h1>
+        <shop-card id="card"></shop-card>
+        <shop-card id="hidden-card" style="display:none"></shop-card>
+        <closed-card id="closed"></closed-card>
+        <iframe id="frame"></iframe>
+      </body>`,
+      { url: 'https://example.test/', pretendToBeVisual: true },
+    );
+    const doc = dom.window.document;
+    for (const id of ['card', 'hidden-card']) {
+      const root = doc.getElementById(id)!.attachShadow({ mode: 'open' });
+      root.innerHTML = `<p>Texto sombra ${id}</p><button>Comprar ${id}</button>`;
+    }
+    doc.getElementById('closed')!.attachShadow({ mode: 'closed' }).innerHTML = '<button>Fechado</button>';
+    const frameDoc = (doc.getElementById('frame') as HTMLIFrameElement).contentDocument!;
+    frameDoc.body.innerHTML = `
+      <p>Conteúdo do iframe</p>
+      <label for="cupom">Cupom</label><input id="cupom">
+      <button>Aplicar</button>
+      <table><tr><th>Frete</th><td>R$ 12,90</td></tr></table>`;
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    return { dom, doc, frameDoc, automation };
+  }
+
+  it('read and find see open shadow roots and same-origin frames, never closed or hidden trees', async () => {
+    const { automation } = deepFixture();
+    const read = (await automation.run('read', {})) as {
+      bodyText: string; elements: Array<{ name: string; ref: string }>;
+    };
+    const names = read.elements.map((element) => element.name);
+    expect(names).toContain('Comprar card');
+    expect(names).toContain('Aplicar');
+    expect(names).toContain('Cupom');
+    expect(names).not.toContain('Comprar hidden-card');
+    expect(names).not.toContain('Fechado');
+    expect(read.bodyText).toContain('Texto sombra card');
+    expect(read.bodyText).toContain('Conteúdo do iframe');
+    expect(read.bodyText).not.toContain('Texto sombra hidden-card');
+    const found = (await automation.run('find', { text: 'aplicar' })) as { matches: Array<{ name: string }> };
+    expect(found.matches.map((match) => match.name)).toEqual(['Aplicar']);
+  });
+
+  it('click and fill act inside the shadow root and the iframe', async () => {
+    const { doc, frameDoc, automation } = deepFixture();
+    const read = (await automation.run('read', {})) as { elements: Array<{ name: string; ref: string }> };
+    const ref = (name: string) => read.elements.find((element) => element.name === name)!.ref;
+    let bought = false;
+    doc.getElementById('card')!.shadowRoot!.querySelector('button')!.addEventListener('click', () => { bought = true; });
+    await automation.run('click', { ref: ref('Comprar card') });
+    expect(bought).toBe(true);
+    let typed = '';
+    frameDoc.getElementById('cupom')!.addEventListener('input', (event) => {
+      typed = (event.target as HTMLInputElement).value;
+    });
+    await automation.run('fill', { ref: ref('Cupom'), text: 'NEXUS10' });
+    expect(typed).toBe('NEXUS10');
+  });
+
+  it('wait sees text that appears inside a shadow root', async () => {
+    const { doc, automation } = deepFixture();
+    setTimeout(() => {
+      doc.getElementById('card')!.shadowRoot!.querySelector('p')!.textContent = 'Pedido confirmado';
+    }, 30);
+    await expect(automation.run('wait', { condition: 'text', value: 'Pedido confirmado', timeoutMs: 2_000 }))
+      .resolves.toMatchObject({ matched: true });
+  });
+
+  it('extract finds label → value pairs inside the iframe', async () => {
+    const { automation } = deepFixture();
+    const candidates = (await automation.run('extract_candidates', {})) as {
+      pairs: Array<{ label: string; value: string }>;
+    };
+    expect(candidates.pairs).toContainEqual(expect.objectContaining({ label: 'Frete', value: 'R$ 12,90' }));
+  });
+});
+
+describe('select', () => {
+  function selectFixture() {
+    const dom = new JSDOM(
+      `<!doctype html><body>
+        <label for="uf">Estado</label>
+        <select id="uf"><option value="">Escolha</option><option value="SP">São Paulo</option>
+          <option value="RJ">Rio de Janeiro</option><option value="RS">Rio Grande do Sul</option></select>
+        <label for="pass">Senha</label><select id="pass" autocomplete="cc-csc"><option>1</option></select>
+        <button role="combobox">País</button>
+      </body>`,
+      { url: 'https://example.test/', pretendToBeVisual: true },
+    );
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    return { dom, automation };
+  }
+
+  it('selects a native option by label (diacritics-insensitive) or value and fires input/change', async () => {
+    const { dom, automation } = selectFixture();
+    const read = (await automation.run('read', {})) as { elements: Array<{ name: string; ref: string }> };
+    const ref = read.elements.find((element) => element.name === 'Estado')!.ref;
+    const select = dom.window.document.getElementById('uf') as HTMLSelectElement;
+    const events: string[] = [];
+    select.addEventListener('input', () => events.push('input'));
+    select.addEventListener('change', () => events.push('change'));
+    await expect(automation.run('select', { ref, option: 'sao paulo' }))
+      .resolves.toMatchObject({ selected: true, option: { label: 'São Paulo', index: 1 } });
+    expect(select.value).toBe('SP');
+    expect(events).toEqual(['input', 'change']);
+    await automation.run('select', { ref, value: 'RS' });
+    expect(select.value).toBe('RS');
+  });
+
+  it('refuses an ambiguous or missing option and lists what exists', async () => {
+    const { automation } = selectFixture();
+    const read = (await automation.run('read', {})) as { elements: Array<{ name: string; ref: string }> };
+    const ref = read.elements.find((element) => element.name === 'Estado')!.ref;
+    await expect(automation.run('select', { ref, option: 'Rio' })).rejects.toThrow(/ambiguous.*Rio de Janeiro.*Rio Grande do Sul/);
+    await expect(automation.run('select', { ref, option: 'Bahia' })).rejects.toThrow(/no option.*São Paulo/);
+  });
+
+  it('refuses sensitive selects and reports a non-native target for the ARIA path', async () => {
+    const { automation } = selectFixture();
+    const read = (await automation.run('read', {})) as { elements: Array<{ name: string; ref: string; tag: string }> };
+    const sensitive = read.elements.find((element) => element.tag === 'select' && element.name !== 'Estado')!.ref;
+    await expect(automation.run('select', { ref: sensitive, option: '1' })).rejects.toThrow(/sensitive/);
+    const combo = read.elements.find((element) => element.name === 'País')!.ref;
+    await expect(automation.run('select', { ref: combo, option: 'Brasil' })).rejects.toThrow(/not a native select/);
   });
 });

@@ -23,8 +23,11 @@ import {
   providerLoginDetail,
   providerLoginScreen,
   providerRejectedCause,
+  paneStartBusyContradiction,
   releasePaneStartWatch,
   resetPaneStartWatchdogForTests,
+  sessionBusyContradiction,
+  setPaneStartBusyEvidence,
   setPaneStartKick,
   shortStartError,
   startFailureBreakerAction,
@@ -751,5 +754,25 @@ describe('ficha do spawn pendente (F-723)', () => {
     ).toBeNull();
     expect(watch.failure).toBeNull();
     expect(watch.turnOutcome).toBe('started');
+  });
+});
+
+describe('a busy worker is not a brief that failed to start', () => {
+  afterEach(() => resetPaneStartWatchdogForTests());
+
+  it('tool activity means it works; an open heavy admission means it waits in the queue', () => {
+    expect(paneStartBusyContradiction({ toolActivityCount: 2, heavyAdmissionOpen: true })).toBe('working');
+    expect(paneStartBusyContradiction({ toolActivityCount: 0, heavyAdmissionOpen: true })).toBe('heavy-queue');
+    expect(paneStartBusyContradiction({ toolActivityCount: 0, heavyAdmissionOpen: false })).toBeNull();
+  });
+
+  it('reads the Main probes the supervisor registered, and fails open when they are missing or throw', () => {
+    expect(sessionBusyContradiction('session-a')).toBeNull();
+    setPaneStartBusyEvidence({ toolActivityCount: () => 0, heavyAdmissionOpen: id => id === 'session-a' });
+    expect(sessionBusyContradiction('session-a')).toBe('heavy-queue');
+    expect(sessionBusyContradiction('session-b')).toBeNull();
+    expect(sessionBusyContradiction(null)).toBeNull();
+    setPaneStartBusyEvidence({ toolActivityCount: () => { throw new Error('probe'); }, heavyAdmissionOpen: () => true });
+    expect(sessionBusyContradiction('session-a')).toBeNull();
   });
 });

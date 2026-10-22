@@ -210,6 +210,7 @@ export function JevDecisionsSection() {
                   </span>
                   <span className="jev-period__meta">
                     {formatUsd(window.usd)} · {window.noAnswer} sem resposta
+                    {window.skipped ? ` · ${window.skipped} pulos locais` : ''}
                   </span>
                 </div>
               );
@@ -308,6 +309,14 @@ export function JevDecisionsSection() {
                       {bucket.noAnswer > 0 && (
                         <span className="jev-tag jev-tag--warn">
                           {bucket.noAnswer} sem resposta
+                        </span>
+                      )}
+                      {(bucket.skipped ?? 0) > 0 && (
+                        <span
+                          className="jev-tag"
+                          title="A superfície desistiu antes de consultar o modelo: não é consulta nem custo."
+                        >
+                          {bucket.skipped} pulos locais
                         </span>
                       )}
                     </span>

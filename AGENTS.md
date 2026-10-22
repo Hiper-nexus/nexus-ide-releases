@@ -2111,7 +2111,15 @@ O que mudou — e o que NÃO mudou:
   (exceção estreita à doutrina 09/09: é assinatura de sequestro, não
   cerimônia); tudo o mais → passa. Read-only e o conjunto isento
   (`GUARD_EXEMPT_TOOLS`: handoff_*, heartbeat, clarify, waits, reads, judge,
-  rank, tool_pick, route_*, pane_close — F-709) nunca são julgados. Args vão compactados
+  rank, tool_pick, route_*, pane_close — F-709) nunca são julgados.
+  `git_add`/`git_commit` (`ISOLATED_WRITER_GUARD_EXEMPT_TOOLS`) só são isentos
+  quando `isIsolatedWriterContext(ctx)` vale — o MESMO predicado do handler,
+  que confina a chamada à worktree e à branch `nexus/…` do registro (F-563);
+  no checkout de coordenação, na worktree compartilhada da aba ou do
+  orquestrador seguem julgados. Em 4 semanas o guard deu 1.057 respostas
+  (1.056 pass, 1 confirm, 0 deny), 22,6% do gasto, ~0,35 s por efeito.
+  `memory_retain` NÃO é isento: o texto retido volta ao contexto de workers
+  futuros e a quarentena do F-808 só cobre sessão exposta à web. Args vão compactados
   (string > 300 chars vira `<N chars>`, JSON ≤ 2 KB, redigidos) e NUNCA
   entram no decision log. Cache de veredito por sessão+args por 60 s.
   Limiar 0.35 medido em 17/09 com jev-1.13.0 (`git push --force main` numa missão de login
@@ -2731,6 +2739,19 @@ O que mudou — e o que NÃO mudou:
   CLI, mesmo modo, ≥20 s parado pelo status semântico) só no pane do operador
   e na missão da aba; o Jev (`helperReuse`) escolhe ou `none`, aceita ≥ 0,7.
   Título do pane entra no critério só como caminho do state, nunca como texto.
+  Só pane DESARMADO é candidato, e o braço padrão fechava o helper no próprio
+  `success`: a superfície nasceu inoperante (zero disparo em 4 semanas). Agora o
+  braço padrão desses dois casos leva `reuseHold` (`shouldHoldHelperForReuse`):
+  entrega `success` (ou ACK aceito) deixa o pane vivo e desarmado por
+  `HELPER_REUSE_HOLD_MS` (3 min) e então fecha — F-572 vale, a janela tem prazo
+  fixo e a rede de segurança não ganha janela extra. Reuso, `rework` ou braço
+  novo cancelam a janela; pane que voltou a trabalhar nela é re-armado, não
+  fechado; janela com menos de 30 s fica fora dos candidatos.
+  `autoCloseOnHandoff: true` explícito, writer isolado e licença com teto de
+  agentes (Trial: a janela seguraria uma vaga e o próximo spawn de outra CLI
+  cairia em `license_agent_limit`) não ganham janela.
+  Sem candidato, o diário grava `kind: 'skip'` `no-candidate:<categoria>`
+  (`scanIdleHelperCandidates`: armed, not-idle, too-recent…), nunca id ou texto.
 
 ## Missão que morre e volta: o que o trace mostra (F-187/F-211/F-212/F-213)
 
@@ -2889,9 +2910,28 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
     leu; `parsed` com `file: null` (corrompido) é o único que reescreve — a CLI
     do vendor também não lê licença de bytes corrompidos, provisionar CURA. A
     porta do painel ainda pré-checa `license_status` para
-    retornar cedo com a mensagem do próprio fornecedor. Auto-provisionamento de
-    bundle só nas PORTAS DE INSTALL (`autoActivate: true`);
-    `planInstallItems`/dry-run não tocam o arquivo.
+    retornar cedo com a mensagem do próprio fornecedor.
+  - **Pro liberado em TODO PC, sem clique (operador, 22/10/2026: "tem que
+    ficar tudo liberado usando a key").** Provisionar só nas portas de install
+    deixava a frota na metade grátis: a escolha por tarefa, as receitas e o
+    painel perguntavam pela licença ANTES de qualquer coisa colocá-la no
+    disco, ouviam "sem licença" e escolhiam só grátis.
+    `provisionBundledBoardUiLicense` (local: uma leitura, no máximo uma
+    escrita atômica, nenhum processo do fornecedor, nenhum assento) roda no
+    boot (`registerUiKitIpc`, por `setImmediate`, cofre consultado por
+    PRESENÇA — `hasSecret`, nunca decifra no boot) e na frente de toda pergunta
+    "Pro serve aqui?" (`boardUiProSelectable`: task pick, receitas, painel,
+    `license_status` do agente). Mesma regra de arquivo da ativação: nativo e
+    ilegível intocados, chave digitada no cofre fica de fora (ativa no
+    fornecedor). Com o NOSSO arquivo no disco a escolha não chama o fornecedor
+    (~3 s); o portão de install continua conferindo antes de baixar Pro. O
+    catálogo read-only lê o arquivo do disco (`boardUiProUnlockedLocally`,
+    sem processo, sem escrita). "Remover" numa máquina provisionada continua
+    local e volta no próximo boot/instalação: com a chave embutida, Pro é o
+    estado normal. Prova de 22/10 num PC novo simulado (XDG isolado, cofre
+    vazio): provisão `written` → Jev escolhe `template-finance` sem
+    `needsLicense` → `license_status` ativo → instalação do template Pro com
+    arquivos no projeto.
   - "Remover" numa máquina provisionada é LOCAL, sempre
     (`isProvisionedBoardUiLicense`: chave E instanceId do payload embutido):
     apaga o arquivo + esquece o cofre, NUNCA chama `deactivate_license` —
@@ -3047,17 +3087,21 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
   rótulo.** O retrato do BoardUI saía dos nomes de exibição do site e estava
   errado de um jeito que quebrava install: `revenue-chart` em vez de
   `revenue-chart-card`, um `color` que não existe, e os templates Pro, cujo
-  identificador real leva o prefixo `template-`. Hoje ele vem de `boardui list`
-  (69 itens grátis) e NÃO tem item Pro: sem licença o `list` não os publica, e
-  qualquer entrada Pro ali seria inventada.
-- **Tier desconhecido é portão, não "grátis".** `boardUiTierOf` responde `null`
+  identificador real leva o prefixo `template-`. Hoje a metade grátis vem de
+  `boardui list` (69 itens) e a Pro (30 componentes + 10 templates) do
+  `list_components` do MCP com a licença ativa (22/10): o `boardui list` NÃO
+  publica Pro nem com licença (medido), e o retrato só-grátis era o motivo de
+  a frota licenciada nunca ver um template Pro na escolha. Item novo do
+  fornecedor entra lendo os dois de novo, nunca soletrado.
+- **Tier desconhecido é portão, não "grátis".** `boardUiTierOf` responde o
+  tier do retrato quando o conhece (Pro sem processo nenhum) e `null`
   para o que o retrato não conhece, e `resolveBoardUiTier` resolve contra o
   catálogo AO VIVO: ausente da lista grátis é Pro, fornecedor inalcançável é
   `unknown` — e o portão trata `unknown` como precisando de licença. Assumir
   grátis é como um install sem licença chega ao fornecedor e volta com uma
   mensagem que ninguém consegue agir.
-- **A metade grátis funciona sem chave nenhuma** — shadcn inteiro e ~45 itens do
-  BoardUI. Item Pro sem licença não instala nada em silêncio: cai no grátis
+- **A metade grátis funciona sem chave nenhuma** — shadcn inteiro e os 69 itens
+  grátis do BoardUI. Item Pro sem licença não instala nada em silêncio: cai no grátis
   equivalente, devolve `needsLicense` e nomeia o barrado. Doc e copy novas nunca
   escrevem que o kit "precisa de chave".
 - **`license_status` sem alcançar a CLI é `unknown`, nunca `absent`:** dizer
@@ -3116,6 +3160,113 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
 - Cache em `<userData>/ui-kit/<kit>` a 0600, hash conferido na leitura (payload
   editado em disco volta como ausente). Conteúdo licenciado fica na máquina que
   licenciou: nunca no repo nem no pacote.
+
+- **Revisão de 22/10 (o que mudou e não pode voltar).** Medido com o fornecedor
+  e o Jev reais (`docs/analysis/2026-10-22-revisao-kit-ui-jev-navegador-missao.md`):
+  - **A busca roda POR REGISTRY, nunca num `--limit` compartilhado**
+    (`liveCandidates`): o CLI responde em ordem de registry e corta no limite,
+    então os 471 do `@shadcn` ocupavam os 200 lugares e os 1 228 do
+    `@shadcnuikit` sumiam. Com tarefa, os primeiros registries também são
+    buscados POR ela (`searchTermsForTask`: no máximo 2 palavras de catálogo,
+    nunca o texto). Cache de 5 min; falha não é cacheada. Registry que
+    respondeu (diretório público) não é "inalcançável"; item de registry de
+    terceiro tem tier `unknown`, não "grátis".
+  - **O stdout do processo do kit vai para ARQUIVO, não pipe**
+    (`runUiKitCli`): os CLIs fazem `console.log` + `process.exit()` e o pipe
+    cortava em 65 536 bytes — `view dashboard-01` (77 KB) e buscas grandes
+    voltavam como JSON quebrado e o cache os guardava. Não volte ao pipe.
+  - **Uma escrita de kit por projeto** (`claimUiKitProjectWrite`, CLI e MCP):
+    o cliente MCP corta em 120 s, o install de 300 s continua, e o retry abria
+    um segundo `npm install` na mesma árvore. O segundo recebe `PROJECT_BUSY`.
+  - **"Instalado" só quando algo foi escrito** (`parseInstallFiles`): exit 0
+    com tudo pulado ("Skipped", "Done. 0 files written.") virava
+    "Instalado". O recibo traz `files`, `alreadyPresent`, `refusal`, `warning`.
+  - **Recusa antes de gastar**: sem `components.json` o shadcn para num prompt
+    que ignora `--yes` (300 s de timeout) → `components_json_missing` na hora;
+    `init` do agente sempre com `--defaults` sem preset; projeto Vue, Svelte,
+    Angular, Solid ou Expo → `framework_unsupported` (`uiKitProjectFit`;
+    Tailwind v3 é só AVISO e só no BoardUI: o CLI do shadcn adapta).
+  - **Monorepo por nome, nunca por caminho**: `workspace` escolhe um pacote da
+    lista que o Main lê (`listUiKitWorkspaces`: `workspaces` do package.json e
+    pnpm-workspace.yaml, contidos no projeto); o resto é recusado.
+  - **A escolha (`pickUiKit`)**: palavra inteira, sem acento e no singular
+    (`foldWord`) — "ui" dentro de "build" e "form" dentro de "transform" liam
+    como UI; palavra genérica (página, tela, app) não pontua ("página de
+    preços" instalava `pagination`); `kitDecidedBy`/`itemDecidedBy` no recibo,
+    e com o kit aceito pelo Jev e o item abaixo de 0,7 entra o item de maior
+    afinidade DAQUELE kit. `uiKitPick` está em
+    `CALIBRATED_THRESHOLD_SURFACES` (limiares medidos só no Jev).
+  - **Descoberta pelo `nexus_ui_kit_add({task})`**, a única porta onde o Jev
+    decide (`UI_KIT_TOOL_LINE`, na carta, no brief sem Design Pro e nas
+    `instructions` do MCP dos panes sem `/hook/delegate`). O catálogo só lista.
+  - **Classe de efeito**: add/recipe/run/boardui são `execution-effect`, como
+    `file_write` (passam pelo portão de estágio). Telemetria do fornecedor
+    desligada no filho (`DO_NOT_TRACK=1`, `BOARDUI_TELEMETRY_DISABLED=1`).
+  - **Worktree com `node_modules` em link** (Linux/Windows, F-1535) segue
+    recusada para escrita; a recusa diz a saída (tirar só o link e instalar,
+    ou instalar no checkout principal). Materializar sozinho foi descartado.
+
+## Revisão de 22/10: navegador, portão visual e missão
+
+Achados de `docs/analysis/2026-10-22-revisao-kit-ui-jev-navegador-missao.md`; o
+que segue é contrato, não histórico.
+
+- **Navegador do agente.** Clique, hover e tecla vão por
+  `webContents.sendInputEvent` no Main (rolagem ao centro, hit-test e sonda de
+  evento confiável); sem prova em 300 ms cai na sequência sintética, que agora
+  manda pointer/mouse down/up antes do `click()`. O recibo diz
+  `input: native|synthetic` — menu Radix só abre com o nativo. `INTERACTIVE_SELECTOR`
+  cobre menuitem*/option/tab/switch/combobox/slider/treeitem/tabindex;
+  read/find/click/fill/wait/extract atravessam shadow DOM aberto e iframe
+  same-origin visível. `nexus_browser_select` e `SELECT_OPTION` no `browser_do`;
+  `nexus_browser_navigate({history})` faz voltar/avançar/recarregar. O settle
+  espera as requisições que a ação abriu + 300 ms de quietude (teto 1,5 s; 3 s
+  após navegação). Pane de agente nasce com `disableDialogs` (alert fecha,
+  confirm = Cancelar, prompt vazio); o conteúdo do diálogo ainda não é
+  relatado. `browser_do`: alvo com nome irreversível (comprar, pagar,
+  finalizar, excluir, enviar, publicar, checkout…) SEMPRE para em
+  `needs_confirmation`. Screenshot devolve bloco de imagem MCP (perfil pessoal
+  nunca envia pixels), `fullPage`, `ref` e tema. A recusa de `localhost` e
+  `file://` nomeia o caminho do preview do Nexus; a política não mudou.
+- **JSON compacto em TODA tool** (`mcp-protocol.ts`): o texto que a pessoa vê
+  no pane é uma linha. Teste de paridade schema × zod para todas as tools
+  (`mcp-args-validation-parity.test.ts`): propriedade anunciada e recusada pelo
+  `.strict()` reprova.
+- **Portão visual.** A captura só vale se a URL é um preview do Nexus rodando
+  na worktree do worker e se a árvore não mudou desde ela (migração
+  **057-visual-evidence-candidate**: `candidate_observed_at/base/fingerprint`);
+  edição depois da captura, rework incluído, pede captura nova. Entrega visual
+  sem captura volta UMA vez por worker e tarefa com o caminho (build →
+  `nexus_preview_start` → `nexus_browser_open` → `nexus_browser_responsive`) antes
+  de virar partial. Lane somente leitura não é cobrada (writer de F-1318 é). O
+  juiz recebe o caminho da imagem e a instrução de abri-la. Bug de UI relatado
+  sem verbo de reparo ("modal não fecha no mobile", erro de hidratação) exige
+  captura. Projeto fora da tela: só o navegador que o MESMO agente já abriu é
+  devolvido; criar navegador oculto ainda não existe.
+- **Conclusão sem teste aplicável fecha** (`civilian-auto-review.ts`):
+  `no-tests`/`clean` com índice completo, nada pulado e todo arquivo numa
+  família que o índice mapeia (TS/JS, estilo, texto, asset; Go/Rust com as
+  suítes nativas inteiras) é aprovação. Python, JSON e outras linguagens fora
+  do grafo seguem não verificados quando o projeto declara testes.
+- **Perfil de cerimônia por diff** (`src/shared/mission-ceremony-profile.ts`):
+  só tira typecheck e testes quando o candidato INTEIRO (mudados, apagados,
+  ilegíveis) é css/scss/less/md/rst/adoc/imagem/fonte; `classifyWorkKind` só
+  rotula (F-810), nunca subtrai. mdx, html, json, txt e config contam como
+  código.
+- **Prazo da regressão na conclusão**: 5 → 10 → 20 min por missão; estourar é
+  `defer` ("não couberam no prazo"), nunca pedido de reparo.
+- **Fila pesada visível**: build/install exclusivo segurando uma raiz por
+  10 min com fila grava `heavy-command-exclusive-held` e avisa o Maestro
+  (`[fila-pesada]`); a exclusividade (F-983) não muda.
+- **Watchdog de início**: worker com atividade de ferramenta ou na fila pesada
+  não é fechado por `brief-rejected`.
+- **Pool de worktrees**: `max(1, licenseMaxAgents − 2)`, teto 4, reposto até o
+  alvo; `pane-spawn-timing` traz `pooled`.
+- **Janela de reuso do helper** (Jev, F-197): `success`/ACK aceito deixa o helper
+  vivo e desarmado 3 min (`HELPER_REUSE_HOLD_MS`) para o `helperReuse`, depois
+  fecha (F-572). Sem janela em `autoCloseOnHandoff: true`, writer isolado e
+  licença com teto (Trial). Pulo local do diário do Jev é `kind: 'skip'` e não
+  conta como consulta.
 
 ## Conclusão de código e validadores Main (06/10)
 

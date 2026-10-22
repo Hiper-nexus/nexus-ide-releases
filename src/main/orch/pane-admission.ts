@@ -545,7 +545,7 @@ export const AGENT_PANE_FOOTPRINT_MB = 1280;
  * (Trial = 6) os workers não podem gastar as vagas todas, senão a missão não
  * consegue abrir o revisor e trava.
  */
-const LICENSE_RESERVED_AGENT_SEATS = 2;
+export const LICENSE_RESERVED_AGENT_SEATS = 2;
 
 export interface ParallelHelperBudget {
   /** Helpers novos que cabem agora; 0 = não abrir mais. */

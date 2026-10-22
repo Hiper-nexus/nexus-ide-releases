@@ -12,6 +12,7 @@ import {
   blockingFindingsOf,
   CIVILIAN_REPAIR_BUDGET_PER_MISSION,
   civilianAutoReviewEvidenceNote,
+  COMPLETION_REGRESSION_BUDGETS_MS,
   describeFindingsForOperator,
   enforceCivilianAutoReview,
   resolveAutoReviewBaseSha,
@@ -670,6 +671,131 @@ describe('strict completion applicability from project declarations', () => {
     expect(result.verification?.regression?.status).toBe('unavailable');
   });
 
+  describe('a project that declares tests (vitest) and a diff with no impacted test', () => {
+    const withTestedProject = async (run: (root: string) => Promise<void>) => {
+      const root = realpathSync(mkdtempSync(join(tmpdir(), 'nexus-no-impacted-tests-')));
+      try {
+        writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { test: 'vitest run' }, devDependencies: { vitest: '^5.0.0' } }));
+        await run(root);
+      } finally { rmSync(root, { recursive: true, force: true }); }
+    };
+    const strict = (root: string, productFiles: readonly string[]) => ({ mission: missionFixture({ id: `mission-no-tests-${productFiles.join('-')}` }),
+      scope: { ...scope, rootRealPath: root }, productFiles, completionBaseSha: BASE_SHA, liveOrchestratorSessionId: 'maestro' });
+
+    it.each([
+      ['TS source without a test', ['src/theme.ts'], 'no-tests'],
+      ['styles only', ['src/theme.css', 'src/layout.scss'], 'no-tests'],
+      ['an empty diff', [], 'clean'],
+    ] as const)('%s with a complete index proves no applicable test and closes without repair', async (_label, files, status) => {
+      await withTestedProject(async root => {
+        __resetCivilianAutoReviewForTests();
+        const { dependencies, calls } = deps();
+        const result = await enforceCivilianAutoReview(strict(root, files.length ? files : ['src/theme.ts']), { ...dependencies,
+          regressionGate: async () => regressionResult({ status, testsRun: [], changedFiles: [...files], untestedFiles: files.filter(file => file.endsWith('.ts')),
+            runner: null, coverage: { indexComplete: true, skippedTests: [] }, headSha: HEAD_SHA, baseSha: BASE_SHA }),
+        });
+        expect(calls.repairs).toEqual([]);
+        if (result.kind !== 'approved') throw new Error(`expected approval, got ${result.kind}`);
+        expect(result.verification?.regression?.status).toBe(status);
+        expect(result.verification?.regressionApplicable).toBe(false);
+      });
+    });
+
+    it.each([
+      ['an incomplete index', ['src/theme.ts'], { indexComplete: false, skippedTests: [] }],
+      ['a skipped E2E test', ['src/theme.ts'], { indexComplete: true, skippedTests: ['e2e/theme.spec.ts'] }],
+      // The import graph only maps TS/JS: a Python change without a mapped
+      // test is not proof that no pytest applies to it.
+      ['a source the index cannot map', ['src/model.py'], { indexComplete: true, skippedTests: [] }],
+      ['a JSON file a test may import', ['src/data.json'], { indexComplete: true, skippedTests: [] }],
+    ] as const)('%s keeps the tests unverified', async (_label, files, coverage) => {
+      await withTestedProject(async root => {
+        __resetCivilianAutoReviewForTests();
+        const { dependencies } = deps();
+        const result = await enforceCivilianAutoReview({ ...strict(root, files), liveOrchestratorSessionId: null }, { ...dependencies,
+          regressionGate: async () => regressionResult({ status: 'no-tests', testsRun: [], changedFiles: [...files], runner: null,
+            coverage: { indexComplete: coverage.indexComplete, skippedTests: [...coverage.skippedTests] }, headSha: HEAD_SHA, baseSha: BASE_SHA }),
+        });
+        if (result.kind !== 'approved') throw new Error(`expected legacy approval, got ${result.kind}`);
+        expect(result.verification?.regression?.status).toBe('unavailable');
+        expect(result.verification?.regressionApplicable).toBe(true);
+      });
+    });
+
+    it('native suites that ran in full and found nothing prove Go sources have no test', async () => {
+      await withTestedProject(async root => {
+        __resetCivilianAutoReviewForTests();
+        const { dependencies } = deps();
+        const result = await enforceCivilianAutoReview(strict(root, ['cmd/main.go']), { ...dependencies,
+          regressionGate: async () => regressionResult({ status: 'no-tests', testsRun: [], changedFiles: ['cmd/main.go'], runner: 'go',
+            coverage: { indexComplete: true, skippedTests: [] }, headSha: HEAD_SHA, baseSha: BASE_SHA }),
+        });
+        if (result.kind !== 'approved') throw new Error(`expected approval, got ${result.kind}`);
+        expect(result.verification?.regressionApplicable).toBe(false);
+      });
+    });
+  });
+
+  describe('ceremony profile: a non-executable complete diff drops the typecheck', () => {
+    const withTypedProject = async (run: (root: string) => Promise<void>) => {
+      const root = realpathSync(mkdtempSync(join(tmpdir(), 'nexus-ceremony-')));
+      try {
+        writeFileSync(join(root, 'tsconfig.json'), '{}');
+        writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { typecheck: 'tsc --noEmit' }, devDependencies: { typescript: '^6.0.0' } }));
+        await run(root);
+      } finally { rmSync(root, { recursive: true, force: true }); }
+    };
+    const styleMission = missionFixture({ id: 'mission-ceremony', intentContract: { goal: 'Ajustar a cor do botão primário na tela de login' } as Mission['intentContract'] });
+
+    it('runs neither the compiler nor the regression gate and says so, naming the profile', async () => {
+      await withTypedProject(async root => {
+        __resetCivilianAutoReviewForTests();
+        const typecheck = vi.fn(healthySensors.typecheck);
+        const regressionGate = vi.fn(async () => regressionResult({}));
+        const result = await enforceCivilianAutoReview({ mission: styleMission, scope: { ...scope, rootRealPath: root },
+          productFiles: ['src/theme.css'], candidatePaths: ['src/theme.css', 'public/logo.svg'], completionBaseSha: BASE_SHA, liveOrchestratorSessionId: 'maestro' },
+        { ...deps().dependencies, typecheck, regressionGate });
+        expect(typecheck).not.toHaveBeenCalled();
+        expect(regressionGate).not.toHaveBeenCalled();
+        if (result.kind !== 'approved') throw new Error(`expected approval, got ${result.kind}`);
+        expect(result.verification?.checks.find(check => check.kind === 'typecheck')?.status).toBe('not-applicable');
+        // The completion certificate reads "no regression" as unverified unless
+        // the receipt says the tests did not apply.
+        expect(result.verification?.regression).toBeNull();
+        expect(result.verification?.regressionApplicable).toBe(false);
+        expect(result.note).toMatch(/Perfil de cerimônia: trabalho visual.*typecheck e testes dispensados/u);
+      });
+    });
+
+    it.each([
+      ['a deleted module outside the read set', ['src/theme.css', 'src/legacy.tsx']],
+      ['no complete diff from the caller', undefined],
+    ])('%s keeps the compiler run', async (_label, candidatePaths) => {
+      await withTypedProject(async root => {
+        __resetCivilianAutoReviewForTests();
+        const typecheck = vi.fn(healthySensors.typecheck);
+        const regressionGate = vi.fn(async () => regressionResult({}));
+        const result = await enforceCivilianAutoReview({ mission: styleMission, scope: { ...scope, rootRealPath: root },
+          productFiles: ['src/theme.css'], ...(candidatePaths ? { candidatePaths } : {}), completionBaseSha: BASE_SHA },
+        { ...deps().dependencies, typecheck, regressionGate });
+        expect(typecheck).toHaveBeenCalledOnce();
+        expect(regressionGate).toHaveBeenCalledOnce();
+        if (result.kind !== 'approved') throw new Error(`expected approval, got ${result.kind}`);
+        expect(result.note).not.toContain('Perfil de cerimônia');
+      });
+    });
+
+    it('legacy (non-strict) callers never subtract', async () => {
+      await withTypedProject(async root => {
+        __resetCivilianAutoReviewForTests();
+        const typecheck = vi.fn(healthySensors.typecheck);
+        await enforceCivilianAutoReview({ mission: styleMission, scope: { ...scope, rootRealPath: root },
+          productFiles: ['src/theme.css'], candidatePaths: ['src/theme.css'] }, { ...deps().dependencies, typecheck });
+        expect(typecheck).toHaveBeenCalledOnce();
+      });
+    });
+  });
+
   it('preserves preexisting exemptions but does not claim their failed executions passed', async () => {
     const result = await enforceCivilianAutoReview({ mission: missionFixture(), scope, productFiles: ['app.ts'], completionBaseSha: BASE_SHA }, {
       ...deps().dependencies, regressionGate: async () => regressionResult({ preexistingFailures: [{ file: 'src/app.test.ts', message: 'already fails at base' }] }),
@@ -695,6 +821,82 @@ it('strict completion executes its tests even when the optional worker fast gate
     await enforceCivilianAutoReview({ mission: missionFixture(), scope, productFiles: ['app.ts'], completionBaseSha: BASE_SHA }, { ...dependencies, regressionGate: null });
     expect(run).not.toHaveBeenCalled();
   } finally { run.mockRestore(); enabled.mockRestore(); }
+});
+
+describe('strict completion regression budget', () => {
+  const strictInput = (id: string) => ({ mission: missionFixture({ id }), scope, productFiles: ['app.ts'], completionBaseSha: BASE_SHA,
+    liveOrchestratorSessionId: 'maestro' });
+  const outOfTime = (budget: number, notRun: RegressionGateResult['notRun'] = {
+    causes: ['test-deadline'], mapMs: 1_000, testBudgetMs: budget - 1_000, byDistance: [] }) =>
+    regressionResult({ status: 'unavailable', testsRun: ['src/a.test.ts'], testsNotRun: ['src/b.test.ts'], notRun,
+      coverage: { indexComplete: true, skippedTests: [] }, durationMs: budget, headSha: HEAD_SHA, baseSha: BASE_SHA });
+
+  it('gives completion a budget sized for the whole impacted suite with E2E, not the 120 s of a worker handoff', async () => {
+    __resetCivilianAutoReviewForTests();
+    const gate = vi.fn(async () => regressionResult({ coverage: { indexComplete: true, skippedTests: [] }, headSha: HEAD_SHA, baseSha: BASE_SHA }));
+    await enforceCivilianAutoReview(strictInput('mission-budget-first'), { ...deps().dependencies, regressionGate: gate });
+    expect(gate).toHaveBeenCalledWith(expect.objectContaining({ includeE2E: true, timeoutMs: COMPLETION_REGRESSION_BUDGETS_MS[0] }));
+  });
+
+  it('a suite that runs out of time is reported as a timeout, never as a code repair, and the next try gets more time', async () => {
+    __resetCivilianAutoReviewForTests();
+    const { dependencies, calls } = deps();
+    const budgets: number[] = [];
+    const gate = vi.fn(async (input: { timeoutMs?: number }) => { budgets.push(input.timeoutMs!); return outOfTime(input.timeoutMs!); });
+    for (let attempt = 0; attempt < COMPLETION_REGRESSION_BUDGETS_MS.length - 1; attempt++) {
+      const result = await enforceCivilianAutoReview(strictInput('mission-budget-escalation'), { ...dependencies, regressionGate: gate });
+      expect(result).toMatchObject({ kind: 'defer-to-roster-review', retryable: true });
+      if (result.kind === 'defer-to-roster-review') expect(result.reason).toMatch(/não couberam no prazo/u);
+    }
+    expect(budgets).toEqual(COMPLETION_REGRESSION_BUDGETS_MS.slice(0, -1));
+    const last = await enforceCivilianAutoReview(strictInput('mission-budget-escalation'), { ...dependencies, regressionGate: gate });
+    expect(budgets.at(-1)).toBe(COMPLETION_REGRESSION_BUDGETS_MS.at(-1));
+    // At the ceiling the refusal is final and still names the real cause.
+    expect(last).toMatchObject({ kind: 'defer-to-roster-review' });
+    if (last.kind === 'defer-to-roster-review') { expect(last.retryable).not.toBe(true); expect(last.reason).toMatch(/não couberam no prazo/u); }
+    expect(calls.repairs).toEqual([]);
+  });
+
+  it('an import map cut by the deadline is a timeout even when every selected test ran', async () => {
+    __resetCivilianAutoReviewForTests();
+    const { dependencies, calls } = deps();
+    const result = await enforceCivilianAutoReview(strictInput('mission-budget-map'), { ...dependencies,
+      regressionGate: async (input: { timeoutMs?: number }) => ({ ...outOfTime(input.timeoutMs!, null), testsNotRun: [],
+        coverage: { indexComplete: false, skippedTests: [] } }) });
+    expect(result).toMatchObject({ kind: 'defer-to-roster-review', retryable: true });
+    expect(calls.repairs).toEqual([]);
+  });
+
+  it('a native suite cut by the deadline (retryable, no per-test causes) escalates instead of looping on the same budget', async () => {
+    __resetCivilianAutoReviewForTests();
+    const budgets: number[] = [];
+    const gate = async (input: { timeoutMs?: number }) => { budgets.push(input.timeoutMs!);
+      return { ...outOfTime(input.timeoutMs!, null), retryable: true, testsNotRun: ['(go suite: .)'] }; };
+    const first = await enforceCivilianAutoReview(strictInput('mission-budget-native'), { ...deps().dependencies, regressionGate: gate });
+    if (first.kind !== 'defer-to-roster-review') throw new Error(first.kind);
+    expect(first.reason).toMatch(/não couberam no prazo/u);
+    await enforceCivilianAutoReview(strictInput('mission-budget-native'), { ...deps().dependencies, regressionGate: gate });
+    expect(budgets).toEqual(COMPLETION_REGRESSION_BUDGETS_MS.slice(0, 2));
+  });
+
+  it('real findings still go to repair, without blaming the runner for the timeout', async () => {
+    __resetCivilianAutoReviewForTests();
+    const { dependencies, calls } = deps({ analyze: async () => analysis([finding('high', 'src/pay.ts')]) });
+    const result = await enforceCivilianAutoReview(strictInput('mission-budget-finding'), { ...dependencies,
+      regressionGate: async (input: { timeoutMs?: number }) => outOfTime(input.timeoutMs!) });
+    expect(result.kind).toBe('repair-dispatched');
+    expect(calls.repairs[0]).toContain('src/pay.ts');
+    expect(calls.repairs[0]).not.toContain('Testes aplicáveis não foram verificados');
+  });
+
+  it('a runner that could not run keeps its own repair path', async () => {
+    __resetCivilianAutoReviewForTests();
+    const { dependencies, calls } = deps();
+    const result = await enforceCivilianAutoReview(strictInput('mission-budget-runner'), { ...dependencies,
+      regressionGate: async () => ({ ...outOfTime(10_000, { causes: ['runner'], mapMs: 1, testBudgetMs: 1, byDistance: [] }), durationMs: 10 }) });
+    expect(result.kind).toBe('repair-dispatched');
+    expect(calls.repairs[0]).toContain('Testes aplicáveis não foram verificados');
+  });
 });
 
 it('strict admission retries never consume repair budget or dispatch code repair', async () => {

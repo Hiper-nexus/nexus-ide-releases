@@ -1,22 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const { mockRecordJevDecision } = vi.hoisted(() => ({
+const { mockRecordJevDecision, mockRecordJevSkip } = vi.hoisted(() => ({
   mockRecordJevDecision: vi.fn(),
+  mockRecordJevSkip: vi.fn(),
 }));
 
 vi.mock('../jev/jev-decision-log', () => ({
   jevAnswerConfidences: vi.fn(() => ({})),
   jevAnswerProbabilities: vi.fn(() => ({})),
   recordJevDecision: mockRecordJevDecision,
+  recordJevSkip: mockRecordJevSkip,
 }));
 
 import type { PaneSnapshot } from '../../shared/orch-types';
 import { testProjectScope } from './__tests__/scope-fixture';
 import {
+  HELPER_REUSE_CLAIM_MARGIN_MS,
   HELPER_REUSE_MAX_CANDIDATES,
   HELPER_REUSE_MIN_IDLE_MS,
   judgeIdleHelperReuse,
   listIdleHelperCandidates,
+  scanIdleHelperCandidates,
   taskAsksForIndependentReview,
 } from './idle-helper-reuse';
 
@@ -197,6 +201,75 @@ describe('listIdleHelperCandidates', () => {
   });
 });
 
+describe('scanIdleHelperCandidates: por que não houve candidato (categoria)', () => {
+  const owned = () => ({ operatorParentSessionId: 'sess-op' }) as never;
+
+  it('sem helper do mesmo dono: no-helper', () => {
+    const scan = scanIdleHelperCandidates(
+      operatorHand(),
+      deps({
+        listPaneSnapshots: () => [pane()],
+        getAuthority: () => ({ operatorParentSessionId: 'sess-outro' }) as never,
+      }),
+    );
+    expect(scan).toEqual({ candidates: [], noCandidateReason: 'no-helper' });
+  });
+
+  it('o motivo é o mais frequente entre os helpers do dono, nunca id ou texto', () => {
+    const scan = scanIdleHelperCandidates(
+      operatorHand(),
+      deps({
+        listPaneSnapshots: () => [
+          pane(),
+          pane({ paneId: 'p2', sessionId: 's2' }),
+          pane({ paneId: 'p3', sessionId: 's3', state: 'busy' }),
+        ],
+        getAuthority: owned,
+        armedAutoClose: (sid: string) => (sid === 'sess-1' || sid === 's2' ? 'x' : null),
+      }),
+    );
+    expect(scan).toEqual({ candidates: [], noCandidateReason: 'armed' });
+  });
+
+  it.each([
+    ['not-idle', { listPaneSnapshots: () => [pane({ state: 'busy' })] }],
+    ['one-shot', { listPaneSnapshots: () => [pane({ oneShotAlive: true })] }],
+    ['other-cli', { listPaneSnapshots: () => [pane({ adapterId: 'claude' })] }],
+    ['other-mode', { listPaneSnapshots: () => [pane({ readOnly: true })] }],
+    ['closing', { stdinWritable: () => false }],
+    ['isolated-writer', { isIsolatedWriter: () => true }],
+    ['no-hook', { getSemanticStatus: () => null }],
+    ['too-recent', { getSemanticStatus: (sid: string) => idleSemantic(sid, NOW - 1_000) }],
+  ] as const)('%s', (reason, over) => {
+    const scan = scanIdleHelperCandidates(
+      operatorHand(),
+      deps({ listPaneSnapshots: () => [pane()], getAuthority: owned, ...over }),
+    );
+    expect(scan).toEqual({ candidates: [], noCandidateReason: reason });
+  });
+
+  it('com candidato não há motivo', () => {
+    const scan = scanIdleHelperCandidates(
+      operatorHand(),
+      deps({ listPaneSnapshots: () => [pane()], getAuthority: owned }),
+    );
+    expect(scan.candidates.map((c) => c.paneId)).toEqual(['pane-1']);
+    expect(scan.noCandidateReason).toBeNull();
+  });
+
+  it('F-197: helper na janela de reuso entra; janela no fim (< margem) fica de fora', () => {
+    const scan = scanIdleHelperCandidates(
+      operatorHand(),
+      deps({
+        listPaneSnapshots: () => [pane(), pane({ paneId: 'p2', sessionId: 's2' })],
+        getAuthority: owned,
+        reuseHoldRemaining: (sid: string) => (sid === 'sess-1' ? 120_000 : HELPER_REUSE_CLAIM_MARGIN_MS - 1),
+      }),
+    );
+    expect(scan.candidates.map((c) => c.paneId)).toEqual(['pane-1']);
+  });
+});
+
 describe('taskAsksForIndependentReview', () => {
   it('casa revisão/review/audit e ignora prosa comum', () => {
     expect(taskAsksForIndependentReview('revise a entrega')).toBe(true);
@@ -243,6 +316,33 @@ describe('judgeIdleHelperReuse', () => {
       ),
     ).toBeNull();
     expect(j2).not.toHaveBeenCalled();
+  });
+
+  it('elegível sem candidato: registra o pulo com a categoria, sem chamar o Jev', async () => {
+    mockRecordJevSkip.mockClear();
+    const { judgeFn, deps: d } = judgeDeps(null);
+    expect(
+      await judgeIdleHelperReuse(
+        { newTask: 'x', candidates: [], noCandidateReason: 'armed', scope, missionId: 'm-1', callerSessionId: 'sess-op' },
+        d,
+      ),
+    ).toBeNull();
+    expect(judgeFn).not.toHaveBeenCalled();
+    expect(mockRecordJevSkip).toHaveBeenCalledWith({
+      surface: 'helperReuse', reason: 'no-candidate:armed', sessionId: 'sess-op', missionId: 'm-1',
+    });
+    mockRecordJevSkip.mockClear();
+    await judgeIdleHelperReuse({ newTask: 'x', candidates: [], scope, missionId: null }, d);
+    expect(mockRecordJevSkip).toHaveBeenCalledWith({ surface: 'helperReuse', reason: 'no-candidate:no-helper' });
+  });
+
+  it('superfície desligada ou sem chave: nem pulo registra (não era elegível)', async () => {
+    mockRecordJevSkip.mockClear();
+    const { deps: off } = judgeDeps(null, { surfaceEnabled: () => false });
+    await judgeIdleHelperReuse({ newTask: 'x', candidates: [], scope, missionId: null }, off);
+    const { deps: noKey } = judgeDeps(null, { hasKey: () => false });
+    await judgeIdleHelperReuse({ newTask: 'x', candidates: [], scope, missionId: null }, noKey);
+    expect(mockRecordJevSkip).not.toHaveBeenCalled();
   });
 
   it('hN com confiança ≥0.7 escolhe o candidato e registra a decisão', async () => {

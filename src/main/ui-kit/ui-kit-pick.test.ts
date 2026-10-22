@@ -5,6 +5,7 @@ import {
   candidateNeedsLicense,
   pickUiKit,
   pickUiKitByHeuristic,
+  searchTermsForTask,
   taskItemAffinity,
   taskLooksLikeUiWork,
   type UiKitCandidate,
@@ -529,5 +530,159 @@ describe('a filler word does not pick a component', () => {
       tier: 'free' as const,
     };
     expect(taskItemAffinity('mostre a age do usuário', agent)).toBe(0);
+  });
+});
+
+describe('UI work is read word by word, not by substring', () => {
+  // Review 22/10: "ui" inside "build", "tema" inside "sistema", "form" inside
+  // "informações"/"transform", "stat" inside "status" — 8 of 10 non-UI tasks
+  // read as UI and got a component recommended.
+  it.each([
+    'transform the CSV import',
+    'build the backend pipeline',
+    'corrigir o sistema de filas',
+    'informações do pedido no banco',
+    'status do worker no log',
+  ])('does not read "%s" as UI work', (task) => {
+    expect(taskLooksLikeUiWork(task)).toBe(false);
+  });
+
+  it.each([
+    'kanban de tarefas',
+    'abas de navegação',
+    'notificações toast',
+    'board with columns',
+    'settings page',
+    'página de checkout',
+    'botões e modais da tela',
+  ])('reads "%s" as UI work', (task) => {
+    expect(taskLooksLikeUiWork(task)).toBe(true);
+  });
+});
+
+describe('accents and plurals do not hide the right item', () => {
+  const item = (slug: string, label: string): UiKitCandidate => ({
+    kit: 'shadcn', slug, label, category: 'registry:ui', tier: 'free',
+  });
+
+  it.each([
+    ['gráficos de linha das vendas', item('chart-line', 'chart-line')],
+    ['abas para separar as seções', item('tabs', 'tabs')],
+    ['uma barra lateral com o menu', item('sidebar', 'sidebar')],
+    ['estado vazio da lista', item('empty', 'empty')],
+    ['notificações de sucesso', item('sonner', 'sonner')],
+    ['diálogo de confirmação antes de excluir', item('alert-dialog', 'alert-dialog')],
+  ])('"%s" reaches %o', (task, candidate) => {
+    expect(taskItemAffinity(task, candidate)).toBeGreaterThan(0);
+  });
+});
+
+describe('the receipt says who decided what', () => {
+  const LINE: UiKitCandidate = {
+    kit: 'boardui', slug: 'line-chart-card', label: 'Line Chart Card', category: 'chart', tier: 'pro',
+  };
+
+  it('keeps the judged kit and takes its most affine item when the item answer is weak', async () => {
+    // The Jev accepted BoardUI but no item cleared the bar: the old code fell
+    // back to the heuristic's item — of whichever kit it leaned to — and often
+    // ended with `item: null` and "Nothing in the catalog fits".
+    const result = await pickUiKit(
+      request({ task: 'gráfico de linha da receita', candidates: [BUTTON, LINE, DATA_TABLE], proLicensed: true }),
+      {
+        ...ON,
+        record: () => 'id',
+        runJudge: () =>
+          Promise.resolve(
+            jevResult({
+              needsKit: { type: 'noul', noul: 0.95 },
+              kit: { type: 'choice', choice: 'boardui', probabilities: { boardui: 0.9 }, confidence: 0.9 },
+              item: { type: 'choice', choice: 'c2', probabilities: { c2: 0.4 }, confidence: 0.4 },
+            }),
+          ),
+      },
+    );
+
+    expect(result.kit).toBe('boardui');
+    expect(result.item?.slug).toBe('line-chart-card');
+    expect(result.kitDecidedBy).toBe('jev');
+    expect(result.itemDecidedBy).toBe('heuristic');
+    expect(result.reason).not.toMatch(/judged boardui \/ /);
+  });
+
+  it('does not call a heuristic kit "judged"', async () => {
+    const result = await pickUiKit(request({ task: 'a login form with a dialog' }), {
+      ...ON,
+      record: () => 'id',
+      runJudge: () =>
+        Promise.resolve(
+          jevResult({
+            needsKit: { type: 'noul', noul: 0.9 },
+            kit: { type: 'choice', choice: 'boardui', probabilities: { boardui: 0.4 }, confidence: 0.4 },
+          }),
+        ),
+    });
+
+    expect(result.kitDecidedBy).toBe('heuristic');
+    expect(result.reason).not.toMatch(/^judged/);
+  });
+
+  it('marks both as judged when the Jev was confident in both', async () => {
+    const result = await pickUiKit(
+      request({ task: 'something vague', candidates: [BUTTON, DATA_TABLE] }),
+      {
+        ...ON,
+        record: () => 'id',
+        runJudge: () =>
+          Promise.resolve(
+            jevResult({
+              needsKit: { type: 'noul', noul: 0.95 },
+              kit: { type: 'choice', choice: 'boardui', probabilities: { boardui: 0.9 }, confidence: 0.9 },
+              item: { type: 'choice', choice: 'c2', probabilities: { c2: 0.85 }, confidence: 0.85 },
+            }),
+          ),
+      },
+    );
+
+    expect(result.kitDecidedBy).toBe('jev');
+    expect(result.itemDecidedBy).toBe('jev');
+  });
+
+  it('says plainly that no item was chosen when nothing has affinity', () => {
+    const result = pickUiKitByHeuristic({
+      task: 'deixe a interface mais bonita',
+      candidates: [BUTTON],
+    });
+
+    expect(result.item).toBeNull();
+    expect(result.reason).not.toMatch(/took the best-ranked/);
+  });
+});
+
+describe('searchTermsForTask', () => {
+  it.each([
+    ['uma página de preços', ['pricing']],
+    ['landing page com hero e preços', ['hero', 'pricing']],
+    ['tela de login com e-mail e senha', ['login', 'mail']],
+    ['gráfico de linhas das vendas', ['chart', 'line']],
+  ])('"%s" searches for %o', (task, terms) => {
+    expect(searchTermsForTask(task)).toEqual(terms);
+  });
+
+  it('never searches for a word that only says "UI"', () => {
+    expect(searchTermsForTask('uma tela nova no app')).toEqual([]);
+  });
+});
+
+describe('a generic UI word picks nothing', () => {
+  it('"página de preços" does not reach pagination', () => {
+    const pagination: UiKitCandidate = {
+      kit: 'shadcn', slug: 'pagination', label: 'pagination', category: 'ui', tier: 'free',
+    };
+    const pricing: UiKitCandidate = {
+      kit: 'shadcn', slug: '@shadcnuikit/pricing1', label: 'pricing1', category: 'block', tier: 'free',
+    };
+
+    expect(taskItemAffinity('uma página de preços', pagination)).toBe(0);
+    expect(taskItemAffinity('uma página de preços', pricing)).toBeGreaterThan(0);
   });
 });

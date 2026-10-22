@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SystemInputWriter } from './operator-input-receipts';
 import { commitWorkerContinuation, workerContinuationBirthState, type WorkerContinuationBirthState } from './mission-pane-resume-ownership';
-import { createVisualTaskRequirement, visualTaskRequirement } from './visual-handoff-gate';
+import { createVisualTaskRequirement, isReadOnlyVisualLane, visualTaskRequirement } from './visual-handoff-gate';
 import { assertLicensedAgentCapacity, licensedAgentCount } from '../license-enforcement';
 import { licenseErrorFrom } from '../../shared/license-errors';
 import { withWorkspaceDesignRule } from './workspace-design-rule';
@@ -50,7 +50,7 @@ import {
 import { trace } from '../observability/main-trace';
 import type { PhaseTimer } from '../observability/phase-timer';
 import { emitWorkerSpawnFailed } from './spawn-fail-events';
-import { notePaneStartAccepted, notePaneStartFailure } from './pane-start-watchdog';
+import { notePaneStartAccepted, notePaneStartFailure, sessionBusyContradiction } from './pane-start-watchdog';
 import { admitToolSpawnSync } from './pane-admission';
 import { getAdapter } from '../adapters/adapter-registry';
 import { discoverCliModels } from '../adapters/cli-model-discovery';
@@ -2146,7 +2146,7 @@ export async function spawnPaneAndMaybePrompt(
   // pty-manager's user-shell fallback to HOME.
   const safeOptions: SpawnToolOptions = {
     ...options,
-    visualTask: options.role === 'orchestrator' ? undefined : options.workerContinuation
+    visualTask: options.role === 'orchestrator' || isReadOnlyVisualLane(options) ? undefined : options.workerContinuation
       ? options.visualTask : options.visualTask
         ? createVisualTaskRequirement() : visualTaskRequirement(options.memoryQuery ?? options.prompt),
     model: effectiveModel,
@@ -2732,18 +2732,26 @@ export async function deliverPromptAfterPendingSpawn(
     notePaneStartAccepted(paneId);
     return true;
   } catch (error) {
+    const bootExited = /exited (?:during boot|before the brief)/.test(
+      error instanceof Error ? error.message : String(error),
+    );
+    // Revisão 22/10: sem prova de aceite, mas a sessão já usa ferramentas ou
+    // segura/espera a fila de comandos pesados — é worker ocupado, não brief
+    // recusado. Fechar e rerotear jogava o trabalho fora; o watchdog de início
+    // segue com a ficha (reenvio ou veredito quando a fila soltar).
+    const busy = !(error instanceof StaleBriefError) && !invocation?.signal?.aborted && !bootExited
+      ? sessionBusyContradiction(sessionId) : null;
+    if (busy) {
+      if (busy === 'working') notePaneStartAccepted(paneId);
+      console.warn(`[tool-util] brief for ${paneId} without acceptance proof, but the session is ` +
+        `${busy === 'working' ? 'already using tools' : 'in the heavy-command queue'}: kept open`);
+      return busy === 'working';
+    }
     // F-723: falha de início da CLI (saiu no boot ou não aceitou o brief) vai
     // ao watchdog, que avisa quem pediu e reroteia. Brief velho (missão
     // encerrada/selo trocado) e chamador revogado não são falha da CLI.
     if (!(error instanceof StaleBriefError) && !invocation?.signal?.aborted) {
-      notePaneStartFailure(
-        paneId,
-        /exited (?:during boot|before the brief)/.test(
-          error instanceof Error ? error.message : String(error),
-        )
-          ? 'boot-exit'
-          : 'brief-rejected',
-      );
+      notePaneStartFailure(paneId, bootExited ? 'boot-exit' : 'brief-rejected');
     }
     logAgentPromptFailure(adapterId, sessionId ?? paneId, error);
     recordWorkerPromptDeliveryFailure({

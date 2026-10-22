@@ -49,6 +49,8 @@ export const UI_KIT_WRITE_TIMEOUT_MS = 300_000;
 export const UI_KIT_READ_MAX_OUTPUT_BYTES = 4_000_000;
 /** Install logs are chatty; capping them too low turns success into TIMEOUT. */
 export const UI_KIT_WRITE_MAX_OUTPUT_BYTES = 12_000_000;
+/** How often the captured output's size is checked against the cap. */
+const UI_KIT_OUTPUT_WATCH_MS = 250;
 export const UI_KIT_TERMINATION_GRACE_MS = 2_000;
 export const UI_KIT_MAX_ARGS = 64;
 export const UI_KIT_MAX_ARG_CHARS = 512;
@@ -204,6 +206,13 @@ export interface UiKitCliRunRequest {
   /** True when the command writes files / installs dependencies. */
   readonly writes?: boolean;
   /**
+   * The caller already holds this project's write slot and releases it once
+   * this run settles. Set by a caller that edits project config BEFORE the
+   * run (shadcn's components.json), so a refused retry cannot touch it while
+   * another install is still going.
+   */
+  readonly projectWriteClaimed?: boolean;
+  /**
    * Where the PACKAGE is resolved from.
    *
    * `isolated` spawns in a throwaway Nexus-owned directory, which is the only
@@ -259,6 +268,12 @@ export function buildUiKitChildEnv(
   }
   // A project cannot turn certificate checking off for our download.
   if (!env.npm_config_strict_ssl) env.npm_config_strict_ssl = 'true';
+  // The vendors' own analytics stay home. BoardUI ships a PostHog client that
+  // reports every command — licence actions included — from every machine;
+  // its dist honours both of these (read 22/10/2026). Set last, so nothing
+  // above can switch it back on.
+  env.DO_NOT_TRACK = '1';
+  env.BOARDUI_TELEMETRY_DISABLED = '1';
   return env;
 }
 
@@ -398,12 +413,19 @@ export function assertSafeUiKitCwd(
     return cwd;
   }
   if (linkStats.isSymbolicLink()) {
+    // On Linux and Windows every Nexus writer worktree is born with this link
+    // (F-1535, no clonefile there), so the refusal has to say what to do in
+    // THAT case, not only in a hand-made one: the kit's npm install would
+    // write into the coordination checkout's tree that the link points at.
     throw new UiKitCliError(
       'SHARED_NODE_MODULES',
       `refusing to install into ${cwd}: node_modules is a symlink`,
-      'This checkout shares one install with others, and a package-manager ' +
-        'write would corrupt the shared tree. Run the UI kit in the project ' +
-        'you are building, or give this checkout its own node_modules.',
+      'This checkout shares one install with others (a Nexus worktree on ' +
+        'Linux/Windows links it to the main checkout), and a package-manager ' +
+        'write would corrupt the shared tree. Give this checkout its own ' +
+        'install first — remove the node_modules link (the link only, never ' +
+        'its target) and run the project install (npm ci / pnpm install) — ' +
+        'or install the kit item in the main checkout.',
     );
   }
   return cwd;
@@ -461,6 +483,80 @@ export function resolveNpxCommand(
     }
   }
   return UI_KIT_WINDOWS_NPX_CANDIDATES[0];
+}
+
+/** Windows batch launchers cannot be spawned with shell:false (EINVAL).
+ * Run npm's fixed JS entrypoint with a real Node executable instead. Never
+ * interpolate project paths or kit arguments into cmd.exe source.
+ */
+export function resolveUiKitNpxLaunch(
+  options: ResolveNpxCommandOptions = {},
+): { command: string; argsPrefix: string[] } {
+  const command = resolveNpxCommand(options);
+  if ((options.platform ?? process.platform) !== 'win32' || /\.exe$/iu.test(command)) {
+    return { command, argsPrefix: [] };
+  }
+  const exists = options.exists ?? ((file: string) => {
+    try { return fs.statSync(file).isFile(); } catch { return false; }
+  });
+  // Both npm's global prefix and a local node_modules/.bin installation.
+  const dir = path.win32.dirname(command);
+  const entry = [
+    path.win32.join(dir, 'node_modules', 'npm', 'bin', 'npx-cli.js'),
+    path.win32.resolve(dir, '..', 'npm', 'bin', 'npx-cli.js'),
+  ].find(exists);
+  const node = [dir, ...(options.pathString ?? process.env.PATH ?? '').split(';')]
+    .filter(candidate => path.win32.isAbsolute(candidate))
+    .map(candidate => path.win32.join(candidate, 'node.exe')).find(exists);
+  if (!path.win32.isAbsolute(command) || !entry || !node) {
+    throw new UiKitCliError('SPAWN_FAILED',
+      'UI-kit needs node.exe and npm/bin/npx-cli.js on the Windows Node installation.',
+      'Install Node with npm and expose its directory on PATH.');
+  }
+  return { command: node, argsPrefix: [entry] };
+}
+
+/**
+ * Projects with a WRITING kit run in flight, by real path.
+ *
+ * An MCP client cuts a tool call long before an install finishes (Codex: 120 s
+ * against our 300 s), the install keeps running, and the agent's retry started
+ * a SECOND `shadcn add` / `npm install` in the same tree — two writers on one
+ * lockfile. One writer per project; the second is refused at once with what
+ * to do, instead of queueing behind a run nobody is watching.
+ */
+const writingProjects = new Map<string, number>();
+
+function projectWriteKey(cwd: string): string {
+  try {
+    return fs.realpathSync(cwd);
+  } catch {
+    return path.resolve(cwd);
+  }
+}
+
+export function claimUiKitProjectWrite(cwd: string, now: number = Date.now()): () => void {
+  const key = projectWriteKey(cwd);
+  const since = writingProjects.get(key);
+  if (since !== undefined) {
+    throw new UiKitCliError(
+      'PROJECT_BUSY',
+      `another UI-kit install is still running in this project ` +
+        `(started ${Math.max(0, Math.round((now - since) / 1000))} s ago)`,
+      'Wait for it to finish, check which files it wrote, then retry only what is missing.',
+    );
+  }
+  writingProjects.set(key, now);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    if (writingProjects.get(key) === now) writingProjects.delete(key);
+  };
+}
+
+export function resetUiKitProjectWritesForTests(): void {
+  writingProjects.clear();
 }
 
 /**
@@ -557,15 +653,90 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
     const maxBytes = writes
       ? UI_KIT_WRITE_MAX_OUTPUT_BYTES
       : UI_KIT_READ_MAX_OUTPUT_BYTES;
+    // stdout goes to a private FILE, not a pipe. Both CLIs print their JSON
+    // with console.log and then call process.exit(): on a pipe Node writes
+    // asynchronously and exit drops whatever has not drained, so everything
+    // past 64 KiB was cut — `view dashboard-01` (77 KB) and a 200-item
+    // @shadcnuikit search came back as broken JSON, and the cache kept them
+    // (measured 22/10/2026). A write to a file is synchronous: the child
+    // cannot exit before it lands.
+    let capture: { dir: string; file: string; fd: number | null } | null = null;
+    try {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ui-kit-out-'));
+      const file = path.join(dir, 'stdout');
+      capture = { dir, file, fd: fs.openSync(file, 'wx', 0o600) };
+    } catch (error) {
+      if (scratchDir) {
+        try {
+          removeTreeSync(scratchDir);
+        } catch {
+          // Noise, not a failure.
+        }
+      }
+      reject(
+        new UiKitCliError(
+          'NO_SCRATCH_DIR',
+          'could not create a private file for the kit output: ' +
+            (error instanceof Error ? error.message : String(error)),
+        ),
+      );
+      return;
+    }
+
     const isWindows = process.platform === 'win32';
     const options: SpawnOptions = {
       cwd: spawnCwd,
       env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', capture.fd ?? 'pipe', 'pipe'],
       detached: !isWindows,
       shell: false,
       windowsHide: isWindows,
     };
+
+    function closeCaptureFd(): void {
+      if (capture?.fd === null || capture?.fd === undefined) return;
+      try {
+        fs.closeSync(capture.fd);
+      } catch {
+        // Already closed.
+      }
+      capture.fd = null;
+    }
+    function captureSize(): number {
+      if (!capture) return 0;
+      try {
+        return fs.statSync(capture.file).size;
+      } catch {
+        return 0;
+      }
+    }
+    function readCapture(): string {
+      if (!capture) return '';
+      try {
+        const size = Math.min(captureSize(), maxBytes);
+        const buffer = Buffer.alloc(size);
+        const fd = fs.openSync(capture.file, 'r');
+        try {
+          fs.readSync(fd, buffer, 0, size, 0);
+        } finally {
+          fs.closeSync(fd);
+        }
+        return buffer.toString('utf8');
+      } catch {
+        return '';
+      }
+    }
+    function dropCapture(): void {
+      closeCaptureFd();
+      if (!capture) return;
+      const target = capture.dir;
+      capture = null;
+      try {
+        removeTreeSync(target);
+      } catch {
+        // A leftover temp dir is noise, never a reason to fail the run.
+      }
+    }
 
     function dropScratch(): void {
       if (!scratchDir) return;
@@ -578,26 +749,47 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
       }
     }
 
+    // Released when the child is really gone, never on a timeout alone: the
+    // process group is still writing until it exits.
+    let releaseWrite: () => void = () => {};
+    if (writes && request.projectWriteClaimed !== true) {
+      try {
+        releaseWrite = claimUiKitProjectWrite(cwd);
+      } catch (error) {
+        dropScratch();
+        dropCapture();
+        reject(error);
+        return;
+      }
+    }
+
     let child: ReturnType<typeof spawn>;
     try {
+      const launch = resolveUiKitNpxLaunch();
       child = spawn(
-        resolveNpxCommand(),
-        ['-y', UI_KIT_PACKAGES[request.kit], ...args],
+        launch.command,
+        [...launch.argsPrefix, '-y', UI_KIT_PACKAGES[request.kit], ...args],
         options,
       );
     } catch (error) {
+      releaseWrite();
       dropScratch();
+      dropCapture();
       reject(
-        new UiKitCliError(
-          'SPAWN_FAILED',
-          `failed to spawn ${request.kit}: ` +
-            (error instanceof Error ? error.message : String(error)),
-        ),
+        error instanceof UiKitCliError
+          ? error
+          : new UiKitCliError(
+              'SPAWN_FAILED',
+              `failed to spawn ${request.kit}: ` +
+                (error instanceof Error ? error.message : String(error)),
+            ),
       );
       return;
     }
 
-    let stdout = '';
+    // The child holds its own descriptor now; ours would keep the file open.
+    closeCaptureFd();
+
     let stderr = '';
     let bytes = 0;
     let settled = false;
@@ -610,11 +802,26 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
       );
     }, timeoutMs);
     timer.unref?.();
+    // The output cap still holds with a file: a runaway child is stopped by
+    // size, just not byte by byte.
+    const sizeWatch = setInterval(() => {
+      if (captureSize() + bytes > maxBytes) {
+        fail(
+          new UiKitCliError(
+            'OUTPUT_TOO_LARGE',
+            `${request.kit} output exceeded ${maxBytes} bytes`,
+          ),
+        );
+      }
+    }, UI_KIT_OUTPUT_WATCH_MS);
+    sizeWatch.unref?.();
 
     function cleanup(): void {
       clearTimeout(timer);
+      clearInterval(sizeWatch);
       request.signal?.removeEventListener('abort', onAbort);
       dropScratch();
+      dropCapture();
     }
     function fail(error: UiKitCliError): void {
       if (settled) return;
@@ -624,14 +831,17 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
       // its own rejection out of the derivative with no handler.
       void terminateTree(child.pid)
         .catch(() => {})
-        .finally(() => reject(error));
+        .finally(() => {
+          releaseWrite();
+          reject(error);
+        });
     }
     function onAbort(): void {
       fail(new UiKitCliError('ABORTED', 'UI-kit run aborted'));
     }
-    function accumulate(chunk: Buffer, isStdout: boolean): void {
+    function accumulate(chunk: Buffer): void {
       bytes += chunk.length;
-      if (bytes > maxBytes) {
+      if (bytes + captureSize() > maxBytes) {
         fail(
           new UiKitCliError(
             'OUTPUT_TOO_LARGE',
@@ -640,14 +850,13 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
         );
         return;
       }
-      if (isStdout) stdout += chunk.toString('utf8');
-      else stderr += chunk.toString('utf8');
+      stderr += chunk.toString('utf8');
     }
 
     request.signal?.addEventListener('abort', onAbort, { once: true });
-    child.stdout?.on('data', (chunk: Buffer) => accumulate(chunk, true));
-    child.stderr?.on('data', (chunk: Buffer) => accumulate(chunk, false));
+    child.stderr?.on('data', (chunk: Buffer) => accumulate(chunk));
     child.once('error', (error: Error) => {
+      releaseWrite();
       if (settled) return;
       settled = true;
       cleanup();
@@ -660,8 +869,11 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
       );
     });
     child.once('close', (code: number | null) => {
+      releaseWrite();
       if (settled) return;
       settled = true;
+      // Read BEFORE cleanup removes the file.
+      const stdout = readCapture();
       cleanup();
       resolve({ stdout, stderr, code });
     });

@@ -5,7 +5,7 @@ import {
 import { getMissionDecisionHints } from "./mission-decision-hints";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { checkVisualHandoff, visualEvidenceVerified } from './visual-handoff-gate';
+import { checkVisualHandoff, visualEvidenceVerified, visualHandoffSendBack } from './visual-handoff-gate';
 import { submitWorkspaceHandoff } from "./tools-handoff-workspace";
 import { promotedParentMayReadWorkspaceHandoff } from "./workspace-handoff-authority";
 import {
@@ -502,6 +502,11 @@ const handoffSubmitTool: McpToolDef = {
       task: boundDispatch?.taskId ? suite.tasks.getPlannedTask(boundDispatch.taskId) : undefined,
       assertCurrent: () => assertMcpInvocationCurrent(invocation),
     }) : undefined;
+    // Revisão 22/10: uma devolução com o caminho da captura antes do partial,
+    // como o portão de regressão. Entrega que já vai como blocked não volta.
+    const visualSendBack = contractVerdict.kind !== 'exhausted' && regressionVerdict.kind !== 'exhausted'
+      ? visualHandoffSendBack(ctx, visual) : null;
+    if (visualSendBack) throw new Error(visualSendBack);
     let jevVerdict: JevReviewVerdict = { kind: "skipped", reason: "not-run" };
     // Não julga entregas que não são trabalho de implementação: PRD/plano
     // (documento não tem testes), sessões read-only (revisores entregam

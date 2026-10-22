@@ -3,8 +3,9 @@ import path from 'node:path';
 import {
   assertSafeUiKitCwd,
   buildUiKitChildEnv,
+  claimUiKitProjectWrite,
   isAlreadyGoneKillError,
-  resolveNpxCommand,
+  resolveUiKitNpxLaunch,
   UiKitCliError,
   UI_KIT_PACKAGES,
   type UiKitId,
@@ -180,8 +181,8 @@ export async function callMcpToolOnce(
   // Same gate as a CLI run: a writing tool may not land in a checkout whose
   // node_modules is a shared symlink.
   const cwd = assertSafeUiKitCwd(request.cwd, { writes: request.writes === true });
-  const command = resolveNpxCommand({ platform });
-  const args = ['-y', UI_KIT_PACKAGES[request.kit], 'mcp'] as const;
+  const launch = resolveUiKitNpxLaunch({ platform });
+  const args = [...launch.argsPrefix, '-y', UI_KIT_PACKAGES[request.kit], 'mcp'];
   const env = buildUiKitChildEnv();
 
   if (request.signal?.aborted) {
@@ -189,9 +190,21 @@ export async function callMcpToolOnce(
   }
 
   return await new Promise<McpOneShotResult>((resolve, reject) => {
+    // One writer per project, the same slot the CLI runner takes: an
+    // `install_components` retried after the client gave up must not race the
+    // first one. Released only once the server process is gone.
+    let releaseWrite: () => void = () => {};
+    if (request.writes === true) {
+      try {
+        releaseWrite = claimUiKitProjectWrite(cwd);
+      } catch (error) {
+        reject(error);
+        return;
+      }
+    }
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawnProcess(command, args, {
+      child = spawnProcess(launch.command, args, {
         cwd,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -200,6 +213,7 @@ export async function callMcpToolOnce(
         windowsHide: platform === 'win32',
       });
     } catch (error) {
+      releaseWrite();
       reject(
         new UiKitCliError(
           'SPAWN_FAILED',
@@ -238,7 +252,6 @@ export async function callMcpToolOnce(
     function cleanup(): void {
       clearTimeout(timer);
       request.signal?.removeEventListener('abort', onAbort);
-      child.stdin?.off('error', onStdinError);
     }
     function fail(error: UiKitCliError): void {
       if (settled) return;
@@ -246,7 +259,10 @@ export async function callMcpToolOnce(
       cleanup();
       void terminateTree(child.pid, platform)
         .catch(() => {})
-        .finally(() => reject(error));
+        .finally(() => {
+          releaseWrite();
+          reject(error);
+        });
     }
     function succeed(value: McpOneShotResult): void {
       if (settled) return;
@@ -254,7 +270,10 @@ export async function callMcpToolOnce(
       cleanup();
       void terminateTree(child.pid, platform)
         .catch(() => {})
-        .finally(() => resolve(value));
+        .finally(() => {
+          releaseWrite();
+          resolve(value);
+        });
     }
     function onAbort(): void {
       fail(new UiKitCliError('ABORTED', 'MCP call aborted'));
@@ -278,9 +297,14 @@ export async function callMcpToolOnce(
     }
 
     child.stdin?.on('error', onStdinError);
+    // A Writable invokes its failed write callback BEFORE emitting 'error'.
+    // Settling the call in that callback must not expose a later EPIPE to
+    // Main. Keep the listener until the stream itself finishes closing.
+    child.stdin?.once('close', () => child.stdin?.off('error', onStdinError));
     request.signal?.addEventListener('abort', onAbort, { once: true });
 
     child.once('error', (error: Error) => {
+      releaseWrite();
       if (settled) return;
       settled = true;
       cleanup();
@@ -342,7 +366,9 @@ export async function callMcpToolOnce(
     function handleLine(line: string): void {
       let message: Record<string, unknown>;
       try {
-        message = JSON.parse(line) as Record<string, unknown>;
+        const parsed: unknown = JSON.parse(line);
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+        message = parsed as Record<string, unknown>;
       } catch {
         // Servers print banners on stdout; a non-JSON line is not fatal.
         return;

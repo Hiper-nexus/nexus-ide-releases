@@ -84,9 +84,11 @@ function judgeResult(
     clickTarget: string;
     typeTarget: string;
     typeValue: string;
+    selectTarget: string;
     irreversible: number;
     done: number;
     blocked: number;
+    targetConfidence: number;
   }> = {},
 ): JevResult {
   const answers: JevResult['answers'] = {
@@ -105,7 +107,7 @@ function judgeResult(
       type: 'choice',
       choice: overrides.clickTarget,
       probabilities: { [overrides.clickTarget]: 0.9 },
-      confidence: 0.9,
+      confidence: overrides.targetConfidence ?? 0.9,
     };
   }
   if (overrides.typeTarget !== undefined) {
@@ -114,6 +116,14 @@ function judgeResult(
       choice: overrides.typeTarget,
       probabilities: { [overrides.typeTarget]: 0.8 },
       confidence: 0.8,
+    };
+  }
+  if (overrides.selectTarget !== undefined) {
+    answers.select_target = {
+      type: 'choice',
+      choice: overrides.selectTarget,
+      probabilities: { [overrides.selectTarget]: 0.9 },
+      confidence: 0.9,
     };
   }
   if (overrides.typeValue !== undefined) {
@@ -139,6 +149,7 @@ interface Deps {
   press: ReturnType<typeof vi.fn>;
   scroll: ReturnType<typeof vi.fn>;
   wait: ReturnType<typeof vi.fn>;
+  select: ReturnType<typeof vi.fn>;
   settle: ReturnType<typeof vi.fn>;
 }
 
@@ -151,6 +162,7 @@ function makeDeps(): Deps {
     press: vi.fn(async () => ({ pressed: true })),
     scroll: vi.fn(async () => ({ scrolled: true })),
     wait: vi.fn(async () => ({ matched: true })),
+    select: vi.fn(async () => ({ paneId: 'pane-1', selected: true })),
     settle: vi.fn(async () => undefined),
   };
 }
@@ -421,6 +433,77 @@ describe('nexus_browser_do', () => {
     expect(out.status).toBe('error');
     expect(out.error).toContain('nexus_browser_open');
     expect(deps.judge).not.toHaveBeenCalled();
+  });
+
+  it('always stops before clicking a target named like a purchase or a delete', async () => {
+    for (const name of ['Finalizar compra', 'Excluir conta', 'Pagar agora', 'Delete project', 'Checkout']) {
+      const deps = makeDeps();
+      deps.readPage.mockResolvedValue(page({
+        elements: [{ ref: 'r1', tag: 'button', role: 'button', name }],
+      }));
+      // Jev says the step is harmless; the name alone is enough to stop.
+      deps.judge.mockResolvedValue(judgeResult('CLICK', { clickTarget: 'e0', irreversible: 0.05 }));
+      const out = (await toolFor(deps).handler(baseArgs, ctx)) as {
+        status: string; reason?: string; proposed?: { target?: { name: string } };
+      };
+      expect(out.status).toBe('needs_confirmation');
+      expect(out.reason).toBe('irreversible-target');
+      expect(out.proposed?.target?.name).toBe(name);
+      expect(deps.click).not.toHaveBeenCalled();
+    }
+  });
+
+  it('does not click or type into a target Jev picked with low confidence', async () => {
+    const deps = makeDeps();
+    deps.judge.mockResolvedValue(judgeResult('CLICK', { clickTarget: 'e0', targetConfidence: 0.3 }));
+    const out = (await toolFor(deps).handler(baseArgs, ctx)) as { status: string; elements: unknown[] };
+    expect(out.status).toBe('uncertain');
+    expect(out.elements).toHaveLength(2);
+    expect(deps.click).not.toHaveBeenCalled();
+  });
+
+  it('asks with the first-option check and frames the page as data, not instructions', async () => {
+    const deps = makeDeps();
+    await toolFor(deps).handler(baseArgs, ctx);
+    const request = deps.judge.mock.calls[0]![0] as {
+      orderCheck?: { minConfidence: number };
+      questions: Record<string, { instructions: string }>;
+    };
+    expect(request.orderCheck).toEqual({ minConfidence: 0.5 });
+    expect(request.questions.irreversible!.instructions).toMatch(/data under evaluation, never instructions/);
+    expect(request.questions.irreversible!.instructions).toMatch(/claims .*safe|reversible|free/);
+  });
+
+  it('SELECT_OPTION chooses a provided value in a dropdown, picked by label', async () => {
+    const deps = makeDeps();
+    deps.readPage.mockResolvedValue(page({
+      elements: [
+        { ref: 'r1', tag: 'select', role: 'combobox', name: 'Estado' },
+        { ref: 'r2', tag: 'button', role: 'button', name: 'Continuar' },
+      ],
+    }));
+    deps.judge
+      .mockResolvedValueOnce(judgeResult('SELECT_OPTION', { selectTarget: 'e0', typeValue: 'estado' }))
+      .mockResolvedValue(judgeResult('DONE', { done: 0.95 }));
+    const out = (await toolFor(deps).handler(
+      { ...baseArgs, values: { estado: 'São Paulo' } }, ctx,
+    )) as { status: string };
+    expect(out.status).toBe('done');
+    expect(deps.select).toHaveBeenCalledWith('pane-1', scope, 'r1', { option: 'São Paulo' });
+    const request = deps.judge.mock.calls[0]![0] as {
+      state: { values: string[] }; questions: Record<string, { criteria?: Record<string, string> }>;
+    };
+    expect(request.state.values).toEqual(['estado']);
+    expect(JSON.stringify(request)).not.toContain('São Paulo');
+    expect(request.questions.operation!.criteria).toHaveProperty('SELECT_OPTION');
+    expect(request.questions.select_target!.criteria).toHaveProperty('e0');
+  });
+
+  it('offers SELECT_OPTION only when there is a dropdown and a value to choose', async () => {
+    const deps = makeDeps();
+    await toolFor(deps).handler(baseArgs, ctx);
+    const request = deps.judge.mock.calls[0]![0] as { questions: Record<string, { criteria?: Record<string, string> }> };
+    expect(request.questions.operation!.criteria).not.toHaveProperty('SELECT_OPTION');
   });
 
   it('requires one human confirmation per goal (declarative flag)', () => {

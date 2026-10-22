@@ -7,7 +7,12 @@ import { testProjectScope } from './__tests__/scope-fixture';
 import { getAutomaticCompletionProof, withAutomaticCompletionProof } from './automatic-completion-proof';
 import type { AutomaticCompletionProof } from './automatic-completion-proof';
 import { evaluateIndependentReviewGate } from './mission-independent-review-gate';
-import { ensureMissionCodeCompletion, type MissionCodeCompletionPorts, type MissionCodeReviewResult } from './mission-code-completion';
+import { completeCandidatePaths, ensureMissionCodeCompletion, type MissionCodeCompletionPorts, type MissionCodeReviewResult } from './mission-code-completion';
+
+it('the ceremony path set keeps deletions, unread and absent files the read set drops', () => {
+  expect(completeCandidatePaths({ changedPaths: ['a.css', 'old.ts'], deletedPaths: ['old.ts'], coveredPaths: ['a.css'],
+    unreadPaths: ['big.ts'], absentPaths: ['gone.tsx'] }).sort()).toEqual(['a.css', 'big.ts', 'gone.tsx', 'old.ts']);
+});
 
 vi.mock('./mission-leadership-runtime', () => ({ getMissionLeadership: () => ({ resolveMissionLeader: () => null }) }));
 

@@ -130,8 +130,9 @@ describe('a download is only "cached" when the cache says so', () => {
     // is refused, and the loop used to append the slug anyway — the caller was
     // told the item was available offline while the next read would miss.
     const readOnly = path.join(root, 'read-only-cache');
-    fs.mkdirSync(readOnly);
-    fs.chmodSync(readOnly, 0o500);
+    // A file where a directory is required fails on Windows and POSIX,
+    // including root; chmod alone cannot simulate write refusal on Windows.
+    fs.writeFileSync(readOnly, 'not a directory');
     setUiKitCacheRootResolver(() => readOnly);
     try {
       const result = await downloadItemsIntoCache(
@@ -144,7 +145,6 @@ describe('a download is only "cached" when the cache says so', () => {
       expect(result.failed[0]?.slug).toBe('button');
       expect(result.failed[0]?.reason).toMatch(/cache/i);
     } finally {
-      fs.chmodSync(readOnly, 0o700);
       setUiKitCacheRootResolver(() => root);
     }
   });

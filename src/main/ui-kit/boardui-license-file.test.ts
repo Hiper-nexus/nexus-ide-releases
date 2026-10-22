@@ -31,23 +31,23 @@ describe('boarduiConfigRoot — mirrors the vendored CLI', () => {
     );
     // The same env on another platform must NOT take the Windows branch.
     expect(boarduiConfigRoot({ APPDATA: 'C:\\app', HOME: '/users/me' }, 'linux')).toBe(
-      '/users/me/.config',
+      path.normalize('/users/me/.config'),
     );
   });
 
   it('an empty XDG_CONFIG_HOME is not a root — the CLI checks truthiness', () => {
     expect(boarduiConfigRoot({ XDG_CONFIG_HOME: '', HOME: '/users/me' }, 'linux')).toBe(
-      '/users/me/.config',
+      path.normalize('/users/me/.config'),
     );
   });
 
   it('resolves HOME from the CHILD env, like os.homedir() inside the child', () => {
-    expect(boarduiConfigRoot({ HOME: '/Users/op' }, 'darwin')).toBe('/Users/op/.config');
-    expect(boarduiConfigRoot({ HOME: '/home/op' }, 'linux')).toBe('/home/op/.config');
+    expect(boarduiConfigRoot({ HOME: '/Users/op' }, 'darwin')).toBe(path.normalize('/Users/op/.config'));
+    expect(boarduiConfigRoot({ HOME: '/home/op' }, 'linux')).toBe(path.normalize('/home/op/.config'));
   });
 
   it('uses the real homedir when the env carries no HOME', () => {
-    expect(boarduiConfigRoot({}, 'linux', () => '/fallback/home')).toBe('/fallback/home/.config');
+    expect(boarduiConfigRoot({}, 'linux', () => '/fallback/home')).toBe(path.normalize('/fallback/home/.config'));
   });
 
   it('the licence file sits in boardui/license.json under the root', () => {
@@ -141,9 +141,14 @@ describe('realBoardUiLicenseFileOps — the real config root', () => {
     expect(ops.write(OPERATOR)).toEqual({ ok: true });
     const file = boarduiLicenseFilePath(root);
     expect(fs.existsSync(file)).toBe(true);
-    // The key never lands world-readable.
-    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     expect(ops.read()).toEqual({ status: 'parsed', file: OPERATOR });
+  });
+
+  it.skipIf(process.platform === 'win32')('writes a POSIX licence file with mode 0600', () => {
+    // Windows reports synthetic POSIX mode bits; ACLs need a Windows-specific
+    // security proof and are not certified by this assertion.
+    expect(ops.write(OPERATOR)).toEqual({ ok: true });
+    expect(fs.statSync(boarduiLicenseFilePath(root)).mode & 0o777).toBe(0o600);
   });
 
   it('a missing file is absence, positively established — never confused with unreadable', () => {

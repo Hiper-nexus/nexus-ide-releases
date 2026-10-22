@@ -50,6 +50,8 @@ export interface IsolatedWriterAllocation {
    * etapa) — só existe quando a worktree foi criada agora.
    */
   readonly materialize?: MaterializeWorktreeResult;
+  /** `true` = adopted from the pre-allocated pool; `false` = created now. Telemetry only. */
+  readonly pooled?: boolean;
 }
 
 function inUseByPane(worktreePath: string): boolean {
@@ -253,7 +255,7 @@ export async function allocateIsolatedWriterWorktree(
         : tracked;
       sweepReleasedPaneWriterWorktrees(scope);
       requireIsolatedWriterPool().scheduleReplenish(scope, poolRequest);
-      return allocation;
+      return { ...allocation, pooled: true };
     }
   } catch (error) {
     // Base indisponível ou prova falhou: o caminho atual reporta o erro real.
@@ -290,7 +292,7 @@ export async function allocateIsolatedWriterWorktree(
     : tracked;
   sweepReleasedPaneWriterWorktrees(scope);
   requireIsolatedWriterPool().scheduleReplenish(scope, poolRequest);
-  return materialize ? { ...allocation, materialize } : allocation;
+  return materialize ? { ...allocation, pooled: false, materialize } : { ...allocation, pooled: false };
 }
 
 let sharedGit: AsyncGitRunner | undefined;

@@ -22,6 +22,7 @@ import {
   type McpRegistry,
   type McpToolDef,
   type McpToolInvocation,
+  withMcpImageContent,
 } from './mcp-protocol';
 import { buildToolset } from './tools';
 import { testProjectScope } from './__tests__/scope-fixture';
@@ -522,6 +523,38 @@ describe('handleMcpMessage', () => {
     });
   });
 
+  it('serializes tool results as compact JSON (pretty-printing inflated every result)', async () => {
+    const res = await handleMcpMessage(
+      makeRegistry(),
+      userCtx(),
+      req('tools/call', { name: 'pane_read', arguments: { nested: { a: [1, 2] } } }),
+    );
+    const text = (res?.result as { content: Array<{ text: string }> }).content[0].text;
+    expect(text).toBe('{"echoed":{"nested":{"a":[1,2]}}}');
+  });
+
+  it('adds image content blocks a tool attaches, without putting the bytes in the text', async () => {
+    const registry: McpRegistry = {
+      tools: [{
+        name: 'nexus_pane_read',
+        description: 'image tool',
+        inputSchema: { type: 'object', properties: {} },
+        handler: async () => withMcpImageContent(
+          { path: '/tmp/shot.png', width: 2 },
+          [{ data: 'iVBORw0KGgo=', mimeType: 'image/png' }],
+        ),
+      }],
+      serverName: 'nexus-test',
+      serverVersion: '0.0.1',
+    };
+    const res = await handleMcpMessage(registry, userCtx(), req('tools/call', { name: 'pane_read' }));
+    const content = (res?.result as { content: Array<Record<string, unknown>> }).content;
+    expect(content).toEqual([
+      { type: 'text', text: '{"path":"/tmp/shot.png","width":2}' },
+      { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' },
+    ]);
+  });
+
   it('does not run read or always-allowed handoff handlers after bearer revocation', async () => {
     const read = vi.fn(async () => ({ content: 'secret' }));
     const handoff = vi.fn(async () => ({ id: 'handoff-should-not-exist' }));
@@ -560,12 +593,12 @@ describe('handleMcpMessage', () => {
     expect(read).not.toHaveBeenCalled();
     expect(handoff).not.toHaveBeenCalled();
     expect(
-      (readResponse?.result as { content: Array<{ text: string }> })
-        .content[0]?.text,
+      (readResponse?.result as { content: Array<{ text: string }> } | undefined)
+        ?.content[0]?.text,
     ).toContain('session_authority_revoked');
     expect(
-      (handoffResponse?.result as { content: Array<{ text: string }> })
-        .content[0]?.text,
+      (handoffResponse?.result as { content: Array<{ text: string }> } | undefined)
+        ?.content[0]?.text,
     ).toContain('session_authority_revoked');
   });
 

@@ -25,11 +25,20 @@ describe('boardUiSlug', () => {
 });
 
 describe('the catalog snapshot', () => {
-  it('carries the 69 free items the vendor publishes, and no invented Pro one', () => {
-    // Slugs are READ from `boardui list`, never spelled from a display name:
-    // the derived ones were wrong in ways that broke installs.
+  it('carries the 69 free items and the 40 Pro ones the vendor publishes', () => {
+    // Slugs are READ from the vendor, never spelled from a display name: the
+    // derived ones were wrong in ways that broke installs. The free ones come
+    // from `boardui list`; the Pro ones from `list_components` with the
+    // licence active (measured 22/10/2026), because `list` never shows them.
     expect(boardUiFreeItems()).toHaveLength(69);
-    expect(boardUiProItems()).toEqual([]);
+    expect(boardUiProItems()).toHaveLength(40);
+    expect(boardUiProItems().filter((entry) => entry.category === 'template')).toHaveLength(10);
+  });
+
+  it('keeps the Pro templates under their real template- identifiers', () => {
+    for (const entry of boardUiProItems().filter((pro) => pro.category === 'template')) {
+      expect(entry.slug.startsWith('template-')).toBe(true);
+    }
   });
 
   it('keeps every slug unique', () => {
@@ -48,11 +57,11 @@ describe('the catalog snapshot', () => {
     expect(boardUiTierOf('app-shell')).toBe('free');
   });
 
-  it('answers null for a Pro identifier instead of guessing', () => {
-    // `template-home-dashboard` is the vendor's documented Pro slug. The
-    // snapshot cannot see Pro items, so it must say "I do not know" and let
-    // the caller resolve it live.
-    expect(boardUiTierOf('template-home-dashboard')).toBeNull();
+  it('knows the measured Pro identifiers as Pro', () => {
+    expect(boardUiTierOf('template-home-dashboard')).toBe('pro');
+    expect(boardUiTierOf('line-chart-card')).toBe('pro');
+    expect(boardUiTierOf('project-board')).toBe('pro');
+    // Spelled from a label, not read from the vendor: still unknown.
     expect(boardUiTierOf('finance-dashboard')).toBeNull();
   });
 

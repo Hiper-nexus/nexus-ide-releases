@@ -214,10 +214,20 @@ describe('evidência visual no handoff', () => {
   // terminal: subir o preview é trabalho dele, não ferramenta indisponível.
   it('manda subir o preview antes de declarar o ambiente indisponível', () => {
     const prompt = withHandoffContract('Implemente o frontend.', adapter);
-    expect(prompt).toContain('suba o preview');
-    expect(prompt.indexOf('suba o preview')).toBeLessThan(
+    expect(prompt).toContain('nexus_preview_start({dir})');
+    expect(prompt.indexOf('nexus_preview_start({dir})')).toBeLessThan(
       prompt.indexOf('registre a validação como não verificada'),
     );
+  });
+
+  // Revisão 22/10 (P0-6): o brief mandava subir `npm run dev` ou abrir o
+  // arquivo local, e o navegador do Nexus recusa os dois (private-network,
+  // unsafe-scheme). O único caminho que funciona é o preview do Nexus.
+  it('manda o caminho que o navegador aceita, não npm run dev nem file://', () => {
+    const prompt = withHandoffContract('Implemente o frontend.', adapter);
+    expect(prompt).toMatch(/nexus_preview_start\(\{dir\}\)[\s\S]*nexus_browser_open[\s\S]*nexus_browser_responsive/);
+    expect(prompt).not.toMatch(/servidor de dev do projeto ou o arquivo local/);
+    expect(prompt).toMatch(/não suba `npm run dev` para verificar/);
   });
 
   // F-1636: achado em campo construindo uma landing page nesta sessão. A
@@ -269,5 +279,26 @@ describe('charter tier — helper somente leitura entrega texto, não diff', () 
     expect(
       charterTierForWorker({ prompt: 'Implemente e redesenhe a tela de login.' }),
     ).toEqual({ engineering: true, design: true, lean: true });
+  });
+});
+
+describe('the UI kit survives Design Pro being off', () => {
+  // Review 22/10: the kit line lived only inside the design charter, so
+  // switching Design Pro off switched the kit off with it.
+  it('a UI worker without the charter still gets the kit line', () => {
+    const prompt = withHandoffContract('Crie a tela de login do app em React.', {
+      quirks: { mcpAutoload: true, nexusMcp: 'autoload' },
+    });
+
+    expect(prompt).toContain('nexus_ui_kit_add({task})');
+    expect(prompt).not.toContain('# Design Charter');
+  });
+
+  it('a backend worker does not get it', () => {
+    const prompt = withHandoffContract('Implemente cache LRU no serviço de sessões.', {
+      quirks: { mcpAutoload: true, nexusMcp: 'autoload' },
+    });
+
+    expect(prompt).not.toContain('nexus_ui_kit_add');
   });
 });

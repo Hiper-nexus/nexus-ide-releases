@@ -286,7 +286,7 @@ vi.mock('./mission-pane-authority', () => ({
 vi.mock('./legacy-handoff', async original => ({ ...await original<typeof import('./legacy-handoff')>(), LEGACY_MARKER: 'marker' }));
 vi.mock('./ponytail', () => ({ PONYTAIL_RULES: '' }));
 vi.mock('./engineering-charter', () => ({ ENGINEERING_CHARTER: '' }));
-vi.mock('./design-charter', () => ({ DESIGN_CHARTER: '' }));
+vi.mock('./design-charter', () => ({ DESIGN_CHARTER: '' , UI_KIT_BRIEF_LINE: '[UI-KIT]' }));
 vi.mock('./agent-identity-spawn', () => ({
   issueAgentIdentityBestEffort: stubs.issueAgentIdentityBestEffort,
 }));
@@ -321,6 +321,7 @@ import { inFlightRequestOf, resetInFlightRequestsForTests } from './in-flight-re
 import {
   getPaneStartWatch,
   resetPaneStartWatchdogForTests,
+  setPaneStartBusyEvidence,
   trackPaneStart,
 } from './pane-start-watchdog';
 import { testProjectScope } from './__tests__/scope-fixture';
@@ -426,6 +427,20 @@ describe('agent pane workspace confinement', () => {
       resumeFromPaneId: 'closed-original', visualTask,
       workerContinuation: { sourcePaneId: 'closed-original', attemptId: 'owned-attempt' } });
     expect(stubs.requestPaneSpawn).toHaveBeenCalledWith(expect.objectContaining({ visualTask }));
+  });
+
+  it('review 22/10: a read-only spawn of a UI task carries no visual assignment', async () => {
+    const memoryQuery = 'Crie a tela de login com layout responsivo.';
+    const uncharged = expect.not.objectContaining({ visualTask: expect.anything() });
+    await spawnPaneAndMaybePrompt({ adapterId: 'codex', scope, readOnly: true, memoryQuery });
+    expect(stubs.requestPaneSpawn).toHaveBeenNthCalledWith(1, uncharged);
+    await spawnPaneAndMaybePrompt({ adapterId: 'codex', scope, readOnly: true, memoryQuery,
+      visualTask: { id: 'explicit-assignment', since: 1 } });
+    expect(stubs.requestPaneSpawn).toHaveBeenNthCalledWith(2, uncharged);
+    // F-1318: o "leitor" que pediu worktree própria escreve e continua cobrado.
+    await spawnPaneAndMaybePrompt({ adapterId: 'codex', scope, readOnly: true, isolatedWriter: true, memoryQuery });
+    expect(stubs.requestPaneSpawn).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      visualTask: { since: expect.any(Number), id: expect.any(String) } }));
   });
 
   it('F-736: PTY gravável não fecha o disjuntor do adapter (não prova que a CLI funciona)', async () => {
@@ -2102,6 +2117,27 @@ describe('agent prompt injection', () => {
       expect(stubs.requestPaneClose).toHaveBeenCalledWith('pane-kimi');
       expect(failures).toHaveLength(1);
       expect(failures[0]?.message).toContain('briefing não foi entregue');
+    });
+
+    it.each([
+      ['already using tools', { toolActivityCount: () => 3, heavyAdmissionOpen: () => false }, true],
+      ['waiting in the heavy-command queue', { toolActivityCount: () => 0, heavyAdmissionOpen: (id: string) => id === 'session-kimi' }, false],
+    ])('a session %s is not a rejected brief: the pane stays and nothing is rerouted', async (_label, evidence, accepted) => {
+      resetPaneStartWatchdogForTests(); // Earlier tests leave early marks for the same paneId.
+      setPaneStartBusyEvidence(evidence);
+      try {
+        trackPaneStart({ paneId: 'pane-kimi', requestId: 'req-kimi', adapterId: 'kimi', scope, role: 'worker',
+          callerSessionId: 'maestro', turnProof: false, pinnedRuntime: false, rerouted: false, createdAt: Date.now() });
+        await spawnPendingKimi();
+        bindAttempt('session-kimi');
+        await vi.advanceTimersByTimeAsync(120_000);
+
+        expect(stubs.requestPaneClose).not.toHaveBeenCalled();
+        expect(failures).toEqual([]);
+        const watch = getPaneStartWatch('pane-kimi');
+        expect(watch?.failure).toBeNull();
+        expect(watch?.accepted).toBe(accepted);
+      } finally { resetPaneStartWatchdogForTests(); }
     });
 
     it('pane reciclado no mesmo paneId não recebe o brief da tentativa anterior nem é fechado', async () => {

@@ -1,5 +1,6 @@
 import type { McpToolDef } from './mcp-protocol';
 import { executionScopeFor } from './gate';
+import { listUiKitWorkspaces, resolveUiKitWorkspace } from '../ui-kit/ui-kit-workspaces';
 import { num, requireStr, str, strArray } from './tool-util';
 import { UI_KIT_IDS, type UiKitId } from '../ui-kit/ui-kit-cli';
 import {
@@ -22,12 +23,19 @@ import {
 import { pickUiKitByHeuristic } from '../ui-kit/ui-kit-pick';
 import { listCachedItems, readCachedItem } from '../ui-kit/ui-kit-cache';
 import {
+  activateEffectiveBoardUiLicense,
   boardUiCandidates,
   readItemSource,
   boardUiLicenseStatus,
+  boardUiProSelectable,
+  boardUiProUnlockedLocally,
   callBoardUiTool,
   installItems,
+  projectNotFitForKit,
+  provisionBundledBoardUiLicense,
+  readComponentsJson,
   runShadcnCommand,
+  shadcnProjectNotReady,
   shadcnSearchNamespaces,
 } from '../ui-kit/ui-kit-service';
 import { liveCandidates, offlineCandidates } from '../ui-kit/ui-kit-catalog';
@@ -37,6 +45,7 @@ import {
   resolveInstallTargetForTask,
 } from '../ui-kit/ui-kit-install-target';
 import { getOrchSettings } from '../persistence/settings-store';
+import { UI_KIT_SETTINGS_PATH } from '../../shared/ui-kit-contract';
 import {
   normalizeConfiguredRegistries,
   withOperatorRegistries,
@@ -69,9 +78,18 @@ import {
  *   configures that in the project; an agent does not get to aim a write.
  */
 
-function cwdFor(ctx: Parameters<McpToolDef['handler']>[1]): string {
-  return executionScopeFor(ctx).rootRealPath;
+function cwdFor(ctx: Parameters<McpToolDef['handler']>[1], args: Record<string, unknown> = {}): string {
+  // A monorepo package the PROJECT declares, by name from Main's own list —
+  // never a free path (see the header on destinations).
+  return resolveUiKitWorkspace(executionScopeFor(ctx).rootRealPath, str(args, 'workspace'));
 }
+
+const WORKSPACE_PROPERTY = {
+  type: 'string',
+  description:
+    'Monorepo package to run in (e.g. apps/web), from the `workspaces` the ' +
+    'catalog lists. Omit for the project root.',
+} as const;
 
 function parseKit(args: Record<string, unknown>, fallback: UiKitId = 'shadcn'): UiKitId {
   const raw = str(args, 'kit');
@@ -125,6 +143,26 @@ function configuredRegistries(): readonly UiKitRegistry[] {
 
 const serviceDeps = () => ({ registries: configuredRegistries });
 
+/** Where the project imports shadcn components from, per components.json. */
+function shadcnImportAlias(cwd: string): string | undefined {
+  const aliases = readComponentsJson(cwd)?.aliases;
+  if (!aliases || typeof aliases !== 'object') return undefined;
+  const { ui, components } = aliases as { ui?: unknown; components?: unknown };
+  if (typeof ui === 'string' && ui.length > 0) return ui;
+  return typeof components === 'string' && components.length > 0 ? `${components}/ui` : undefined;
+}
+
+type ToolInvocation = Parameters<McpToolDef['handler']>[2];
+
+/**
+ * The last check before a vendor process starts: the call was not superseded
+ * (a newer mission intent aborts it) and its caller still holds authority.
+ */
+function assertStillCurrent(invocation: ToolInvocation): void {
+  if (invocation?.signal?.aborted) throw new Error('UI-kit call aborted');
+  invocation?.assertCurrentAuthority?.();
+}
+
 /**
  * The read-only listing NEVER spawns.
  *
@@ -143,8 +181,9 @@ export function buildUiKitTools(): McpToolDef[] {
       name: 'nexus_ui_kit_catalog',
       description:
         'Browse the UI kits available to this project: shadcn/ui (free, any ' +
-        'registry) and BoardUI (free items plus Pro items that need the ' +
-        "operator's licence). OFFLINE and read-only: BoardUI's whole catalog " +
+        'registry) and BoardUI (free items plus Pro components and full-page ' +
+        'templates, unlocked by the licence that ships with Nexus). OFFLINE ' +
+        "and read-only: BoardUI's whole catalog " +
         'ships with Nexus, and for shadcn this lists what has been downloaded ' +
         "— the live registry is nexus_ui_kit_run { command: 'search' }. Also " +
         'lists the ready-made recipes (super admin, dashboard, auth). Pass ' +
@@ -165,10 +204,17 @@ export function buildUiKitTools(): McpToolDef[] {
           },
         },
       },
-      handler: async (args) => {
+      handler: async (args, ctx) => {
         const kit = parseKit(args);
         const query = str(args, 'query');
-        const cached = listCachedItems(kit);
+        // An unreadable cache (NO_CACHE_ROOT, a damaged entry) must not take
+        // the listing down: the BoardUI snapshot needs no cache at all.
+        let cached: ReturnType<typeof listCachedItems> = [];
+        try {
+          cached = listCachedItems(kit);
+        } catch {
+          cached = [];
+        }
         const cachedSlugs = new Set(cached.map((entry) => entry.slug));
         // `cachedOnly` was declared in the schema and never read, so a caller
         // asking to work offline got BoardUI's whole bundled snapshot back
@@ -191,13 +237,16 @@ export function buildUiKitTools(): McpToolDef[] {
           // call — none of which may cause egress or a write. The spawn guard
           // in the tests never saw it, because the Jev travels by fetch.
           //
-          // `proLicensed` is left false for the same reason the list is
-          // offline: asking the vendor would spawn its MCP server. The Pro
-          // gate then falls back to a free item and reports `needsLicense`,
-          // which is the honest answer from a read-only lane.
+          // The licence is read from DISK, never asked of the vendor: that
+          // would spawn its MCP server. A licence file in place, or the key
+          // that ships with Nexus (which the install door provisions), opens
+          // the Pro half; otherwise the gate falls back to a free item and
+          // reports `needsLicense`.
+          const proUnlocked = boardUiProUnlockedLocally();
           const seen = new Set(items.map((entry) => entry.slug));
           const pick = pickUiKitByHeuristic({
             task,
+            proLicensed: proUnlocked !== null,
             candidates: [
               ...items,
               // Cross-kit on purpose: asked for a dashboard with kit shadcn,
@@ -208,7 +257,9 @@ export function buildUiKitTools(): McpToolDef[] {
               ...(cachedOnly
                 ? []
                 : boardUiCandidates().filter((entry) => !seen.has(entry.slug))),
-            ].slice(0, 60),
+              // No cap: the rule is a local loop, and the 60 that used to be
+              // here cut the whole Pro half of the snapshot (it sits last).
+            ],
           });
           recommendation = {
             needsKit: pick.needsKit,
@@ -218,15 +269,24 @@ export function buildUiKitTools(): McpToolDef[] {
             blocked: pick.blockedItem?.slug ?? null,
             decidedBy: pick.source,
             reason: pick.reason,
-            licenceNotChecked: true,
+            // How the Pro half was judged from here: a licence file on disk,
+            // the key bundled with Nexus, or not at all.
+            licence: proUnlocked ?? 'not-checked',
             // Said plainly: this lane never asks a model, so the answer is the
             // offline rule and nothing left this machine.
             offlineRuleOnly: true,
           };
         }
 
+        let workspaces: readonly string[] = [];
+        try {
+          workspaces = listUiKitWorkspaces(executionScopeFor(ctx).rootRealPath);
+        } catch {
+          workspaces = [];
+        }
         return {
           kit,
+          ...(workspaces.length > 0 ? { workspaces } : {}),
           items: items.map((entry) => ({
             slug: entry.slug,
             label: entry.label,
@@ -248,9 +308,10 @@ export function buildUiKitTools(): McpToolDef[] {
               ? "This is the offline view: BoardUI's catalog ships with Nexus, " +
                 'and for shadcn it lists only what has been downloaded. For the ' +
                 "live registry run nexus_ui_kit_run { command: 'search' }."
-              : "BoardUI's catalog ships with Nexus, so this list is complete. " +
-                "For the vendor's live list use nexus_ui_kit_boardui " +
-                "{ tool: 'list_components' }.",
+              : "BoardUI's catalog ships with Nexus — free and Pro, read from " +
+                'the vendor on 2026-10-22 — and the Pro items are unlocked by ' +
+                'the licence that ships with Nexus. For the vendor\'s live list ' +
+                "use nexus_ui_kit_boardui { tool: 'list_components' }.",
           ...(recommendation ? { recommendation } : {}),
         };
       },
@@ -330,12 +391,13 @@ export function buildUiKitTools(): McpToolDef[] {
               'Resolved against the live catalog; `items` wins if both are given.',
           },
           overwrite: { type: 'boolean' },
+          workspace: WORKSPACE_PROPERTY,
         },
       },
-      handler: async (args, ctx) => {
+      handler: async (args, ctx, invocation) => {
         const named = assertNamedItems(strArray(args, 'items'));
         const task = str(args, 'task');
-        const cwd = cwdFor(ctx);
+        const cwd = cwdFor(ctx, args);
         // A caller who names a kit keeps it; `parseKit` defaults to shadcn, so
         // the pick only gets to choose when nothing was named.
         const namedKit = str(args, 'kit') ? parseKit(args) : undefined;
@@ -343,6 +405,29 @@ export function buildUiKitTools(): McpToolDef[] {
         let kit = namedKit ?? parseKit(args);
         let items = named;
         let pick: Record<string, unknown> | null = null;
+
+        // shadcn without components.json stops at an interactive prompt that
+        // ignores --yes; answering at once beats a 300 s silent timeout. Also
+        // before a task pick that may land on shadcn: the search alone costs
+        // seconds, and the agent should choose init or BoardUI knowingly.
+        // A Vue, Svelte or Expo project cannot run what either kit writes;
+        // the search and the pick would only be spent finding it out.
+        const unfit = projectNotFitForKit(cwd, namedKit ?? 'shadcn');
+        if (unfit) {
+          return agentInstallReceipt(unfit, { kit: namedKit ?? 'shadcn', items: named });
+        }
+        const shadcnInPlay = kit === 'shadcn' && (named.length > 0 || namedKit !== undefined || Boolean(task));
+        if (shadcnInPlay) {
+          const refused = shadcnProjectNotReady(cwd);
+          if (refused) {
+            return {
+              ...agentInstallReceipt(refused, { kit: 'shadcn', items: named }),
+              ...(named.length === 0 && namedKit === undefined
+                ? { hint: refused.hint }
+                : {}),
+            };
+          }
+        }
 
         if (named.length === 0) {
           if (!task) {
@@ -354,8 +439,16 @@ export function buildUiKitTools(): McpToolDef[] {
           // the vendor (so the candidates are the live catalog and the Pro
           // gate sees the real licence), and the call is already gated. The
           // read-only catalog answers with the offline rule instead.
+          assertStillCurrent(invocation);
           const resolved = await resolveInstallTargetForTask(
-            { task, kit: namedKit, cwd },
+            {
+              task,
+              kit: namedKit,
+              cwd,
+              ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
+              ...(ctx.missionId ? { missionId: ctx.missionId } : {}),
+              ...(invocation?.signal ? { signal: invocation.signal } : {}),
+            },
             serviceDeps(),
           );
           if (!resolved.ok) {
@@ -363,10 +456,13 @@ export function buildUiKitTools(): McpToolDef[] {
               ok: false,
               installed: [],
               pick: installPickReceipt(resolved.pick),
-              hint: resolved.pick.needsKit
-                ? 'Nothing in the catalog fits that task. Name the item with ' +
-                  '`items`, or browse nexus_ui_kit_catalog.'
-                : 'That task does not call for a kit component.',
+              hint: !resolved.pick.needsKit
+                ? 'That task does not call for a kit component.'
+                : resolved.pick.kit
+                  ? `No ${resolved.pick.kit} item matches the task's words. Name the ` +
+                    'item with `items` (browse nexus_ui_kit_catalog), or write it ' +
+                    'with the project design contract.'
+                  : 'Neither kit fits that task: write it with the project design contract.',
             };
           }
           kit = resolved.target.kit;
@@ -374,17 +470,20 @@ export function buildUiKitTools(): McpToolDef[] {
           pick = installPickReceipt(resolved.pick);
         }
 
+        assertStillCurrent(invocation);
         const result = await installItems(
           {
             kit,
             items,
             cwd,
             ...(args.overwrite === true ? { overwrite: true } : {}),
+            ...(invocation?.signal ? { signal: invocation.signal } : {}),
           },
           serviceDeps(),
         );
+        const importAlias = kit === 'shadcn' ? shadcnImportAlias(cwd) : undefined;
         return {
-          ...agentInstallReceipt(result, { kit, items }),
+          ...agentInstallReceipt(result, { kit, items, ...(importAlias ? { importAlias } : {}) }),
           ...(pick ? { pick } : {}),
           // Said outright rather than silently preferring one: naming items
           // and a task at once is over-specified, and `items` is the explicit
@@ -410,10 +509,11 @@ export function buildUiKitTools(): McpToolDef[] {
           },
           kit: { type: 'string', enum: [...UI_KIT_IDS] },
           dryRun: { type: 'boolean' },
+          workspace: WORKSPACE_PROPERTY,
         },
         required: ['recipe'],
       },
-      handler: async (args, ctx) => {
+      handler: async (args, ctx, invocation) => {
         const recipeId = requireStr(args, 'recipe');
         const recipe = findUiKitRecipe(recipeId);
         if (!recipe) {
@@ -423,15 +523,22 @@ export function buildUiKitTools(): McpToolDef[] {
           );
         }
         const kit = parseKit(args);
-        const cwd = cwdFor(ctx);
-        const license =
-          kit === 'boardui' ? await boardUiLicenseStatus({ cwd }, serviceDeps()) : null;
+        const cwd = cwdFor(ctx, args);
+        if (kit === 'shadcn' && args.dryRun !== true) {
+          const refused = shadcnProjectNotReady(cwd);
+          if (refused) {
+            return { recipe: recipe.id, kit, ...agentInstallReceipt(refused, { kit, items: [] }) };
+          }
+        }
+        assertStillCurrent(invocation);
+        const proLicensed =
+          kit === 'boardui' ? await boardUiProSelectable({ cwd }, serviceDeps()) : false;
         const listed = await liveCandidates(kit, cwd, undefined, serviceDeps());
         const resolved = resolveUiKitRecipe({
           recipe,
           kit,
           candidates: listed.candidates,
-          proLicensed: license?.state === 'active',
+          proLicensed,
         });
 
         const plan = {
@@ -449,9 +556,9 @@ export function buildUiKitTools(): McpToolDef[] {
             ? {
                 licensedRoles: resolved.licensedRoles,
                 hint:
-                  'Those roles only matched BoardUI Pro items. Store the ' +
-                  'licence in Settings → UI kits to use them; the free items ' +
-                  'install without any key.',
+                  'Those roles only matched BoardUI Pro items and the licence ' +
+                  `could not be confirmed on this machine (${UI_KIT_SETTINGS_PATH}); ` +
+                  'the free items install without any key.',
               }
             : {}),
         };
@@ -459,8 +566,14 @@ export function buildUiKitTools(): McpToolDef[] {
         if (args.dryRun === true || resolved.install.length === 0) {
           return { ...plan, installed: false };
         }
+        assertStillCurrent(invocation);
         const result = await installItems(
-          { kit, items: resolved.install, cwd },
+          {
+            kit,
+            items: resolved.install,
+            cwd,
+            ...(invocation?.signal ? { signal: invocation.signal } : {}),
+          },
           serviceDeps(),
         );
         // Through the same mapper as the direct path: this response used to
@@ -468,16 +581,18 @@ export function buildUiKitTools(): McpToolDef[] {
         // recipe whose item needed a token — or a BoardUI item that became
         // gated between resolution and install — failed with the reason only
         // in free-form text.
+        const importAlias = kit === 'shadcn' ? shadcnImportAlias(cwd) : undefined;
         const receipt = agentInstallReceipt(result, {
           kit,
           items: resolved.install,
+          ...(importAlias ? { importAlias } : {}),
         });
         return {
           ...plan,
           ...receipt,
-          // The recipe's own meaning of "installed": the plan, not the
-          // mapper's echo of the requested items.
-          installed: result.ok,
+          // The recipe's own meaning of "installed": the plan ran AND wrote
+          // something. Exit code 0 with every file skipped was "installed".
+          installed: (receipt.installed as readonly string[]).length > 0,
         };
       },
     },
@@ -521,12 +636,18 @@ export function buildUiKitTools(): McpToolDef[] {
           from: { type: 'string' },
           to: { type: 'string' },
           component: { type: 'string' },
+          workspace: WORKSPACE_PROPERTY,
         },
         required: ['command'],
       },
-      handler: async (args, ctx) => {
+      handler: async (args, ctx, invocation) => {
         const command = buildRunCommand(args);
-        const cwd = cwdFor(ctx);
+        const cwd = cwdFor(ctx, args);
+        if (command.kind === 'init') {
+          const unfit = projectNotFitForKit(cwd, 'shadcn');
+          if (unfit) return { ok: false, command: 'init', ...agentInstallReceipt(unfit, { kit: 'shadcn', items: [] }) };
+        }
+        assertStillCurrent(invocation);
         // `nexus_ui_kit_source` sends callers here when an item is not cached
         // yet. If this returned the output and cached nothing, the cache would
         // never gain an entry and the offline catalog would stay empty for
@@ -550,7 +671,7 @@ export function buildUiKitTools(): McpToolDef[] {
           };
         }
         const result = await runShadcnCommand(
-          { command, cwd },
+          { command, cwd, ...(invocation?.signal ? { signal: invocation.signal } : {}) },
           serviceDeps(),
         );
         // What a DEFAULT search could not reach. The CLI takes a bounded
@@ -584,18 +705,22 @@ export function buildUiKitTools(): McpToolDef[] {
         "Call one of BoardUI's own tools: get_started, list_components, " +
         'get_component, get_usage_examples, install_components, init_boardui, ' +
         'install_rules, get_skill, install_skill, get_theme, license_status ' +
-        'and activate_license (which uses the key already stored). The key is ' +
-        "never an argument — it is injected from the operator's vault — and " +
-        'deactivate_license is the operator\'s own, in Settings.',
+        'and activate_license (which uses the key already stored, or the one ' +
+        'that ships with Nexus). The key is ' +
+        "never an argument — it is injected from the operator's vault or ships " +
+        'with Nexus — and deactivate_license is the operator\'s own, in ' +
+        `${UI_KIT_SETTINGS_PATH}. init_boardui and install_rules write the ` +
+        "vendor's agent rules into the project (AGENTS.md / .claude/skills).",
       inputSchema: {
         type: 'object',
         properties: {
           tool: { type: 'string', enum: [...BOARDUI_MCP_TOOLS] },
           args: { type: 'object', description: 'Arguments for that tool.' },
+          workspace: WORKSPACE_PROPERTY,
         },
         required: ['tool'],
       },
-      handler: async (args, ctx) => {
+      handler: async (args, ctx, invocation) => {
         const tool = requireStr(args, 'tool');
         if (tool === 'deactivate_license') {
           // Not on this surface, for the same reason as `shadcn eject` and for
@@ -610,27 +735,34 @@ export function buildUiKitTools(): McpToolDef[] {
             ok: false,
             reason: 'operator_action',
             hint:
-              'Removing the BoardUI licence is the operator\'s: Settings → UI ' +
-              'kits → Remover. It releases a vendor activation and clears the ' +
+              `Removing the BoardUI licence is the operator's: ${UI_KIT_SETTINGS_PATH} ` +
+              '→ Remover. It releases a vendor activation and clears the ' +
               'stored key together, which this surface cannot do.',
           };
         }
         // After the refusal: resolving the scope is work, and a refusal should
         // not depend on it.
-        const cwd = cwdFor(ctx);
-        if (tool === 'activate_license' || tool === 'license_status') {
-          // Never take a key from a model, and never hand one back.
-          const status = await boardUiLicenseStatus({ cwd }, serviceDeps());
-          if (tool === 'license_status') return status;
-          if (!status.stored) {
-            return {
-              ok: false,
-              reason: 'no_license_stored',
-              hint:
-                'Store the BoardUI licence in Settings → UI kits first. The ' +
-                'free items need no key.',
-            };
-          }
+        const cwd = cwdFor(ctx, args);
+        assertStillCurrent(invocation);
+        // Never take a key from a model, and never hand one back.
+        if (tool === 'license_status') {
+          // The bundled licence first, so "is Pro active?" answers for this
+          // machine as it will be at install time rather than before boot
+          // provisioning caught up.
+          provisionBundledBoardUiLicense(serviceDeps());
+          return await boardUiLicenseStatus({ cwd }, serviceDeps());
+        }
+        if (tool === 'activate_license') {
+          // The same core as the panel: a typed key activates with the
+          // vendor; the key bundled with Nexus is PROVISIONED (no seat). This
+          // used to refuse "no licence stored" whenever the vault was empty —
+          // i.e. on every machine that runs on the bundled key.
+          const activated = await activateEffectiveBoardUiLicense({ cwd }, serviceDeps());
+          return {
+            ok: activated.ok,
+            ...(activated.provisioned ? { provisioned: true } : {}),
+            ...(activated.detail ? { detail: activated.detail.slice(0, 400) } : {}),
+          };
         }
         // Same reason as the shadcn `view` above: this is where the cache
         // gains BoardUI entries, so `get_component` goes through the caching
@@ -658,7 +790,7 @@ export function buildUiKitTools(): McpToolDef[] {
         // licence from the vault), so `projectDir` and friends cannot redirect
         // an install out of this pane's execution scope.
         const result = await callBoardUiTool(
-          { tool, args: args.args, cwd },
+          { tool, args: args.args, cwd, ...(invocation?.signal ? { signal: invocation.signal } : {}) },
           serviceDeps(),
         );
         return {
@@ -681,6 +813,11 @@ function buildRunCommand(args: Record<string, unknown>): ShadcnCommand {
     case 'init':
       return {
         kind: 'init',
+        // Without a preset `init` opens selects that ignore --yes (measured on
+        // shadcn@4.22) and the run hangs until the timeout. `--defaults` is
+        // the vendor's own non-interactive answer (next template, base-nova
+        // preset) and still detects an existing project.
+        ...(str(args, 'preset') ? {} : { defaults: true }),
         ...(items.length > 0 ? { items } : {}),
         ...(str(args, 'template')
           ? { template: requireStr(args, 'template') as ShadcnTemplate }

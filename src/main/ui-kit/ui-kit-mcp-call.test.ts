@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { spawn } from 'node:child_process';
+import { spawnSync, type spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { callMcpToolOnce, mcpResultText } from './ui-kit-mcp-call';
 import { UiKitCliError } from './ui-kit-cli';
 
@@ -280,6 +281,32 @@ describe('mcpResultText', () => {
 });
 
 describe('a broken stdin pipe', () => {
+  it('survives the real Writable callback followed by its error event', () => {
+    const moduleUrl = pathToFileURL(path.resolve('src/main/ui-kit/ui-kit-mcp-call.ts')).href;
+    const source = `
+      import { EventEmitter } from 'node:events';
+      import { Writable } from 'node:stream';
+      import { callMcpToolOnce } from ${JSON.stringify(moduleUrl)};
+      const child = new EventEmitter();
+      child.stdin = new Writable({ write(chunk, encoding, done) {
+        done(new Error('callback EPIPE'));
+      }});
+      child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+      callMcpToolOnce({ kit: 'boardui', cwd: ${JSON.stringify(projectDir)},
+        method: 'tools/list', timeoutMs: 1000 },
+        { platform: 'linux', spawnProcess: () => child }).then(
+        () => process.exit(2), error => {
+          console.log(error.code);
+          setImmediate(() => process.exit(0));
+        });
+    `;
+    const result = spawnSync(process.execPath,
+      ['--import', 'tsx', '--input-type=module', '-e', source],
+      { encoding: 'utf8', timeout: 10_000, windowsHide: true });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe('WRITE_FAILED');
+  });
+
   it('rejects the call instead of throwing in the main process', async () => {
     // `Writable.write()` reports EPIPE ASYNCHRONOUSLY: it arrives on the
     // stream, not in the try/catch around the write. With no listener on
@@ -313,5 +340,85 @@ describe('a broken stdin pipe', () => {
         { spawnProcess: () => server.child, platform: 'linux' },
       ),
     ).rejects.toThrow(/EPIPE from callback/);
+  });
+});
+
+describe('malformed MCP JSON values', () => {
+  it.each([null, [], 3, 'banner'])('ignores non-message JSON %j without throwing in Main', async value => {
+    const server = fakeServer(handshake(() => {}));
+    const call = callMcpToolOnce({ ...base(), method: 'tools/list' },
+      { spawnProcess: () => server.child, platform: 'linux' });
+    void call.catch(() => {});
+    try {
+      expect(() => server.child.stdout?.emit('data', Buffer.from(`${JSON.stringify(value)}\n`))).not.toThrow();
+      server.child.stdout?.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 2,
+        result: { content: [{ type: 'text', text: 'still alive' }] } }) + '\n'));
+      expect((await call).text).toBe('still alive');
+    } finally {
+      server.child.emit('close', 0);
+      await call.catch(() => {});
+    }
+  });
+});
+
+describe('one writer per project', () => {
+  it('refuses a second writing call while the first is still running, then frees the slot', async () => {
+    // An MCP client gives up on a slow install (Codex: 120 s) and the agent
+    // retries; the first install is still writing. Two writers on one
+    // lockfile is the damage this prevents.
+    let answer: ((line: unknown) => void) | null = null;
+    const server = fakeServer(
+      handshake((message, emit) => {
+        if (message.method === 'tools/call') answer = emit;
+      }),
+    );
+    const first = callMcpToolOnce(
+      { ...base(), writes: true, method: 'tools/call', tool: 'install_components', toolArguments: { components: ['button'] } },
+      { spawnProcess: () => server.child, platform: 'linux' },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+
+    await expect(
+      callMcpToolOnce(
+        { ...base(), writes: true, method: 'tools/call', tool: 'install_components', toolArguments: { components: ['badge'] } },
+        { spawnProcess: () => fakeServer(handshake(() => {})).child, platform: 'linux' },
+      ),
+    ).rejects.toMatchObject({ code: 'PROJECT_BUSY' });
+
+    // A read does not need the slot.
+    const reader = fakeServer(
+      handshake((message, emit) => {
+        if (message.method === 'tools/call') {
+          emit({ jsonrpc: '2.0', id: 2, result: { content: [{ type: 'text', text: 'ok' }] } });
+        }
+      }),
+    );
+    await expect(
+      callMcpToolOnce(
+        { ...base(), method: 'tools/call', tool: 'license_status' },
+        { spawnProcess: () => reader.child, platform: 'linux' },
+      ),
+    ).resolves.toMatchObject({ isError: false });
+
+    (answer as unknown as (line: unknown) => void)({
+      jsonrpc: '2.0',
+      id: 2,
+      result: { content: [{ type: 'text', text: 'installed' }] },
+    });
+    await first;
+
+    const again = fakeServer(
+      handshake((message, emit) => {
+        if (message.method === 'tools/call') {
+          emit({ jsonrpc: '2.0', id: 2, result: { content: [{ type: 'text', text: 'ok' }] } });
+        }
+      }),
+    );
+    await expect(
+      callMcpToolOnce(
+        { ...base(), writes: true, method: 'tools/call', tool: 'install_components', toolArguments: { components: ['badge'] } },
+        { spawnProcess: () => again.child, platform: 'linux' },
+      ),
+    ).resolves.toMatchObject({ isError: false });
   });
 });

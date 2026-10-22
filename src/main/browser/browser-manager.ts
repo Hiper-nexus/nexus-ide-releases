@@ -75,6 +75,7 @@ import {
 import {
   assessBrowserUrl,
   browserAddressesMatchPrivatePins,
+  browserBlockedTargetHint,
   browserNetworkTargetKey,
   normalizeBrowserUrl,
   redactBrowserUrl,
@@ -85,14 +86,18 @@ import {
 import {
   browserClickResultSchema,
   browserElementDescriptorSchema,
+  browserElementRectSchema,
   browserExtractCandidatesSchema,
   browserFillResultSchema,
   browserFindResultSchema,
   browserHoverResultSchema,
+  browserInputConfirmSchema,
+  browserInputPrepareSchema,
   browserLayoutAuditSchema,
   browserPageReadResultSchema,
   browserPressResultSchema,
   browserScrollResultSchema,
+  browserSelectResultSchema,
   browserWaitResultSchema,
 } from './browser-automation-schema';
 import { renderBrowserOutline } from './browser-outline';
@@ -221,6 +226,12 @@ export interface BrowserEntry {
   errorSeq: number;
   /** seq of the last action start — `read` reports errors after this point. */
   errorWindowStart: number;
+  /** Bumped for every request of this pane's page that the policy let through. */
+  requestSeq: number;
+  /** Requests still open: Chromium request id → the requestSeq it started at. */
+  inFlightRequests: Map<number, number>;
+  /** Bumped when a tracked request ends: its response usually re-renders. */
+  requestEndSeq: number;
 }
 
 interface TrackedBrowserError extends BrowserErrorItem {
@@ -495,6 +506,12 @@ function assertEntryScope(
   }
 }
 
+/** The refusal keeps its reason and adds the route that works (P0-6). */
+function withBlockedTargetHint(kind: BrowserUrlBlockKind, reason: string, rawUrl: string): string {
+  const hint = browserBlockedTargetHint(kind, rawUrl);
+  return hint ? `${reason} — ${hint}` : reason;
+}
+
 class BrowserNavigationBlockedError extends Error {
   constructor(
     readonly kind: BrowserUrlBlockKind,
@@ -558,6 +575,30 @@ function privateAddressesOf(decision: BrowserUrlAllowed): Set<string> {
   );
 }
 
+/** Long-lived sockets never "finish": they must not hold an action's settle. */
+const UNSETTLED_RESOURCE_TYPES = new Set(['webSocket', 'media', 'ping', 'cspReport']);
+const MAX_TRACKED_REQUESTS = 512;
+
+function trackRequestStart(
+  entry: BrowserEntry,
+  details: { id?: number; webContentsId?: number; resourceType?: string },
+): void {
+  if (typeof details.id !== 'number') return;
+  if (details.webContentsId !== undefined && details.webContentsId !== entry.view.webContents?.id) return;
+  if (details.resourceType && UNSETTLED_RESOURCE_TYPES.has(details.resourceType)) return;
+  entry.requestSeq += 1;
+  entry.inFlightRequests.set(details.id, entry.requestSeq);
+  while (entry.inFlightRequests.size > MAX_TRACKED_REQUESTS) {
+    const oldest = entry.inFlightRequests.keys().next().value as number | undefined;
+    if (oldest === undefined) break;
+    entry.inFlightRequests.delete(oldest);
+  }
+}
+
+function trackRequestEnd(entry: BrowserEntry, id: number): void {
+  if (entry.inFlightRequests.delete(id)) entry.requestEndSeq += 1;
+}
+
 function configureSessionSecurity(entry: BrowserEntry): void {
   const session = entry.view.webContents.session;
   if (!securedSessions.has(session)) {
@@ -567,10 +608,19 @@ function configureSessionSecurity(entry: BrowserEntry): void {
     });
     session.setPermissionCheckHandler(() => false);
     session.setDevicePermissionHandler(() => false);
-    session.on('will-download', (event) => {
+    session.on('will-download', (event, item, webContents) => {
       // Browser automation has no download primitive. Prevent a click from
-      // writing an attacker-selected file without a dedicated confirmation.
+      // writing an attacker-selected file without a dedicated confirmation —
+      // but say so: a silent cancel read as "the button does nothing".
       event.preventDefault();
+      const owner = webContents ? browserEntryForWebContents(webContents) : null;
+      if (!owner) return;
+      const name = typeof item?.getFilename === 'function' ? item.getFilename() : '';
+      const mime = typeof item?.getMimeType === 'function' ? item.getMimeType() : '';
+      pushBrowserError(owner.entry, {
+        kind: 'load',
+        message: `download blocked (no download in automation): ${name || 'file'}${mime ? ` (${mime})` : ''}`,
+      });
     });
   }
 
@@ -603,6 +653,7 @@ function configureSessionSecurity(entry: BrowserEntry): void {
             decision.allowed &&
             allowedTargetMatchesPins(decision, approvedPrivateAddresses)
           ) {
+            trackRequestStart(entry, details);
             callback({});
             return;
           }
@@ -611,6 +662,13 @@ function configureSessionSecurity(entry: BrowserEntry): void {
             entry.loading = false;
             entry.error = `navigation blocked (${blockKind}): ${safeTargetLabel(details.url)}`;
             emitState(entry);
+          } else {
+            // A page calling its API on another local port used to fail with
+            // no trace: the agent saw an empty list and never learned why.
+            pushBrowserError(entry, {
+              kind: 'load',
+              message: `request blocked (${blockKind}): ${safeTargetLabel(details.url)}`,
+            });
           }
           callback({ cancel: true });
         })
@@ -639,10 +697,9 @@ async function prepareNavigation(
   try {
     normalized = normalizeBrowserUrl(rawUrl, { allowAboutBlank: true });
   } catch (err) {
-    throw new BrowserNavigationBlockedError(
-      'invalid-url',
-      err instanceof Error ? err.message : 'invalid browser URL',
-    );
+    const message = err instanceof Error ? err.message : 'invalid browser URL';
+    const kind: BrowserUrlBlockKind = message.includes('only allow') ? 'unsafe-scheme' : 'invalid-url';
+    throw new BrowserNavigationBlockedError(kind, withBlockedTargetHint(kind, message, rawUrl));
   }
   if (normalized === 'about:blank') return normalized;
 
@@ -672,7 +729,10 @@ async function prepareNavigation(
     }
   }
   if (!decision.allowed) {
-    throw new BrowserNavigationBlockedError(decision.kind, decision.reason);
+    throw new BrowserNavigationBlockedError(
+      decision.kind,
+      withBlockedTargetHint(decision.kind, decision.reason, rawUrl),
+    );
   }
   if (
     !allowedTargetMatchesPins(
@@ -682,7 +742,11 @@ async function prepareNavigation(
   ) {
     throw new BrowserNavigationBlockedError(
       'private-network',
-      'private target address changed; confirmation required',
+      withBlockedTargetHint(
+        'private-network',
+        'private target address changed; confirmation required',
+        rawUrl,
+      ),
     );
   }
   return decision.normalizedUrl;
@@ -866,6 +930,12 @@ async function createEntry(
         allowRunningInsecureContent: false,
         webviewTag: false,
         safeDialogs: true,
+        // A page alert/confirm/prompt blocks the renderer until someone
+        // answers; in an agent pane nobody is there, so automation hung until
+        // its timeout. Disabled dialogs answer at once: alert closes, confirm
+        // says Cancel (never an automatic "yes" to "delete?"), prompt is empty.
+        // The operator's own pane keeps native dialogs — a person answers.
+        disableDialogs: agentOwned,
         navigateOnDragDrop: false,
         spellcheck: false,
       },
@@ -900,6 +970,9 @@ async function createEntry(
     errors: [],
     errorSeq: 0,
     errorWindowStart: 0,
+    requestSeq: 0,
+    inFlightRequests: new Map(),
+    requestEndSeq: 0,
   };
   browsers.set(key, entry);
   win.contentView.addChildView(view);
@@ -1036,7 +1109,13 @@ async function createEntry(
     if (!isError || typeof message !== 'string' || !message) return;
     pushBrowserError(entry, { kind: 'console', message });
   });
+  // Settle tracking: a request the page opened is in flight until it
+  // completes or fails (cancelled by policy requests never start).
+  wc.session.webRequest.onErrorOccurred?.((details) => {
+    trackRequestEnd(entry, details.id);
+  });
   wc.session.webRequest.onCompleted((details) => {
+    trackRequestEnd(entry, details.id);
     if (details.webContentsId !== wc.id || details.statusCode < 400) return;
     pushBrowserError(entry, {
       kind: 'http',
@@ -1351,7 +1430,11 @@ export async function loadBrowser(
   if (options.read !== undefined && options.read !== false) {
     out.page = await inlinePageRead(paneId, options.scope, options.read);
   }
-  if (options.judge === true) {
+  const skipped = options.judge === true ? browserJudgeUnavailable(options.deps) : null;
+  if (skipped) {
+    out.judgment = null;
+    out.judgmentSkipped = skipped;
+  } else if (options.judge === true) {
     const readForJudge: BrowserPageReadResult =
       out.page && 'bodyText' in out.page
         ? out.page
@@ -1359,7 +1442,7 @@ export async function loadBrowser(
             maxChars: 4_000,
             maxElements: 60,
           });
-    const visual = autoBrowserVisualJudgment(paneId, options);
+    const visual = autoBrowserVisualJudgment(paneId, entry, options);
     const verdict = await judgeBrowserPage(readForJudge, errors, {
       sessionId: options.sessionId,
       missionId: options.missionId,
@@ -1487,6 +1570,91 @@ export async function captureRedactedBrowserVisual(
   return { image: decisionImage, assertCurrent };
 }
 
+/** Longest side of the image handed to the model (it downsizes past this). */
+const INLINE_IMAGE_MAX_SIDE = 1_568;
+/** Above this the inline copy is re-encoded as JPEG. */
+const INLINE_IMAGE_MAX_PNG_BYTES = 1_000_000;
+/** Chromium texture limit: a taller full page is cut and marked truncated. */
+const FULL_PAGE_MAX_CSS_PX = 16_384;
+/** One frame for prefers-color-scheme to restyle before the capture. */
+const THEME_SETTLE_MS = 150;
+
+export type BrowserScreenshotTheme = 'light' | 'dark';
+
+export interface BrowserScreenshotInlineImage {
+  data: string;
+  mimeType: 'image/png' | 'image/jpeg';
+  width: number;
+  height: number;
+}
+
+export type BrowserScreenshotCapture = BrowserScreenshotResult & {
+  fullPage?: true;
+  theme?: BrowserScreenshotTheme;
+  /** Ref of the element the capture was cropped to. */
+  element?: string;
+  /** Bounded copy for the model; only when asked and never for the personal profile. */
+  image?: BrowserScreenshotInlineImage;
+  imageOmitted?: 'personal_profile';
+};
+
+type CaptureImage = {
+  getSize(): { width: number; height: number };
+  toPNG(): Buffer;
+  toJPEG?(quality: number): Buffer;
+  resize?(options: { width?: number; height?: number; quality?: 'good' | 'better' | 'best' }): CaptureImage;
+};
+
+/**
+ * Borrows the pane's CDP session for one capture step. A debugger someone
+ * else attached (relay lease, personal profile) is used as is and left
+ * attached; one we attached is detached on every path.
+ */
+async function withBrowserDebugger<T>(
+  wc: WebContents,
+  run: (send: (method: string, params?: Record<string, unknown>) => Promise<unknown>) => Promise<T>,
+): Promise<T> {
+  const inspector = wc.debugger;
+  const owned = !inspector.isAttached();
+  if (owned) inspector.attach('1.3');
+  try {
+    return await run((method, params) => inspector.sendCommand(method, params));
+  } finally {
+    if (owned) {
+      try {
+        inspector.detach();
+      } catch {
+        // Already detached (renderer gone).
+      }
+    }
+  }
+}
+
+function inlineImageOf(image: CaptureImage): BrowserScreenshotInlineImage {
+  const size = image.getSize();
+  const longest = Math.max(size.width, size.height);
+  let bounded = image;
+  if (longest > INLINE_IMAGE_MAX_SIDE && typeof image.resize === 'function') {
+    // One side given: NativeImage keeps the aspect ratio.
+    bounded = image.resize(
+      size.width >= size.height
+        ? { width: INLINE_IMAGE_MAX_SIDE, quality: 'good' }
+        : { height: INLINE_IMAGE_MAX_SIDE, quality: 'good' },
+    );
+  }
+  const boundedSize = bounded.getSize();
+  const png = bounded.toPNG();
+  if (png.length > INLINE_IMAGE_MAX_PNG_BYTES && typeof bounded.toJPEG === 'function') {
+    return {
+      data: bounded.toJPEG(80).toString('base64'),
+      mimeType: 'image/jpeg',
+      width: boundedSize.width,
+      height: boundedSize.height,
+    };
+  }
+  return { data: png.toString('base64'), mimeType: 'image/png', ...boundedSize };
+}
+
 export async function captureBrowserScreenshot(
   paneId: string,
   scope: ProjectExecutionScope,
@@ -1495,8 +1663,16 @@ export async function captureBrowserScreenshot(
     clip?: BrowserDesignRect;
     signal?: AbortSignal;
     assertCurrentAuthority?: () => void;
+    /** Whole scrollable page, not just the viewport (CDP captureBeyondViewport). */
+    fullPage?: boolean;
+    /** Render with prefers-color-scheme for this capture only. */
+    theme?: BrowserScreenshotTheme;
+    /** Crop to this element (scrolled into view first). */
+    ref?: string;
+    /** Also return a bounded copy of the pixels for the model. */
+    includeImage?: boolean;
   } = {},
-): Promise<BrowserScreenshotResult> {
+): Promise<BrowserScreenshotCapture> {
   const assertCurrentAuthority = (): void => {
     options.assertCurrentAuthority?.();
     if (options.signal?.aborted) {
@@ -1504,6 +1680,11 @@ export async function captureBrowserScreenshot(
     }
   };
   assertCurrentAuthority();
+  // A full-page capture ignores any crop, so combined it returned the whole
+  // page labelled `element: <ref>` — evidence that says the wrong thing.
+  if (options.fullPage && (options.ref || options.clip)) {
+    throw new Error('fullPage captures the whole page; use either fullPage or ref, not both');
+  }
   const entry = withEntry(paneId, scope);
   const artifactStore = createScopedBrowserArtifactStore(
     requireBrowserRuntimeManager(),
@@ -1516,28 +1697,87 @@ export async function captureBrowserScreenshot(
   }
 
   const capturedAt = Date.now();
+  let elementClip: BrowserDesignRect | undefined;
+  if (options.ref) {
+    elementClip = browserElementRectSchema.parse(
+      await runBrowserAutomationForPane(paneId, scope, 'element_rect', { ref: options.ref }),
+    );
+    assertCurrentAuthority();
+  }
+  const requestedClip = options.clip ?? elementClip;
   // An emulated device paints only its viewSize at the view's top-left; the
   // rest of the slot is blank, so a full capture would be letterboxed.
-  const viewport = options.clip ? undefined : entry.emulatedViewport;
-  const clip = options.clip
-    ? clampScreenshotClip(options.clip, entry.view.getBounds(), {
+  const viewport = requestedClip || options.fullPage ? undefined : entry.emulatedViewport;
+  const clip = requestedClip
+    ? clampScreenshotClip(requestedClip, entry.view.getBounds(), {
         padding: ELEMENT_SHOT_PADDING,
       })
     : viewport
       ? clampScreenshotClip({ x: 0, y: 0, ...viewport }, entry.view.getBounds())
       : null;
+  if (options.ref && !clip) {
+    throw new Error('browser element is not visible in the pane; scroll it into view first');
+  }
   // F-1326: the view only paints its own bounds, so a pane smaller than the
   // emulated device yields a cut capture. ponytail: flagged, not re-rendered
   // (growing a visible view would overlap the workspace); upgrade path is an
   // offscreen capture at the emulated size.
-  const cut =
+  let cut: Pick<BrowserScreenshotResult, 'truncated' | 'capturedCss' | 'viewport'> =
     viewport && clip && (clip.width < viewport.width || clip.height < viewport.height)
       ? { truncated: true as const, capturedCss: { width: clip.width, height: clip.height }, viewport: { ...viewport } }
       : {};
-  const image = await captureWithWakeRetry(
-    () => (clip ? wc.capturePage(clip) : wc.capturePage()),
-    assertCurrentAuthority,
-  );
+  const captureViewport = (): Promise<CaptureImage> =>
+    captureWithWakeRetry(
+      () => (clip ? wc.capturePage(clip) : wc.capturePage()),
+      assertCurrentAuthority,
+    ) as Promise<CaptureImage>;
+  const captureFullPage = async (
+    send: (method: string, params?: Record<string, unknown>) => Promise<unknown>,
+  ): Promise<CaptureImage> => {
+    const metrics = (await send('Page.getLayoutMetrics')) as {
+      cssContentSize?: { width?: number; height?: number };
+      contentSize?: { width?: number; height?: number };
+    };
+    const content = metrics.cssContentSize ?? metrics.contentSize ?? {};
+    // Either side past the limit is a cut page: a wide page clipped at
+    // 16 384 px is as incomplete as a tall one, and must not pass as whole.
+    const fullWidth = Math.max(1, Math.ceil(content.width ?? 0));
+    const fullHeight = Math.max(1, Math.ceil(content.height ?? 0));
+    const width = Math.min(FULL_PAGE_MAX_CSS_PX, fullWidth);
+    const height = Math.min(FULL_PAGE_MAX_CSS_PX, fullHeight);
+    if (fullWidth > width || fullHeight > height) {
+      cut = { truncated: true as const, capturedCss: { width, height }, viewport: { width: fullWidth, height: fullHeight } };
+    }
+    assertCurrentAuthority();
+    const shot = (await send('Page.captureScreenshot', {
+      format: 'png',
+      captureBeyondViewport: true,
+      fromSurface: true,
+      clip: { x: 0, y: 0, width, height, scale: 1 },
+    })) as { data?: unknown };
+    if (typeof shot.data !== 'string' || !shot.data) throw new Error('full-page capture returned no image');
+    return nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64')) as unknown as CaptureImage;
+  };
+
+  let image: CaptureImage;
+  if (options.fullPage || options.theme) {
+    image = await withBrowserDebugger(wc, async (send) => {
+      if (options.theme) {
+        await send('Emulation.setEmulatedMedia', {
+          features: [{ name: 'prefers-color-scheme', value: options.theme }],
+        });
+      }
+      try {
+        if (options.theme) await new Promise((resolve) => setTimeout(resolve, THEME_SETTLE_MS));
+        assertCurrentAuthority();
+        return options.fullPage ? await captureFullPage(send) : await captureViewport();
+      } finally {
+        if (options.theme) await send('Emulation.setEmulatedMedia', { features: [] }).catch(() => {});
+      }
+    });
+  } else {
+    image = await captureViewport();
+  }
   assertCurrentAuthority();
   const size = image.getSize();
   if (size.width <= 0 || size.height <= 0) {
@@ -1556,6 +1796,14 @@ export async function captureBrowserScreenshot(
     capturedAt,
   });
 
+  // The personal profile carries the operator's real logins: its pixels stay
+  // on disk for the human, never inline to a model provider.
+  const inline = options.includeImage
+    ? entry.profileMode === 'personal'
+      ? { imageOmitted: 'personal_profile' as const }
+      : { image: inlineImageOf(image) }
+    : {};
+
   return {
     artifactId: artifact.id,
     projectId: artifact.projectId,
@@ -1570,6 +1818,10 @@ export async function captureBrowserScreenshot(
     title: redactBrowserLabel(wc.getTitle() || entry.title),
     capturedAt,
     ...cut,
+    ...(options.fullPage ? { fullPage: true as const } : {}),
+    ...(options.theme ? { theme: options.theme } : {}),
+    ...(options.ref ? { element: options.ref } : {}),
+    ...inline,
   };
 }
 
@@ -1719,13 +1971,20 @@ function runBrowserAutomationForPane(
 }
 
 const NAV_SETTLE_MS = 3_000;
+/** Nothing happened after the action: same-document DOM updates only. */
 const AFTER_GRACE_MS = 150;
+/** Something happened (request, navigation): it must stay quiet this long. */
+const SETTLE_QUIET_MS = 300;
+/** Ceiling for a same-document action whose requests never end (long poll). */
+const SAME_DOCUMENT_SETTLE_CAP_MS = 1_500;
+const SETTLE_TICK_MS = 25;
 
 interface BrowserBeforeState {
   url: string;
   title: string;
   navSeq: number;
   errorStartSeq: number;
+  requestSeq: number;
 }
 
 const BROWSER_ERROR_RING_MAX = 20;
@@ -1773,41 +2032,70 @@ function snapshotBrowserBefore(entry: BrowserEntry): BrowserBeforeState {
     title: redactBrowserText(wc.getTitle() || entry.title).slice(0, 512),
     navSeq: entry.navSeq,
     errorStartSeq: entry.errorSeq,
+    requestSeq: entry.requestSeq,
   };
 }
 
+/** Requests opened since the action started that are still running. */
+function requestsOpenSince(entry: BrowserEntry, sinceSeq: number): number {
+  let open = 0;
+  for (const seq of entry.inFlightRequests.values()) if (seq > sinceSeq) open += 1;
+  return open;
+}
+
 /**
- * Post-action settle + snapshot. If a main-frame navigation started at/after
- * the action (navSeq advanced), waits for did-stop-loading with a cap;
- * otherwise waits a short grace for same-document DOM updates. Everything
- * returned is redacted exactly like a page-side read.
+ * Quiescence instead of a fixed 150 ms: an action is settled when the
+ * navigation it triggered stopped loading, the requests it opened finished,
+ * and neither moved for SETTLE_QUIET_MS. With no activity at all the short
+ * grace still applies, so a plain click stays fast. Bounded either way —
+ * reading the page while the next document is half-swapped in reported the
+ * old page as the result of the click.
+ */
+async function waitForBrowserQuiescence(entry: BrowserEntry, before: BrowserBeforeState): Promise<void> {
+  const started = Date.now();
+  let lastActivityAt = started;
+  let navSeq = entry.navSeq;
+  let requestSeq = entry.requestSeq;
+  let requestEndSeq = entry.requestEndSeq;
+  let loading = entry.loading;
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_TICK_MS));
+    const now = Date.now();
+    if (entry.view.webContents?.isDestroyed?.()) return;
+    if (
+      entry.navSeq !== navSeq ||
+      entry.requestSeq !== requestSeq ||
+      entry.requestEndSeq !== requestEndSeq ||
+      entry.loading !== loading
+    ) {
+      navSeq = entry.navSeq;
+      requestSeq = entry.requestSeq;
+      requestEndSeq = entry.requestEndSeq;
+      loading = entry.loading;
+      lastActivityAt = now;
+    }
+    const navigated = entry.navSeq > before.navSeq;
+    const active = navigated || entry.requestSeq > before.requestSeq;
+    // A page that was already loading before the action is not waited for.
+    const busy = (navigated && entry.loading) || requestsOpenSince(entry, before.requestSeq) > 0;
+    const quietNeeded = active ? SETTLE_QUIET_MS : AFTER_GRACE_MS;
+    if (!busy && now - lastActivityAt >= quietNeeded) return;
+    const cap = navigated ? NAV_SETTLE_MS : SAME_DOCUMENT_SETTLE_CAP_MS;
+    if (now - started >= cap) return;
+  }
+}
+
+/**
+ * Post-action settle + snapshot: waits for quiescence (see
+ * waitForBrowserQuiescence), then describes the page. Everything returned is
+ * redacted exactly like a page-side read.
  */
 async function settleAndDescribeAfter(
   entry: BrowserEntry,
   before: BrowserBeforeState,
-  opts: { settleMs?: number } = {},
 ): Promise<{ after: BrowserAfterState; changed: BrowserChanged }> {
   const wc = entry.view.webContents;
-  if (entry.navSeq > before.navSeq) {
-    if (entry.loading) {
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(done, opts.settleMs ?? NAV_SETTLE_MS);
-        function done(): void {
-          clearTimeout(timer);
-          wc.removeListener('did-stop-loading', onStop);
-          wc.removeListener('did-fail-load', onStop);
-          resolve();
-        }
-        function onStop(): void {
-          done();
-        }
-        wc.once('did-stop-loading', onStop);
-        wc.once('did-fail-load', onStop);
-      });
-    }
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, opts.settleMs ?? AFTER_GRACE_MS));
-  }
+  await waitForBrowserQuiescence(entry, before);
   const after: BrowserAfterState = {
     url: redactPageUrl(wc.getURL() || entry.url),
     title: redactBrowserText(wc.getTitle() || entry.title).slice(0, 512),
@@ -1894,6 +2182,15 @@ function pageCacheOwner(entry: object, judgeFn: object): object {
   return owner;
 }
 
+/** Why the page judgment cannot run right now, or null when it can. */
+function browserJudgeUnavailable(deps?: BrowserActionDeps): BrowserJudgmentSkipped | null {
+  const jevEnabled = deps?.jevEnabled ?? (() => isJevSurfaceEnabled('browserTool'));
+  const jevReady = deps?.jevReady ?? (() => hasDecisionCredential('browserTool'));
+  if (!jevEnabled()) return 'surface-disabled';
+  if (!jevReady()) return 'no-credential';
+  return null;
+}
+
 /**
  * §8 Jev page judgment (opt-in): three nouls + a page-kind choice over
  * already-redacted read data. Fail-open: off, missing credential, timeout or
@@ -1907,11 +2204,8 @@ async function judgeBrowserPage(
   cacheEntry?: BrowserEntry,
 ): Promise<PageVerdict> {
   const deps = options?.deps;
-  const jevEnabled =
-    deps?.jevEnabled ?? (() => isJevSurfaceEnabled('browserTool'));
-  const jevReady = deps?.jevReady ?? (() => hasDecisionCredential('browserTool'));
-  if (!jevEnabled()) return { judgment: null, judgmentSkipped: 'surface-disabled' };
-  if (!jevReady()) return { judgment: null, judgmentSkipped: 'no-credential' };
+  const unavailable = browserJudgeUnavailable(deps);
+  if (unavailable) return { judgment: null, judgmentSkipped: unavailable };
   try {
     const judgeFn = deps?.jev ?? judge;
     const questions: Record<string, JevQuestion> = {
@@ -2061,6 +2355,7 @@ async function judgeBrowserPage(
  */
 async function autoBrowserVisualJudgment(
   paneId: string,
+  entry: BrowserEntry,
   options: BrowserActionOptions & {
     scope: ProjectExecutionScope;
     signal?: AbortSignal;
@@ -2073,6 +2368,11 @@ async function autoBrowserVisualJudgment(
   }
   if (!(deps?.jevReady ?? (() => hasDecisionCredential('browserTool')))()) {
     return undefined;
+  }
+  const inFlight = lateVisualJudgments.get(entry);
+  if (inFlight && sameBrowserDocument(inFlight, entry) && !inFlight.result) {
+    // One paid capture per document: a second judged call waits for the first.
+    return { status: 'pending' };
   }
   const work = (async (): Promise<BrowserVisualAutoJudgment | null> => {
     try {
@@ -2091,18 +2391,53 @@ async function autoBrowserVisualJudgment(
       return null;
     }
   })();
-  return (
-    (await Promise.race([
-      work,
-      new Promise<BrowserVisualAutoJudgment>((resolve) => {
-        const timer = setTimeout(
-          () => resolve({ status: 'pending' as const }),
-          BROWSER_JUDGE_BUDGET_MS,
-        );
-        timer.unref?.();
-      }),
-    ])) ?? undefined
-  );
+  const late: LateVisualJudgment = { navSeq: entry.navSeq, loadGeneration: entry.loadGeneration };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const winner = await Promise.race([
+    work.then((value) => ({ landed: true as const, value })),
+    new Promise<{ landed: false }>((resolve) => {
+      timer = setTimeout(() => resolve({ landed: false }), BROWSER_JUDGE_BUDGET_MS);
+      timer.unref?.();
+    }),
+  ]);
+  clearTimeout(timer);
+  if (winner.landed) return winner.value ?? undefined;
+  // The capture and the vision call were already paid for: keep the answer for
+  // the next judged read of this same document instead of dropping it.
+  lateVisualJudgments.set(entry, late);
+  void work.then((value) => {
+    if (lateVisualJudgments.get(entry) !== late) return;
+    if (value) late.result = value;
+    else lateVisualJudgments.delete(entry);
+  });
+  return { status: 'pending' };
+}
+
+interface LateVisualJudgment {
+  readonly navSeq: number;
+  readonly loadGeneration: number;
+  result?: BrowserVisualAutoJudgment;
+}
+const lateVisualJudgments = new WeakMap<BrowserEntry, LateVisualJudgment>();
+
+function sameBrowserDocument(
+  mark: { readonly navSeq: number; readonly loadGeneration: number },
+  entry: BrowserEntry,
+): boolean {
+  return mark.navSeq === entry.navSeq && mark.loadGeneration === entry.loadGeneration;
+}
+
+/** A late visual answer for the document still on screen, handed out once. */
+function takeLateVisualJudgment(entry: BrowserEntry): BrowserVisualAutoJudgment | undefined {
+  const late = lateVisualJudgments.get(entry);
+  if (!late) return undefined;
+  if (!sameBrowserDocument(late, entry)) {
+    lateVisualJudgments.delete(entry);
+    return undefined;
+  }
+  if (!late.result) return undefined;
+  lateVisualJudgments.delete(entry);
+  return late.result;
 }
 
 async function attachAfterAndMaybePage<R extends Record<string, unknown>>(
@@ -2117,6 +2452,7 @@ async function attachAfterAndMaybePage<R extends Record<string, unknown>>(
     errors: BrowserErrorReport;
     judgment?: BrowserPageJudgment | null;
     judgmentSkipped?: BrowserJudgmentSkipped;
+    visualJudgment?: BrowserVisualAutoJudgment;
     page?: (BrowserPageReadResult | BrowserCompactPageResult) & { paneId: string };
   }
 > {
@@ -2128,6 +2464,7 @@ async function attachAfterAndMaybePage<R extends Record<string, unknown>>(
     errors: BrowserErrorReport;
     judgment?: BrowserPageJudgment | null;
     judgmentSkipped?: BrowserJudgmentSkipped;
+    visualJudgment?: BrowserVisualAutoJudgment;
     page?: (BrowserPageReadResult | BrowserCompactPageResult) & { paneId: string };
   };
   if (options?.read !== undefined && options.read !== false) {
@@ -2137,7 +2474,12 @@ async function attachAfterAndMaybePage<R extends Record<string, unknown>>(
       options.read === true ? true : options.read,
     );
   }
-  if (options?.judge === true) {
+  const skipped = options?.judge === true ? browserJudgeUnavailable(options.deps) : null;
+  if (skipped) {
+    // No second page read for a judgment that cannot run (Jev off/no key).
+    out.judgment = null;
+    out.judgmentSkipped = skipped;
+  } else if (options?.judge === true) {
     const readForJudge: BrowserPageReadResult =
       out.page && 'bodyText' in out.page
         ? out.page
@@ -2148,6 +2490,8 @@ async function attachAfterAndMaybePage<R extends Record<string, unknown>>(
     const verdict = await judgeBrowserPage(readForJudge, errors, options, entry);
     out.judgment = verdict.judgment;
     if (verdict.judgmentSkipped) out.judgmentSkipped = verdict.judgmentSkipped;
+    const visualJudgment = takeLateVisualJudgment(entry);
+    if (visualJudgment) out.visualJudgment = visualJudgment;
   }
   return out;
 }
@@ -2172,6 +2516,7 @@ export async function readBrowserPage(
     judgmentSkipped?: BrowserJudgmentSkipped;
     judgmentReused?: boolean;
     contextSelection?: BrowserContextSelection;
+    visualJudgment?: BrowserVisualAutoJudgment;
   }
 > {
   const result = browserPageReadResultSchema.parse(
@@ -2192,6 +2537,7 @@ export async function readBrowserPage(
     judgmentSkipped?: BrowserJudgmentSkipped;
     judgmentReused?: boolean;
     contextSelection?: BrowserContextSelection;
+    visualJudgment?: BrowserVisualAutoJudgment;
   };
   if (options.judge === true || (options.focus?.trim() && options.judge !== false)) {
     const verdict = await judgeBrowserPage(result, errors, {
@@ -2208,6 +2554,8 @@ export async function readBrowserPage(
       out.contextSelection = verdict.contextSelection;
       if (verdict.contextSelection.applied) out.truncated = true;
     }
+    const visualJudgment = takeLateVisualJudgment(entry);
+    if (visualJudgment) out.visualJudgment = visualJudgment;
   }
   return out;
 }
@@ -2233,6 +2581,7 @@ export async function readBrowserPageCompact(
     judgmentSkipped?: BrowserJudgmentSkipped;
     judgmentReused?: boolean;
     contextSelection?: BrowserContextSelection;
+    visualJudgment?: BrowserVisualAutoJudgment;
   }
 > {
   const result = await readBrowserPage(paneId, scope, options);
@@ -2250,6 +2599,7 @@ export async function readBrowserPageCompact(
     ...(result.judgmentSkipped
       ? { judgmentSkipped: result.judgmentSkipped }
       : {}),
+    ...(result.visualJudgment ? { visualJudgment: result.visualJudgment } : {}),
   };
 }
 
@@ -2264,13 +2614,9 @@ export async function inspectBrowserElement(
   return { paneId, ...result };
 }
 
-function hrefPathOnly(href: string): string {
-  try {
-    return new URL(href).pathname.slice(0, 200);
-  } catch {
-    return '';
-  }
-}
+/** The action waits on the tie-break before acting; no answer → candidates. */
+const BROWSER_ACTION_TIE_BREAK_TIMEOUT_MS = 1_500;
+const BROWSER_ACTION_MAX_CANDIDATES = 10;
 
 type TextResolution =
   | {
@@ -2312,73 +2658,33 @@ async function resolveBrowserElementByText(
   ) {
     return { ok: true, match: top, resolvedBy: 'text' };
   }
-  const candidates = matches.slice(0, 5);
-  const jevEnabled = deps?.jevEnabled ?? (() => isJevSurfaceEnabled('browserTool'));
-  const jevReady = deps?.jevReady ?? (() => hasDecisionCredential('browserTool'));
-  if (candidates.length >= 2 && jevEnabled() && jevReady()) {
-    try {
-      const judgeFn = deps?.jev ?? judge;
-      const criteria: Record<string, string | null> = {};
-      for (const c of candidates) {
-        const path = c.href ? hrefPathOnly(c.href) : '';
-        criteria[c.ref] =
-          `${c.role} "${c.name}"${path ? ` → ${path}` : ''}`.slice(0, 256);
-      }
-      criteria['none'] = 'nenhum corresponde';
-      const questions: Record<string, JevQuestion> = {
-        element: {
-          type: 'choice',
-          instructions:
-            'Which element best matches the user intent text on this page? ' +
-            'Pick none if no candidate corresponds.',
-          criteria,
-        },
-      };
-      const wc = entry.view.webContents;
-      const state = {
-        intent: redactBrowserText(text).slice(0, 200),
-        pageTitle: redactBrowserText(wc.getTitle() || entry.title).slice(0, 256),
-        url: redactPageUrl(wc.getURL() || entry.url),
-      };
-      const result: JevResult | null = await judgeFn({
-        state,
-        questions,
-        timeoutMs: BROWSER_JUDGE_TIMEOUT_MS,
-        retryOnTimeout: false,
-        surface: 'browserTool',
-        sessionId: options?.sessionId,
-        missionId: options?.missionId,
-      });
-      const answer = result?.answers['element'];
-      if (result && answer && answer.type === 'choice') {
-        const record = deps?.recordDecision ?? recordJevDecision;
-        record({
-          surface: 'browserTool',
-          sessionId: options?.sessionId,
-          missionId: options?.missionId,
-          model: result.model,
-          questions: Object.keys(questions),
-          probabilities: jevAnswerProbabilities(result.answers),
-          confidence: jevAnswerConfidences(result.answers),
-          decision: answer.choice,
-          ...decisionResultUsage(result),
-        });
-        if (answer.confidence >= 0.7 && answer.choice !== 'none') {
-          const chosen = candidates.find((c) => c.ref === answer.choice);
-          if (chosen) {
-            return {
-              ok: true,
-              match: chosen,
-              resolvedBy: 'jev',
-              confidence: answer.confidence,
-            };
-          }
-        }
-      }
-    } catch {
-      // fail-open
-    }
+  // One tie-break rule for find and for click/fill: Jev is asked only with
+  // 2–5 score-tied candidates and through the first-option check (F-1626).
+  // A crowded page (6+ matches) is never cut to the first five in DOM order —
+  // the agent gets the candidates and picks a ref itself.
+  const wc = entry.view.webContents;
+  const picked = await pickBrowserFindElement(
+    matches,
+    {
+      query: text,
+      pageTitle: wc.getTitle() || entry.title,
+      url: wc.getURL() || entry.url,
+      timeoutMs: BROWSER_ACTION_TIE_BREAK_TIMEOUT_MS,
+      ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+      ...(options?.missionId !== undefined ? { missionId: options.missionId } : {}),
+    },
+    {
+      ...(deps?.jev ? { jev: deps.jev } : {}),
+      ...(deps?.jevEnabled ? { jevEnabled: deps.jevEnabled } : {}),
+      ...(deps?.jevReady ? { jevReady: deps.jevReady } : {}),
+      ...(deps?.recordDecision ? { recordDecision: deps.recordDecision } : {}),
+    },
+  );
+  const chosen = picked ? matches.find((match) => match.ref === picked.ref) : undefined;
+  if (picked && chosen) {
+    return { ok: true, match: chosen, resolvedBy: 'jev', confidence: picked.confidence };
   }
+  const candidates = matches.slice(0, BROWSER_ACTION_MAX_CANDIDATES);
   return { ok: false, candidates };
 }
 
@@ -2502,10 +2808,121 @@ async function finalizeExtract(
 
 export type BrowserActionTarget = string | { text: string };
 
+/** How an action reached the page: real input events or the DOM fallback. */
+export type BrowserInputMode = 'native' | 'synthetic';
+
+type NativeSkipReason = 'no-geometry' | 'offscreen' | 'occluded' | 'no-target' | 'not-delivered';
+
+type NativeInputOutcome =
+  | { delivered: true; element?: BrowserElementDescriptor }
+  | { delivered: false; reason?: NativeSkipReason };
+
+function canSendNativeInput(wc: WebContents): boolean {
+  return typeof (wc as { sendInputEvent?: unknown }).sendInputEvent === 'function' && !wc.isDestroyed();
+}
+
+/**
+ * Real input (F: eventos sintéticos). The preload resolves the ref, scrolls it
+ * into view and arms a probe; Main sends the events through the same input
+ * pipeline as a person (isTrusted, :hover, focus, Enter submits, Tab moves);
+ * the preload then says whether a trusted event arrived. Only when it did not
+ * — hidden pane, covered element, no geometry — does the caller fall back to
+ * the synthetic DOM sequence, so an action is never delivered twice.
+ */
+async function deliverNativeInput(
+  paneId: string,
+  scope: ProjectExecutionScope,
+  entry: BrowserEntry,
+  prepareArgs: Record<string, unknown>,
+  send: (point: { x: number; y: number } | null) => void,
+): Promise<NativeInputOutcome> {
+  const wc = entry.view.webContents;
+  const prepared = browserInputPrepareSchema.parse(
+    await runBrowserAutomationForPane(paneId, scope, 'input_prepare', prepareArgs),
+  );
+  if (prepared.token === null) return { delivered: false, reason: prepared.reason };
+  const zoom = typeof wc.getZoomFactor === 'function' ? wc.getZoomFactor() || 1 : 1;
+  const point = 'x' in prepared
+    ? { x: Math.round(prepared.x * zoom), y: Math.round(prepared.y * zoom) }
+    : null;
+  const navSeq = entry.navSeq;
+  send(point);
+  let delivered: boolean;
+  try {
+    delivered = browserInputConfirmSchema.parse(
+      await runBrowserAutomationForPane(paneId, scope, 'input_confirm', { token: prepared.token }),
+    ).delivered;
+  } catch {
+    // The input navigated the page: the old document cannot answer, and the
+    // navigation itself is the proof that it was delivered.
+    delivered = entry.navSeq !== navSeq;
+  }
+  if (!delivered) return { delivered: false, reason: 'not-delivered' };
+  return { delivered: true, ...('element' in prepared ? { element: prepared.element } : {}) };
+}
+
+async function nativePointer(
+  paneId: string,
+  scope: ProjectExecutionScope,
+  entry: BrowserEntry,
+  ref: string,
+  kind: 'click' | 'hover',
+): Promise<NativeInputOutcome> {
+  const wc = entry.view.webContents;
+  if (!canSendNativeInput(wc)) return { delivered: false };
+  return deliverNativeInput(paneId, scope, entry, { ref, kind }, (point) => {
+    if (!point) return;
+    wc.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y });
+    if (kind !== 'click') return;
+    wc.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+    wc.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+  });
+}
+
+/** Electron accelerator key codes for the named keys `press` accepts. */
+const NATIVE_KEY_CODES: Readonly<Record<string, string>> = {
+  Enter: 'Enter', Tab: 'Tab', Escape: 'Escape', Backspace: 'Backspace', Delete: 'Delete',
+  Insert: 'Insert', Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
+  ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
+  ' ': 'Space', Space: 'Space', CapsLock: 'Capslock', NumLock: 'Numlock', ScrollLock: 'Scrolllock',
+  ...Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`F${index + 1}`, `F${index + 1}`])),
+};
+const NATIVE_MODIFIERS: Readonly<Record<string, 'shift' | 'control' | 'alt' | 'meta'>> = {
+  Shift: 'shift', Control: 'control', Alt: 'alt', Meta: 'meta',
+};
+
+/** keyDown (+ the char that types or submits) + keyUp, or null → synthetic. */
+function nativeKeyPlan(key: string, modifiers: readonly string[]): {
+  keyCode: string;
+  char?: string;
+  modifiers: Array<'shift' | 'control' | 'alt' | 'meta'>;
+} | null {
+  const mapped = modifiers.map((modifier) => NATIVE_MODIFIERS[modifier]);
+  if (mapped.some((modifier) => modifier === undefined)) return null;
+  const native = mapped as Array<'shift' | 'control' | 'alt' | 'meta'>;
+  const printable = key.length === 1 && /[\x20-\x7e]/.test(key);
+  const keyCode = NATIVE_KEY_CODES[key] ?? (printable ? key : undefined);
+  if (!keyCode) return null;
+  // A shortcut (Ctrl/Alt/Meta + key) never types its character.
+  const shortcut = native.some((modifier) => modifier !== 'shift');
+  const char = shortcut
+    ? undefined
+    : key === 'Enter'
+      ? '\r'
+      : key === 'Space' || key === ' '
+        ? ' '
+        : printable
+          ? key
+          : undefined;
+  return { keyCode, ...(char !== undefined ? { char } : {}), modifiers: native };
+}
+
 export interface BrowserClickResult {
   paneId: string;
   clicked: boolean;
   element?: BrowserElementDescriptor;
+  input?: BrowserInputMode;
+  nativeSkipped?: NativeSkipReason;
   resolvedBy?: 'ref' | 'text' | 'jev';
   confidence?: number;
   ambiguous?: boolean;
@@ -2550,21 +2967,153 @@ export async function clickBrowserElement(
     confidence = resolution.confidence;
   }
   const before = snapshotBrowserBefore(entry);
-  const result = browserClickResultSchema.parse(
-    await runBrowserAutomationForPane(paneId, scope, 'click', { ref }),
-  );
+  const native = await nativePointer(paneId, scope, entry, ref, 'click');
+  const element = native.delivered && native.element
+    ? native.element
+    : native.delivered
+      ? undefined
+      : browserClickResultSchema.parse(
+          await runBrowserAutomationForPane(paneId, scope, 'click', { ref }),
+        ).element;
   return attachAfterAndMaybePage(
     entry,
     before,
     {
       paneId,
       clicked: true as const,
-      element: result.element,
+      ...(element ? { element } : {}),
+      input: (native.delivered ? 'native' : 'synthetic') as BrowserInputMode,
+      ...(!native.delivered && native.reason ? { nativeSkipped: native.reason } : {}),
       resolvedBy,
       ...(confidence !== undefined ? { confidence } : {}),
     },
     options,
   );
+}
+
+/** What to choose: a visible option label, an option value or its index. */
+export interface BrowserSelectChoice {
+  option?: string;
+  value?: string;
+  index?: number;
+}
+
+export interface BrowserSelectResult {
+  paneId: string;
+  selected: boolean;
+  via?: 'native-select' | 'aria-listbox';
+  option?: { label: string; index?: number };
+  ambiguous?: boolean;
+  candidates?: BrowserFindMatch[];
+  resolvedBy?: 'ref' | 'text' | 'jev';
+  after?: BrowserAfterState;
+  changed?: BrowserChanged;
+  errors?: BrowserErrorReport;
+  judgment?: BrowserPageJudgment | null;
+  judgmentSkipped?: BrowserJudgmentSkipped;
+  page?: (BrowserPageReadResult | BrowserCompactPageResult) & { paneId: string };
+}
+
+const ARIA_OPTION_ROLES = new Set([
+  'option', 'menuitem', 'menuitemradio', 'menuitemcheckbox', 'treeitem',
+]);
+
+/**
+ * `nexus_browser_select`: a native `<select>` is set by the page primitive
+ * (label, value or index; input + change fire). A component-kit dropdown
+ * (Radix/shadcn Select, combobox, listbox) has no `<select>`: it is opened
+ * with a real click and the option with that accessible name is clicked —
+ * one clear option only, otherwise the candidates come back and nothing else
+ * is clicked.
+ */
+export async function selectBrowserOption(
+  paneId: string,
+  scope: ProjectExecutionScope,
+  target: BrowserActionTarget,
+  choice: BrowserSelectChoice,
+  options?: BrowserActionOptions,
+): Promise<BrowserSelectResult> {
+  const entry = withEntry(paneId, scope);
+  let ref: string;
+  let resolvedBy: 'ref' | 'text' | 'jev' = 'ref';
+  if (typeof target === 'string') {
+    ref = target;
+  } else {
+    const resolution = await resolveBrowserElementByText(entry, scope, target.text, options);
+    if (!resolution.ok) {
+      return { paneId, selected: false, ambiguous: true, candidates: resolution.candidates };
+    }
+    ref = resolution.match.ref;
+    resolvedBy = resolution.resolvedBy;
+  }
+  const before = snapshotBrowserBefore(entry);
+  try {
+    const result = browserSelectResultSchema.parse(
+      await runBrowserAutomationForPane(paneId, scope, 'select', { ref, ...choice }),
+    );
+    return attachAfterAndMaybePage(
+      entry,
+      before,
+      { paneId, selected: true, via: 'native-select' as const, option: result.option, resolvedBy },
+      options,
+    );
+  } catch (error) {
+    if (!(error instanceof Error) || !/not a native select/.test(error.message)) throw error;
+  }
+  if (typeof choice.option !== 'string' || !choice.option.trim()) {
+    throw new Error('a component dropdown is chosen by its option label (option), not value/index');
+  }
+  // Open it like a person, then look for the option it rendered.
+  await clickBrowserElement(paneId, scope, ref);
+  const find = options?.deps?.find ?? findBrowserElements;
+  const { matches } = await find(paneId, scope, { text: choice.option, limit: 25 });
+  const pool = matches.filter((match) => ARIA_OPTION_ROLES.has(match.role));
+  const exact = pool.filter((match) => match.score >= 1);
+  const pick = exact.length === 1 ? exact[0] : pool.length === 1 && pool[0]!.score >= 0.75 ? pool[0] : undefined;
+  if (!pick) {
+    return {
+      paneId,
+      selected: false,
+      ambiguous: pool.length > 1,
+      candidates: pool.slice(0, BROWSER_ACTION_MAX_CANDIDATES),
+      resolvedBy,
+    };
+  }
+  await clickBrowserElement(paneId, scope, pick.ref);
+  return attachAfterAndMaybePage(
+    entry,
+    before,
+    { paneId, selected: true, via: 'aria-listbox' as const, option: { label: pick.name }, resolvedBy },
+    options,
+  );
+}
+
+export type BrowserHistoryAction = 'back' | 'forward' | 'reload';
+
+/**
+ * `back` / `forward` / `reload` for the agent, with the same after/changed/
+ * errors contract as any action. History only revisits pages this pane already
+ * loaded; network fetches still pass the session's request policy. A pane
+ * locked to one exact review URL never walks away from it.
+ */
+export async function historyBrowserPane(
+  paneId: string,
+  scope: ProjectExecutionScope,
+  action: BrowserHistoryAction,
+  options?: BrowserActionOptions,
+): Promise<Record<string, unknown> & { paneId: string; navigated: boolean }> {
+  const entry = withEntry(paneId, scope);
+  const wc = entry.view.webContents;
+  if (entry.exactNavigationLock && action !== 'reload') {
+    throw new Error('automated design-review browser is locked to its approved local preview URL');
+  }
+  const can = action === 'back' ? wc.canGoBack() : action === 'forward' ? wc.canGoForward() : true;
+  if (!can) return { paneId, navigated: false, action, reason: 'no-history' };
+  const before = snapshotBrowserBefore(entry);
+  if (action === 'back') wc.goBack();
+  else if (action === 'forward') wc.goForward();
+  else wc.reload();
+  return attachAfterAndMaybePage(entry, before, { paneId, navigated: true, action }, options);
 }
 
 export interface BrowserFillResult {
@@ -2748,6 +3297,7 @@ export async function pressBrowserKey(
   pressed: true;
   key: string;
   ref?: string;
+  input?: BrowserInputMode;
   after: BrowserAfterState;
   changed: BrowserChanged;
   errors: BrowserErrorReport;
@@ -2766,6 +3316,40 @@ export async function pressBrowserKey(
     }
   };
   assertCurrent();
+  const wc = entry.view.webContents;
+  const plan = (options.holdMs ?? 0) === 0 && canSendNativeInput(wc)
+    ? nativeKeyPlan(options.key, options.modifiers ?? [])
+    : null;
+  if (plan) {
+    const native = await deliverNativeInput(
+      paneId, scope, entry, { kind: 'key', ...(options.ref ? { ref: options.ref } : {}) },
+      () => {
+        assertCurrent();
+        wc.sendInputEvent({ type: 'keyDown', keyCode: plan.keyCode, modifiers: plan.modifiers });
+        if (plan.char !== undefined) {
+          wc.sendInputEvent({ type: 'char', keyCode: plan.char, modifiers: plan.modifiers });
+        }
+        wc.sendInputEvent({ type: 'keyUp', keyCode: plan.keyCode, modifiers: plan.modifiers });
+      },
+    );
+    if (native.delivered) {
+      assertCurrent();
+      const after = await attachAfterAndMaybePage(
+        entry,
+        before,
+        {
+          paneId,
+          pressed: true as const,
+          key: options.key,
+          ...(options.ref ? { ref: options.ref } : {}),
+          input: 'native' as BrowserInputMode,
+        },
+        options,
+      );
+      assertCurrent();
+      return after;
+    }
+  }
   const result = browserPressResultSchema.parse(
     await runBrowserAutomation(paneId, entry.view.webContents, 'press', {
       key: options.key,
@@ -2780,7 +3364,7 @@ export async function pressBrowserKey(
   const after = await attachAfterAndMaybePage(
     entry,
     before,
-    { paneId, ...result },
+    { paneId, ...result, input: 'synthetic' as BrowserInputMode },
     options,
   );
   assertCurrent();
@@ -2796,6 +3380,7 @@ export async function hoverBrowserElement(
   paneId: string;
   hovered: true;
   element: BrowserElementDescriptor;
+  input?: BrowserInputMode;
   after: BrowserAfterState;
   changed: BrowserChanged;
   errors: BrowserErrorReport;
@@ -2805,13 +3390,22 @@ export async function hoverBrowserElement(
 }> {
   const entry = withEntry(paneId, scope);
   const before = snapshotBrowserBefore(entry);
+  const native = await nativePointer(paneId, scope, entry, ref, 'hover');
+  if (native.delivered && native.element) {
+    return attachAfterAndMaybePage(
+      entry,
+      before,
+      { paneId, hovered: true as const, element: native.element, input: 'native' as BrowserInputMode },
+      options,
+    );
+  }
   const result = browserHoverResultSchema.parse(
     await runBrowserAutomationForPane(paneId, scope, 'hover', { ref }),
   );
   return attachAfterAndMaybePage(
     entry,
     before,
-    { paneId, ...result },
+    { paneId, ...result, input: 'synthetic' as BrowserInputMode },
     options,
   );
 }

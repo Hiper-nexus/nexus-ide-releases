@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type fs from 'node:fs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   assertPathStaysInProject,
+  claimUiKitProjectWrite,
   assertSafeEnvName,
   isAlreadyGoneKillError,
   UI_KIT_DEFAULT_NPM_REGISTRY,
@@ -9,6 +12,8 @@ import {
   assertSafeUiKitCwd,
   buildUiKitChildEnv,
   resolveNpxCommand,
+  resolveUiKitNpxLaunch,
+  runUiKitCli,
   UiKitCliError,
   UI_KIT_MAX_ARGS,
   UI_KIT_PACKAGES,
@@ -23,6 +28,16 @@ function statsFor(kind: 'dir' | 'file' | 'symlink'): fs.Stats {
 }
 
 describe('buildUiKitChildEnv', () => {
+  it('switches the vendors analytics off, and nothing can switch it back on', () => {
+    const env = buildUiKitChildEnv(
+      { DO_NOT_TRACK: '0', BOARDUI_TELEMETRY_DISABLED: '0' },
+      {},
+    );
+
+    expect(env.DO_NOT_TRACK).toBe('1');
+    expect(env.BOARDUI_TELEMETRY_DISABLED).toBe('1');
+  });
+
   it('forwards only allowlisted keys and never a provider secret', () => {
     const env = buildUiKitChildEnv({
       PATH: '/usr/bin',
@@ -177,6 +192,20 @@ describe('assertSafeUiKitCwd', () => {
     ).toThrow(/node_modules is a symlink/);
   });
 
+  it('names the way out for a Nexus worktree on Linux/Windows (F-1535)', () => {
+    try {
+      assertSafeUiKitCwd('/worktrees/feature', {
+        writes: true,
+        statSync: () => statsFor('dir'),
+        lstatSync: () => statsFor('symlink'),
+      });
+      throw new Error('expected a refusal');
+    } catch (error) {
+      expect((error as UiKitCliError).hint).toMatch(/remove the node_modules link \(the link only/);
+      expect((error as UiKitCliError).hint).toMatch(/npm ci/);
+    }
+  });
+
   it('allows a writing run when node_modules is a real directory', () => {
     expect(
       assertSafeUiKitCwd('/projects/app', {
@@ -216,6 +245,42 @@ describe('resolveNpxCommand', () => {
   });
 });
 
+describe('resolveUiKitNpxLaunch', () => {
+  it('uses a real Node with the npm entrypoint when the npm prefix is separate', () => {
+    const files = new Set([
+      'C:\\npm prefix\\npx.cmd',
+      'C:\\npm prefix\\node_modules\\npm\\bin\\npx-cli.js',
+      'C:\\Node runtime\\node.exe',
+    ]);
+    expect(resolveUiKitNpxLaunch({ platform: 'win32',
+      pathString: 'C:\\npm prefix;C:\\Node runtime', exists: file => files.has(file) }))
+      .toEqual({ command: 'C:\\Node runtime\\node.exe',
+        argsPrefix: ['C:\\npm prefix\\node_modules\\npm\\bin\\npx-cli.js'] });
+  });
+
+  it('supports npm installed in a local node_modules/.bin', () => {
+    const files = new Set(['C:\\tools\\node_modules\\.bin\\npx.cmd',
+      'C:\\tools\\node_modules\\npm\\bin\\npx-cli.js', 'C:\\node\\node.exe']);
+    expect(resolveUiKitNpxLaunch({ platform: 'win32',
+      pathString: 'C:\\tools\\node_modules\\.bin;C:\\node', exists: file => files.has(file) }))
+      .toEqual({ command: 'C:\\node\\node.exe',
+        argsPrefix: ['C:\\tools\\node_modules\\npm\\bin\\npx-cli.js'] });
+  });
+
+  it('refuses an unresolved batch launcher rather than enabling a shell', () => {
+    expect(() => resolveUiKitNpxLaunch({ platform: 'win32',
+      pathString: 'C:\\missing', exists: () => false })).toThrow(UiKitCliError);
+  });
+
+  it('keeps native launchers and POSIX npx directly executable', () => {
+    expect(resolveUiKitNpxLaunch({ platform: 'linux' }))
+      .toEqual({ command: 'npx', argsPrefix: [] });
+    expect(resolveUiKitNpxLaunch({ platform: 'win32', pathString: 'C:\\node',
+      exists: file => file === 'C:\\node\\npx.exe' }))
+      .toEqual({ command: 'C:\\node\\npx.exe', argsPrefix: [] });
+  });
+});
+
 describe('UI_KIT_PACKAGES', () => {
   it('names both vendor packages', () => {
     expect(UI_KIT_PACKAGES.shadcn).toBe('shadcn@latest');
@@ -238,15 +303,19 @@ describe('isAlreadyGoneKillError', () => {
 describe('assertPathStaysInProject', () => {
   /** `links` are symlinks: name -> raw link text. `real` are plain entries. */
   function stub(links: Record<string, string>, real: readonly string[]) {
+    // Production walks native absolute paths; the fixture must use those too
+    // or its POSIX-only keys silently hide every link on Windows.
+    const nativeLinks = new Map(Object.entries(links).map(([name, value]) => [path.resolve(name), value]));
+    const nativeReal = new Set(real.map(name => path.resolve(name)));
     return {
-      realpathSync: (target: string) => target,
+      realpathSync: (target: string) => path.resolve(target),
       lstatSync: (target: string) => {
-        if (target in links) return { isSymbolicLink: () => true };
-        if (real.includes(target)) return { isSymbolicLink: () => false };
+        if (nativeLinks.has(target)) return { isSymbolicLink: () => true };
+        if (nativeReal.has(target)) return { isSymbolicLink: () => false };
         throw new Error('ENOENT');
       },
       readlinkSync: (target: string) => {
-        const value = links[target];
+        const value = nativeLinks.get(target);
         if (value === undefined) throw new Error('EINVAL');
         return value;
       },
@@ -387,5 +456,75 @@ describe('assertPathStaysInProject', () => {
         },
       }),
     ).toThrow(/does not resolve/);
+  });
+});
+
+describe('claimUiKitProjectWrite', () => {
+  it('holds one writer per project and names how long the first has run', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ui-kit-slot-'));
+    try {
+      const release = claimUiKitProjectWrite(dir, 1_000);
+      expect(() => claimUiKitProjectWrite(dir, 31_000)).toThrow(/started 30 s ago/);
+      try {
+        claimUiKitProjectWrite(dir, 31_000);
+      } catch (error) {
+        expect((error as UiKitCliError).code).toBe('PROJECT_BUSY');
+        expect((error as UiKitCliError).hint).toMatch(/retry only what is missing/);
+      }
+      release();
+      release(); // idempotent
+      const again = claimUiKitProjectWrite(dir, 40_000);
+      again();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps two projects independent', () => {
+    const a = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ui-kit-slot-a-'));
+    const b = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ui-kit-slot-b-'));
+    try {
+      const releaseA = claimUiKitProjectWrite(a);
+      const releaseB = claimUiKitProjectWrite(b);
+      releaseA();
+      releaseB();
+    } finally {
+      fs.rmSync(a, { recursive: true, force: true });
+      fs.rmSync(b, { recursive: true, force: true });
+    }
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('runUiKitCli keeps output past 64 KiB', () => {
+  // Both vendor CLIs console.log their JSON and then process.exit(). On a
+  // pipe Node writes asynchronously and the exit drops what has not drained:
+  // `view dashboard-01` (77 KB) and a 200-item search arrived cut at exactly
+  // 65 536 bytes (measured 22/10/2026). The fake npx reproduces that exit.
+  it('returns the whole JSON a child printed right before exiting', async () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ui-kit-bigout-'));
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ui-kit-bigout-proj-'));
+    const previousPath = process.env.PATH;
+    try {
+      const npx = path.join(fixture, 'npx');
+      fs.writeFileSync(
+        npx,
+        '#!/usr/bin/env node\n' +
+          "const items = Array.from({ length: 3000 }, (_, i) => ({ name: 'item-' + i, pad: 'x'.repeat(40) }));\n" +
+          'console.log(JSON.stringify({ items }));\n' +
+          'process.exit(0);\n',
+        { mode: 0o755 },
+      );
+      process.env.PATH = `${fixture}${path.delimiter}${path.dirname(process.execPath)}${path.delimiter}${previousPath ?? ''}`;
+
+      const result = await runUiKitCli({ kit: 'shadcn', cwd: project, args: ['search', '@shadcn', '--json'] });
+
+      expect(result.code).toBe(0);
+      expect(Buffer.byteLength(result.stdout)).toBeGreaterThan(65_536);
+      expect(JSON.parse(result.stdout).items).toHaveLength(3000);
+    } finally {
+      process.env.PATH = previousPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+      fs.rmSync(project, { recursive: true, force: true });
+    }
   });
 });

@@ -15,6 +15,9 @@ function elementLine(element: BrowserElementDescriptor): string {
   if (element.disabled) flags.push('disabled');
   else if (element.editable) flags.push('editable');
   if (element.checked === true) flags.push('checked');
+  if (element.invalid) flags.push('invalid');
+  if (element.expanded === true) flags.push('expanded');
+  if (element.selected === true) flags.push('selected');
   if (flags.length) bits.push(`(${flags.join(', ')})`);
   return bits.join(' ');
 }
@@ -46,6 +49,15 @@ export function renderBrowserOutline(
         Math.min(Math.max(heading.level - 1, 0), MAX_HEADING_INDENT),
       );
       lines.push(`${indent}${heading.text}`);
+    }
+  }
+
+  // Alerts ride before the element list: a long page must not truncate the
+  // one line that says the form was refused.
+  if (read.alerts.length) {
+    lines.push('', '## alertas');
+    for (const alert of read.alerts) {
+      lines.push(`${alert.ref ? `[${alert.ref}] ` : ''}${alert.role}: ${alert.text}`);
     }
   }
 

@@ -181,6 +181,12 @@ export interface UiKitLicenseView {
    * say "sem chave".
    */
   readonly operatorKey?: boolean;
+  /**
+   * Where the answer came from: the licence file the Nexus put on this machine
+   * (`nexus-file`, no vendor call) or the vendor's own `license_status`.
+   */
+  readonly source?: 'nexus-file' | 'vendor';
+  /** The vendor's own words, for the panel's details — never the headline. */
   readonly detail?: string;
 }
 
@@ -197,6 +203,8 @@ export interface UiKitKnownRegistryView {
 export interface UiKitStatusView {
   /** Absent when no project is open: nothing can be installed. */
   readonly workspaceOpen: boolean;
+  /** The open project's folder name, so the panel says WHERE it installs. */
+  readonly workspaceName?: string;
   readonly license: UiKitLicenseView;
   readonly registries: readonly UiKitRegistryView[];
   /** Vendors whose registry shape ships with Nexus; the token never does. */
@@ -249,6 +257,39 @@ export interface UiKitInstallView {
    */
   readonly licenseState?: 'active' | 'absent' | 'unknown';
   readonly missingRegistryKeys?: readonly string[];
+  /** What the vendor reported writing and leaving untouched. */
+  readonly files?: UiKitInstallFilesView;
+  /**
+   * The run succeeded and wrote NOTHING: every file already existed. "Instalado"
+   * would be the lie the review found.
+   */
+  readonly nothingWritten?: boolean;
+  /** A refusal Main made before running anything, by stable code. */
+  readonly refusal?: UiKitRefusalCode;
+  /** Something that may break after a successful install, said in advance. */
+  readonly warning?: string;
+  /** A dry run: `installed` lists what WOULD be installed. */
+  readonly preview?: boolean;
   readonly output?: string;
   readonly error?: string;
 }
+
+export type UiKitRefusalCode =
+  | 'components_json_missing'
+  | 'project_busy'
+  | 'framework_unsupported';
+
+export interface UiKitInstallFilesView {
+  readonly created: readonly string[];
+  readonly updated: readonly string[];
+  readonly skipped: readonly string[];
+  /** BoardUI reports counts, not paths. */
+  readonly writtenCount?: number;
+  readonly skippedCount?: number;
+}
+
+/**
+ * Where the operator finds the kits panel, for every message that sends them
+ * there. "Settings → UI kits" named a place that does not exist in the app.
+ */
+export const UI_KIT_SETTINGS_PATH = 'Configurações › Biblioteca › Kits de UI';

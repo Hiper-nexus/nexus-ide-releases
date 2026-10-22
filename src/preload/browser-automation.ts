@@ -101,27 +101,71 @@ function finiteClampInt(
     ? Math.min(max, Math.max(min, Math.round(value)))
     : fallback;
 }
+/** Open shadow roots + same-origin frames searched per read (with the document). */
+const MAX_SEARCH_ROOTS = 64;
+/** Elements inspected while discovering shadow hosts and frames. */
+const MAX_HOST_SCAN = 20_000;
+/** Coalescing window after a DOM mutation before re-checking a wait. */
 const POLL_MS = 50;
+/** Slow tick for changes no mutation reports (layout-only, media queries). */
+const WAIT_FALLBACK_TICK_MS = 500;
+/** How long input_confirm waits for the trusted event of a native input. */
+const INPUT_CONFIRM_WAIT_MS = 300;
+/** An armed probe nobody confirmed is dropped after this. */
+const INPUT_PROBE_TTL_MS = 5_000;
 const ELEMENT_REF_PATTERN = /^e[1-9]\d{0,7}$/;
 const DESIGN_GENERATION_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type BrowserDomWindow = Window & typeof globalThis;
 
+// The ARIA widget roles below are what component kits (Radix, shadcn, MUI,
+// Headless UI) render instead of native controls: a menu opens into
+// `menuitem`s, a tab strip is `tab`s, a toggle is a `switch`. Without them
+// the agent could open a dropdown and then not see a single item in it.
+// `tabindex="-1"` is only programmatic focus (menu/dialog containers) and is
+// left out; a real widget inside one still matches by its role.
 const INTERACTIVE_SELECTOR = [
   'a[href]',
   'button',
   'input:not([type="hidden"])',
   'textarea',
   'select',
+  'option',
   'summary',
   '[role="button"]',
   '[role="link"]',
   '[role="checkbox"]',
   '[role="radio"]',
   '[role="textbox"]',
+  '[role="searchbox"]',
+  '[role="menuitem"]',
+  '[role="menuitemcheckbox"]',
+  '[role="menuitemradio"]',
+  '[role="option"]',
+  '[role="tab"]',
+  '[role="switch"]',
+  '[role="combobox"]',
+  '[role="slider"]',
+  '[role="spinbutton"]',
+  '[role="treeitem"]',
+  '[tabindex]:not([tabindex="-1"])',
   '[contenteditable="true"]',
+  '[contenteditable=""]',
+  '[contenteditable="plaintext-only"]',
 ].join(',');
+
+/**
+ * A native `<option>` of a collapsed dropdown is not something to click: the
+ * popup is drawn by the browser, outside the DOM. Those options are reached
+ * through `select`; only options of an always-open list box are elements.
+ */
+function isCollapsedSelectOption(element: Element): boolean {
+  if (element.tagName.toLowerCase() !== 'option') return false;
+  const select = element.closest('select') as HTMLSelectElement | null;
+  if (!select) return true;
+  return !select.multiple && (select.size ?? 0) <= 1;
+}
 
 const SKIP_TEXT_SELECTOR = [
   'script',
@@ -166,8 +210,9 @@ function textLines(win: BrowserDomWindow, element: Element): string[] {
   const walk = (node: Node): void => {
     for (const child of node.childNodes) {
       if (child.nodeType === win.Node.TEXT_NODE) out += child.textContent ?? '';
-      else if (child instanceof win.Element) {
-        if (child.tagName === 'BR') out += '\n';
+      // nodeType, not instanceof: an iframe element belongs to another realm.
+      else if (child.nodeType === 1) {
+        if ((child as Element).tagName === 'BR') out += '\n';
         else walk(child);
       }
     }
@@ -196,33 +241,65 @@ function elementHasSensitiveMarker(element: Element): boolean {
   return isSensitiveBrowserMarker(marker);
 }
 
+/**
+ * The parent in the flattened tree: the light-DOM parent, the host of a shadow
+ * root, or the `<iframe>` that holds this document. Visibility and sensitivity
+ * must cross those boundaries — a password widget inside a component, or a
+ * shadow tree under a `display:none` host, is still what its host says it is.
+ */
+function composedParent(element: Element): Element | null {
+  if (element.parentElement) return element.parentElement;
+  const parent = element.parentNode;
+  if (!parent) return null;
+  if (parent.nodeType === 11) return (parent as ShadowRoot).host ?? null;
+  if (parent.nodeType === 9) {
+    try {
+      return ((parent as Document).defaultView?.frameElement as Element | null) ?? null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 export function isSensitiveTree(element: Element): boolean {
   let current: Element | null = element;
   for (let depth = 0; current && depth < 4; depth += 1) {
     if (elementHasSensitiveMarker(current)) return true;
-    current = current.parentElement;
+    current = composedParent(current);
   }
   return false;
 }
 
+const VISIBILITY_STYLE_DEPTH = 16;
+
 function isElementVisible(win: BrowserDomWindow, element: Element): boolean {
   if (!element.isConnected) return false;
-  if (element.closest(SKIP_TEXT_SELECTOR)) return false;
+  // A detached iframe keeps its document object but no window.
+  if (!element.ownerDocument.defaultView) return false;
   let current: Element | null = element;
-  for (let depth = 0; current && depth < 12; depth += 1) {
-    try {
-      const style = win.getComputedStyle(current);
-      if (
-        style.display === 'none' ||
-        style.visibility === 'hidden' ||
-        style.visibility === 'collapse'
-      ) {
-        return false;
+  let segmentStart = true;
+  for (let depth = 0; current && depth < 64; depth += 1) {
+    // closest() stops at a shadow or frame boundary; re-check each segment.
+    if (segmentStart && current.closest(SKIP_TEXT_SELECTOR)) return false;
+    if (depth < VISIBILITY_STYLE_DEPTH) {
+      try {
+        const styleWin = (current.ownerDocument.defaultView ?? win) as BrowserDomWindow;
+        const style = styleWin.getComputedStyle(current);
+        if (
+          style.display === 'none' ||
+          style.visibility === 'hidden' ||
+          style.visibility === 'collapse'
+        ) {
+          return false;
+        }
+      } catch {
+        // Cross-browser SVG/style edge: attributes above still provide a safe floor.
       }
-    } catch {
-      // Cross-browser SVG/style edge: attributes above still provide a safe floor.
     }
-    current = current.parentElement;
+    const next = composedParent(current);
+    segmentStart = next !== null && next !== current.parentElement;
+    current = next;
   }
   return true;
 }
@@ -245,7 +322,11 @@ function collectVisibleText(win: BrowserDomWindow, root: Node, maxChars: number)
       truncated = true;
       break;
     }
-    const parent = walker.currentNode.parentElement;
+    const textNode = walker.currentNode;
+    // Text directly under a shadow root has no parent element: use the host.
+    const parent =
+      textNode.parentElement ??
+      (textNode.parentNode?.nodeType === 11 ? (textNode.parentNode as ShadowRoot).host : null);
     if (!parent || !isElementVisible(win, parent) || isSensitiveTree(parent)) continue;
     const text = normalizedText(walker.currentNode.nodeValue ?? '');
     if (!text) continue;
@@ -268,6 +349,11 @@ function collectVisibleText(win: BrowserDomWindow, root: Node, maxChars: number)
   };
 }
 
+function isContentEditableHost(element: Element): boolean {
+  const value = element.getAttribute('contenteditable');
+  return value === 'true' || value === '' || value === 'plaintext-only';
+}
+
 function implicitRole(element: Element): string {
   const explicit = normalizedText(element.getAttribute('role') ?? '');
   if (explicit) return explicit.toLowerCase();
@@ -283,7 +369,7 @@ function implicitRole(element: Element): string {
     if (type === 'button' || type === 'submit' || type === 'reset') return 'button';
     return 'textbox';
   }
-  if (element.getAttribute('contenteditable') === 'true') return 'textbox';
+  if (isContentEditableHost(element)) return 'textbox';
   return tag;
 }
 
@@ -293,10 +379,15 @@ function elementName(win: BrowserDomWindow, element: Element): string {
 
   const labelledBy = element.getAttribute('aria-labelledby');
   if (labelledBy) {
+    // ids resolve in the element's own tree (a shadow root has its own ids).
+    const scope = element.getRootNode() as Document | ShadowRoot;
+    const byId = (id: string): Element | null =>
+      (typeof scope.getElementById === 'function' ? scope.getElementById(id) : null) ??
+      element.ownerDocument.getElementById(id);
     const text = labelledBy
       .split(/\s+/)
       .slice(0, 8)
-      .map((id) => element.ownerDocument.getElementById(id)?.textContent ?? '')
+      .map((id) => byId(id)?.textContent ?? '')
       .join(' ');
     if (normalizedText(text)) {
       return redactBrowserText(normalizedText(text)).slice(0, MAX_NAME_CHARS);
@@ -355,6 +446,8 @@ export interface BrowserAutomationOptions {
   evalInMainWorld?: MainWorldEvaluator;
   /** Test-only native-event oracle; production deliberately leaves this unset. */
   isTrustedDesignEvent?: (event: Event) => boolean;
+  /** Test-only oracle for the native input probe; production reads isTrusted. */
+  isTrustedInputEvent?: (event: Event) => boolean;
 }
 
 export function createBrowserAutomation(
@@ -391,7 +484,7 @@ export function createBrowserAutomation(
       throw new Error('invalid browser element reference');
     }
     const element = references.get(raw);
-    if (!element || !element.isConnected) {
+    if (!element || !element.isConnected || !element.ownerDocument.defaultView) {
       references.delete(raw);
       throw new Error('browser element reference is stale; read the page again');
     }
@@ -432,30 +525,139 @@ export function createBrowserAutomation(
     }
     if (tag === 'input' && (type === 'checkbox' || type === 'radio')) {
       descriptor.checked = (element as HTMLInputElement).checked;
+    } else {
+      // ARIA widgets (switch, menuitemcheckbox, custom checkbox) carry their
+      // state in aria-checked instead of a native input.
+      const ariaChecked = element.getAttribute('aria-checked');
+      if (ariaChecked === 'true' || ariaChecked === 'false') {
+        descriptor.checked = ariaChecked === 'true';
+      }
+    }
+    if (element.getAttribute('aria-invalid') === 'true') descriptor.invalid = true;
+    const ariaExpanded = element.getAttribute('aria-expanded');
+    if (ariaExpanded === 'true' || ariaExpanded === 'false') {
+      descriptor.expanded = ariaExpanded === 'true';
+    }
+    const ariaSelected = element.getAttribute('aria-selected');
+    if (ariaSelected === 'true' || ariaSelected === 'false') {
+      descriptor.selected = ariaSelected === 'true';
+    } else if (tag === 'option') {
+      descriptor.selected = (element as HTMLOptionElement).selected;
     }
     if (
       (tag === 'input' && !NON_EDITABLE_INPUT_TYPES.has(type)) ||
       tag === 'textarea' ||
-      element.getAttribute('contenteditable') === 'true'
+      isContentEditableHost(element)
     ) {
       descriptor.editable = !isSensitiveTree(element);
     }
     return descriptor;
   }
 
+  /**
+   * Every tree the agent can act in: the document, each OPEN shadow root and
+   * each visible same-origin frame (recursively). Closed shadow roots and
+   * cross-origin frames stay invisible by construction. Bounded so a page of
+   * thousands of components cannot stall a read.
+   */
+  function searchRoots(): Array<Document | ShadowRoot> {
+    const roots: Array<Document | ShadowRoot> = [];
+    const pending: Array<Document | ShadowRoot> = [win.document];
+    let scanned = 0;
+    while (pending.length > 0 && roots.length < MAX_SEARCH_ROOTS) {
+      const root = pending.shift()!;
+      roots.push(root);
+      for (const element of root.querySelectorAll('*')) {
+        scanned += 1;
+        if (scanned > MAX_HOST_SCAN) return roots;
+        const shadow = (element as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+        if (shadow) pending.push(shadow);
+        if (element.tagName === 'IFRAME' || element.tagName === 'FRAME') {
+          let frameDocument: Document | null = null;
+          try {
+            frameDocument = (element as HTMLIFrameElement).contentDocument;
+          } catch {
+            frameDocument = null; // cross-origin
+          }
+          if (frameDocument?.documentElement && isElementVisible(win, element)) {
+            pending.push(frameDocument);
+          }
+        }
+      }
+    }
+    return roots;
+  }
+
+  function queryAllDeep(selector: string, roots = searchRoots()): Element[] {
+    return roots.flatMap((root) => [...root.querySelectorAll(selector)]);
+  }
+
+  /** Visible text of the page and of every searchable shadow root / frame. */
+  function visiblePageText(maxChars: number, roots = searchRoots()): { text: string; truncated: boolean } {
+    const parts: string[] = [];
+    let used = 0;
+    let truncated = false;
+    for (const root of roots) {
+      const node = root.nodeType === 9 ? (root as Document).body : root;
+      if (!node) continue;
+      const remaining = maxChars - used;
+      if (remaining <= 0) {
+        truncated = true;
+        break;
+      }
+      const piece = collectVisibleText(win, node, remaining);
+      if (piece.truncated) truncated = true;
+      if (!piece.text) continue;
+      parts.push(piece.text);
+      used += piece.text.length + 1;
+    }
+    return { text: parts.join(' ').slice(0, maxChars), truncated };
+  }
+
+  /** Focus inside shadow roots and same-origin frames, not just their host. */
+  function deepActiveElement(): Element | null {
+    let active: Element | null = win.document.activeElement;
+    for (let depth = 0; active && depth < 16; depth += 1) {
+      const shadowActive = (active as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot?.activeElement;
+      if (shadowActive) {
+        active = shadowActive;
+        continue;
+      }
+      if (active.tagName === 'IFRAME' || active.tagName === 'FRAME') {
+        let inner: Element | null = null;
+        try {
+          inner = (active as HTMLIFrameElement).contentDocument?.activeElement ?? null;
+        } catch {
+          inner = null;
+        }
+        if (inner && inner !== active) {
+          active = inner;
+          continue;
+        }
+      }
+      break;
+    }
+    return active;
+  }
+
+  /** Interactive candidates in document order (fixed selector, never page input). */
+  function interactiveElements(roots = searchRoots()): Element[] {
+    return queryAllDeep(INTERACTIVE_SELECTOR, roots).filter(
+      (element) => !isCollapsedSelectOption(element),
+    );
+  }
+
   function read(args: Record<string, unknown>): BrowserPageReadResult {
     pruneReferences();
     const maxChars = clampInt(args.maxChars, DEFAULT_TEXT_CHARS, MAX_TEXT_CHARS);
     const maxElements = clampInt(args.maxElements, DEFAULT_ELEMENTS, MAX_ELEMENTS);
-    const body = win.document.body;
-    const text = body
-      ? collectVisibleText(win, body, maxChars)
-      : { text: '', truncated: false };
-    const candidates = [...win.document.querySelectorAll(INTERACTIVE_SELECTOR)];
+    const roots = searchRoots();
+    const text = visiblePageText(maxChars, roots);
+    const candidates = interactiveElements(roots);
     const visible = candidates
       .filter((element) => isElementVisible(win, element))
       .slice(0, maxElements);
-    const headings = [...win.document.querySelectorAll('h1,h2,h3,h4,h5,h6')]
+    const headings = queryAllDeep('h1,h2,h3,h4,h5,h6', roots)
       .filter((element) => isElementVisible(win, element) && !isSensitiveTree(element))
       .slice(0, MAX_HEADINGS)
       .map((heading) => ({
@@ -482,7 +684,7 @@ export function createBrowserAutomation(
       elements: visible.map(describe),
       truncated: text.truncated || candidates.length > visible.length,
       viewport: viewportState(),
-      alerts: collectAlerts(),
+      alerts: collectAlerts(roots),
     };
   }
 
@@ -497,7 +699,7 @@ export function createBrowserAutomation(
   const ALERT_CLASS_PATTERN =
     /(?:^|[\s_-])(error|errors|invalid|is-invalid|has-error|alert-danger|alert-error|form-error|field-error|error-message)(?:[\s_-]|$)/i;
 
-  function collectAlerts(): BrowserPageAlert[] {
+  function collectAlerts(roots = searchRoots()): BrowserPageAlert[] {
     const out: BrowserPageAlert[] = [];
     const seen = new Set<Element>();
     const push = (element: Element, role: string, ref: boolean): void => {
@@ -517,13 +719,11 @@ export function createBrowserAutomation(
         text,
       });
     };
-    for (const element of win.document.querySelectorAll(ALERT_ROLE_SELECTOR)) {
+    for (const element of queryAllDeep(ALERT_ROLE_SELECTOR, roots)) {
       if (out.length >= MAX_ALERTS) break;
       push(element, implicitRole(element), true);
     }
-    for (const element of win.document.querySelectorAll(
-      ALERT_CLASS_CANDIDATE_SELECTOR,
-    )) {
+    for (const element of queryAllDeep(ALERT_CLASS_CANDIDATE_SELECTOR, roots)) {
       if (out.length >= MAX_ALERTS) break;
       const cls = element.getAttribute('class') ?? '';
       if (!ALERT_CLASS_PATTERN.test(cls)) continue;
@@ -552,7 +752,7 @@ export function createBrowserAutomation(
     // The query NEVER reaches a selector: candidates come from the fixed
     // INTERACTIVE_SELECTOR and are scored by accessible name / href path.
     const scored: BrowserFindMatch[] = [];
-    for (const element of win.document.querySelectorAll(INTERACTIVE_SELECTOR)) {
+    for (const element of interactiveElements()) {
       if (!isElementVisible(win, element)) continue;
       const descriptor = describe(element);
       if (role && descriptor.role !== role) continue;
@@ -625,6 +825,7 @@ export function createBrowserAutomation(
    */
   function extractCandidates(): BrowserExtractCandidates {
     pruneReferences();
+    const roots = searchRoots();
     const jsonLd: unknown[] = [];
     for (const script of win.document.querySelectorAll(
       'script[type="application/ld+json"]',
@@ -667,7 +868,7 @@ export function createBrowserAutomation(
       ++visited > EXTRACT_MAX_CANDIDATE_NODES;
 
     // dl: dt → next dd sibling.
-    for (const dt of win.document.querySelectorAll('dt')) {
+    for (const dt of queryAllDeep('dt', roots)) {
       if (overBudget()) break;
       if (isSensitiveTree(dt) || !isElementVisible(win, dt)) continue;
       let dd = dt.nextElementSibling;
@@ -683,7 +884,7 @@ export function createBrowserAutomation(
     }
 
     // tables: th → td, or first cell → remaining cells.
-    for (const row of win.document.querySelectorAll('tr')) {
+    for (const row of queryAllDeep('tr', roots)) {
       if (overBudget()) break;
       if (isSensitiveTree(row) || !isElementVisible(win, row)) continue;
       const cells = [...row.querySelectorAll('th,td')];
@@ -702,12 +903,15 @@ export function createBrowserAutomation(
     // label[for] / wrapping label → campo: só <select> (a opção escolhida é
     // conteúdo da página); valores digitados nunca saem da página — só a
     // opção escolhida de um select.
-    for (const label of win.document.querySelectorAll('label')) {
+    for (const label of queryAllDeep('label', roots)) {
       if (overBudget()) break;
       if (isSensitiveTree(label) || !isElementVisible(win, label)) continue;
       const forId = label.getAttribute('for');
+      const labelScope = label.getRootNode() as Document | ShadowRoot;
       const field = forId
-        ? win.document.getElementById(forId)
+        ? (typeof labelScope.getElementById === 'function'
+            ? labelScope.getElementById(forId)
+            : label.ownerDocument.getElementById(forId))
         : label.querySelector('input,textarea,select');
       if (!field || isSensitiveTree(field)) continue;
       if (field.tagName.toLowerCase() !== 'select') continue;
@@ -723,7 +927,7 @@ export function createBrowserAutomation(
     }
 
     // "Label: value" on leaf elements.
-    for (const el of win.document.querySelectorAll(LABEL_LINE_ELEMENTS)) {
+    for (const el of queryAllDeep(LABEL_LINE_ELEMENTS, roots)) {
       if (overBudget()) break;
       if (isSensitiveTree(el) || !isElementVisible(win, el)) continue;
       if (el.children.length > 0) continue;
@@ -735,9 +939,7 @@ export function createBrowserAutomation(
     }
 
     // Typed tokens over the already-redacted visible text.
-    const bodyText = win.document.body
-      ? collectVisibleText(win, win.document.body, MAX_TEXT_CHARS).text
-      : '';
+    const bodyText = visiblePageText(MAX_TEXT_CHARS, roots).text;
     const tokens: BrowserExtractCandidates['tokens'] = [];
     const seenTokens = new Set<string>();
     const collectTokens = (
@@ -782,17 +984,213 @@ export function createBrowserAutomation(
     return describe(element);
   }
 
-  function click(args: Record<string, unknown>): { clicked: true; element: BrowserElementDescriptor } {
-    const element = resolveRef(args.ref);
+  function clickableTarget(raw: unknown): HTMLElement {
+    const element = resolveRef(raw);
     if (!isElementVisible(win, element)) throw new Error('browser element is not visible');
     if (element.hasAttribute('disabled') || element.getAttribute('aria-disabled') === 'true') {
       throw new Error('browser element is disabled');
     }
     const clickable = element as HTMLElement;
     if (typeof clickable.click !== 'function') throw new Error('browser element is not clickable');
-    clickable.focus?.({ preventScroll: true });
+    return clickable;
+  }
+
+  /**
+   * Fallback when Main cannot deliver real input (no sendInputEvent, element
+   * covered, no geometry). `element.click()` alone skipped pointerdown and
+   * mousedown, and component kits open menus/selects on pointerdown (Radix),
+   * so the dropdown never opened. This replays the browser order: pointer
+   * down/up, the mouse compatibility events (suppressed when pointerdown
+   * cancels its default, as Chrome does), focus, then the activation click.
+   */
+  function click(args: Record<string, unknown>): { clicked: true; element: BrowserElementDescriptor } {
+    const clickable = clickableTarget(args.ref);
+    const elementWin = (clickable.ownerDocument.defaultView ?? win) as BrowserDomWindow;
+    const rect = clickable.getBoundingClientRect();
+    const base = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+      button: 0,
+      view: elementWin,
+    };
+    const PointerCtor = elementWin.PointerEvent ?? elementWin.MouseEvent;
+    const pointer = { ...base, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+    clickable.dispatchEvent(new PointerCtor('pointerover', pointer));
+    clickable.dispatchEvent(new PointerCtor('pointermove', pointer));
+    const pointerDownAllowed = clickable.dispatchEvent(
+      new PointerCtor('pointerdown', { ...pointer, buttons: 1 }),
+    );
+    let focusAllowed = true;
+    if (pointerDownAllowed) {
+      focusAllowed = clickable.dispatchEvent(
+        new elementWin.MouseEvent('mousedown', { ...base, buttons: 1, detail: 1 }),
+      );
+    }
+    if (focusAllowed) clickable.focus?.({ preventScroll: true });
+    clickable.dispatchEvent(new PointerCtor('pointerup', pointer));
+    if (pointerDownAllowed) {
+      clickable.dispatchEvent(new elementWin.MouseEvent('mouseup', { ...base, detail: 1 }));
+    }
+    if (!clickable.isConnected) {
+      // The page swapped the element on pointerdown (a menu re-render): the
+      // activation already happened through the down/up handlers.
+      return { clicked: true, element: describe(clickable) };
+    }
     clickable.click();
-    return { clicked: true, element: describe(element) };
+    return { clicked: true, element: describe(clickable) };
+  }
+
+  // Native input handshake. Main asks for a point and a probe, sends real
+  // input with webContents.sendInputEvent, then asks whether a trusted event
+  // reached this document; only if not does it fall back to the synthetic path.
+  interface InputProbe {
+    seen: boolean;
+    waiters: Array<() => void>;
+    dispose: () => void;
+  }
+  const inputProbes = new Map<string, InputProbe>();
+  let inputSequence = 0;
+  const isTrustedInput = (event: Event): boolean =>
+    options.isTrustedInputEvent ? options.isTrustedInputEvent(event) : event.isTrusted === true;
+
+  function armInputProbe(targetWin: Window, types: readonly string[]): string {
+    inputSequence += 1;
+    const token = `i${inputSequence}`;
+    const probe: InputProbe = { seen: false, waiters: [], dispose: () => {} };
+    const onEvent = (event: Event): void => {
+      if (!isTrustedInput(event) || probe.seen) return;
+      probe.seen = true;
+      for (const wake of probe.waiters.splice(0)) wake();
+    };
+    for (const type of types) targetWin.addEventListener(type, onEvent, { capture: true });
+    const expiry = win.setTimeout(() => probe.dispose(), INPUT_PROBE_TTL_MS);
+    probe.dispose = () => {
+      win.clearTimeout(expiry);
+      for (const type of types) targetWin.removeEventListener(type, onEvent, { capture: true });
+      inputProbes.delete(token);
+      for (const wake of probe.waiters.splice(0)) wake();
+    };
+    inputProbes.set(token, probe);
+    return token;
+  }
+
+  /** Offset from `element`'s own frame viewport to the top-level viewport. */
+  function frameOffsetOf(element: Element): { dx: number; dy: number } | null {
+    let dx = 0;
+    let dy = 0;
+    let frameWin: Window = (element.ownerDocument.defaultView ?? win) as Window;
+    while (frameWin !== win) {
+      const frame = frameWin.frameElement as HTMLElement | null;
+      if (!frame) return null;
+      const frameRect = frame.getBoundingClientRect();
+      const parentWin = (frame.ownerDocument.defaultView ?? win) as BrowserDomWindow;
+      let paddingLeft = 0;
+      let paddingTop = 0;
+      try {
+        const style = parentWin.getComputedStyle(frame);
+        paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
+        paddingTop = Number.parseFloat(style.paddingTop) || 0;
+      } catch {
+        // No computed style: border box only.
+      }
+      dx += frameRect.left + frame.clientLeft + paddingLeft;
+      dy += frameRect.top + frame.clientTop + paddingTop;
+      frameWin = parentWin;
+    }
+    return { dx, dy };
+  }
+
+  /** `element_rect`: the box a cropped screenshot needs, after scrolling to it. */
+  function elementRect(args: Record<string, unknown>): { x: number; y: number; width: number; height: number } {
+    const element = resolveRef(args.ref);
+    if (!isElementVisible(win, element)) throw new Error('browser element is not visible');
+    const scroller = element as HTMLElement & {
+      scrollIntoView?: (options?: ScrollIntoViewOptions) => void;
+    };
+    if (typeof scroller.scrollIntoView === 'function') {
+      scroller.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' as ScrollBehavior });
+    }
+    const rect = element.getBoundingClientRect();
+    const offset = frameOffsetOf(element) ?? { dx: 0, dy: 0 };
+    return { x: rect.left + offset.dx, y: rect.top + offset.dy, width: rect.width, height: rect.height };
+  }
+
+  /** Point of `element` in top-level viewport CSS px, or why there is none. */
+  function nativePointFor(element: Element):
+    | { x: number; y: number }
+    | { reason: 'no-geometry' | 'offscreen' | 'occluded' } {
+    const rect = element.getBoundingClientRect();
+    if (!(rect.width >= 1 && rect.height >= 1)) return { reason: 'no-geometry' };
+    const ownWin = (element.ownerDocument.defaultView ?? win) as BrowserDomWindow;
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    if (x < 0 || y < 0 || x > ownWin.innerWidth || y > ownWin.innerHeight) return { reason: 'offscreen' };
+    const root = element.getRootNode() as Document | ShadowRoot;
+    const hitAt = (root as { elementFromPoint?: (x: number, y: number) => Element | null }).elementFromPoint;
+    if (typeof hitAt === 'function') {
+      const hit = hitAt.call(root, x, y);
+      if (hit && hit !== element && !element.contains(hit)) return { reason: 'occluded' };
+    }
+    // Same-origin frames: add each frame's content-box offset up to the top.
+    const offset = frameOffsetOf(element);
+    if (!offset) return { reason: 'offscreen' };
+    return { x: Math.round(x + offset.dx), y: Math.round(y + offset.dy) };
+  }
+
+  function inputPrepare(args: Record<string, unknown>): Record<string, unknown> {
+    const kind = args.kind;
+    if (kind === 'key') {
+      const target = args.ref !== undefined && args.ref !== null
+        ? resolveRef(args.ref)
+        : (deepActiveElement() ?? win.document.body);
+      if (!target) return { token: null, reason: 'no-target' };
+      if (args.ref !== undefined && args.ref !== null && !isElementVisible(win, target)) {
+        throw new Error('browser element is not visible');
+      }
+      (target as HTMLElement).focus?.({ preventScroll: true });
+      const targetWin = target.ownerDocument.defaultView ?? win;
+      return { token: armInputProbe(targetWin, ['keydown']) };
+    }
+    if (kind !== 'click' && kind !== 'hover') throw new Error('invalid browser input kind');
+    const element = kind === 'click' ? clickableTarget(args.ref) : resolveRef(args.ref);
+    if (kind === 'hover' && !isElementVisible(win, element)) {
+      throw new Error('browser element is not visible');
+    }
+    const scroller = element as HTMLElement & {
+      scrollIntoView?: (options?: ScrollIntoViewOptions) => void;
+    };
+    if (typeof scroller.scrollIntoView === 'function') {
+      scroller.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' as ScrollBehavior });
+    }
+    const point = nativePointFor(element);
+    if ('reason' in point) return { token: null, reason: point.reason };
+    const targetWin = element.ownerDocument.defaultView ?? win;
+    const token = armInputProbe(
+      targetWin,
+      kind === 'click' ? ['pointerdown', 'mousedown'] : ['pointermove', 'mousemove', 'mouseover'],
+    );
+    return { token, x: point.x, y: point.y, element: describe(element) };
+  }
+
+  async function inputConfirm(args: Record<string, unknown>): Promise<{ delivered: boolean }> {
+    const token = typeof args.token === 'string' ? args.token : '';
+    const probe = inputProbes.get(token);
+    if (!probe) return { delivered: false };
+    if (!probe.seen) {
+      await new Promise<void>((resolve) => {
+        const timer = win.setTimeout(resolve, INPUT_CONFIRM_WAIT_MS);
+        probe.waiters.push(() => {
+          win.clearTimeout(timer);
+          resolve();
+        });
+      });
+    }
+    const delivered = probe.seen;
+    probe.dispose();
+    return { delivered };
   }
 
   function fill(args: Record<string, unknown>): {
@@ -818,6 +1216,9 @@ export function createBrowserAutomation(
     }
 
     const tag = element.tagName.toLowerCase();
+    // The element's own realm: an iframe field has its own prototypes, and
+    // React's value tracker only sees the native setter of that realm.
+    const realm = (element.ownerDocument.defaultView ?? win) as BrowserDomWindow;
     if (tag === 'input') {
       const input = element as HTMLInputElement;
       const type = (input.type || 'text').toLowerCase();
@@ -825,28 +1226,100 @@ export function createBrowserAutomation(
         throw new Error('browser input type cannot be filled as text');
       }
       const setter = Object.getOwnPropertyDescriptor(
-        win.HTMLInputElement.prototype,
+        realm.HTMLInputElement.prototype,
         'value',
       )?.set;
       if (!setter) throw new Error('browser input setter is unavailable');
       setter.call(input, text);
     } else if (tag === 'textarea') {
       const setter = Object.getOwnPropertyDescriptor(
-        win.HTMLTextAreaElement.prototype,
+        realm.HTMLTextAreaElement.prototype,
         'value',
       )?.set;
       if (!setter) throw new Error('browser textarea setter is unavailable');
       setter.call(element, text);
-    } else if (element.getAttribute('contenteditable') === 'true') {
+    } else if (isContentEditableHost(element)) {
       element.textContent = text;
     } else {
       throw new Error('browser element is not a fillable text field');
     }
 
     (element as HTMLElement).focus?.({ preventScroll: true });
-    element.dispatchEvent(new win.Event('input', { bubbles: true, composed: true }));
-    element.dispatchEvent(new win.Event('change', { bubbles: true, composed: true }));
+    element.dispatchEvent(new realm.Event('input', { bubbles: true, composed: true }));
+    element.dispatchEvent(new realm.Event('change', { bubbles: true, composed: true }));
     return { filled: true, ref: refFor(element), length: text.length };
+  }
+
+  const MAX_LISTED_OPTIONS = 30;
+
+  /**
+   * `select`: picks one option of a native `<select>` by visible label
+   * (case/diacritics-insensitive: exact, then prefix, then substring — a tie
+   * is refused with the options listed), by `value` or by `index`. Fires
+   * input + change in the element's realm like a person choosing. A target
+   * that is not a native select is reported so Main can open the ARIA
+   * combobox/listbox and click the option instead.
+   */
+  function select(args: Record<string, unknown>): {
+    selected: true;
+    ref: string;
+    option: { label: string; index: number };
+  } {
+    const element = resolveRef(args.ref);
+    if (!isElementVisible(win, element)) throw new Error('browser element is not visible');
+    if (element.tagName.toLowerCase() !== 'select') {
+      throw new Error('browser element is not a native select');
+    }
+    if (isSensitiveTree(element)) {
+      throw new Error('refusing to choose in a password, token, payment, or sensitive field');
+    }
+    if (element.hasAttribute('disabled') || element.getAttribute('aria-disabled') === 'true') {
+      throw new Error('browser select is disabled');
+    }
+    const selectElement = element as HTMLSelectElement;
+    const options = [...selectElement.options];
+    const labelOf = (option: HTMLOptionElement): string =>
+      redactBrowserText(normalizedText(option.label || option.textContent || '')).slice(0, 120);
+    const listed = (): string =>
+      options.slice(0, MAX_LISTED_OPTIONS).map(labelOf).filter(Boolean).join(' | ');
+    let index = -1;
+    if (typeof args.index === 'number' && Number.isInteger(args.index)) {
+      index = args.index >= 0 && args.index < options.length ? args.index : -1;
+      if (index < 0) throw new Error(`browser select has no option at index ${args.index}; options: ${listed()}`);
+    } else if (typeof args.value === 'string') {
+      index = options.findIndex((option) => option.value === args.value);
+      if (index < 0) throw new Error(`browser select has no option with that value; options: ${listed()}`);
+    } else if (typeof args.option === 'string' && args.option.trim()) {
+      const wanted = fold(args.option.slice(0, 200));
+      const folded = options.map((option) => fold(option.label || option.textContent || ''));
+      for (const matches of [
+        (label: string) => label === wanted,
+        (label: string) => label.startsWith(wanted),
+        (label: string) => label.includes(wanted),
+      ]) {
+        const hits = folded.flatMap((label, position) => (matches(label) ? [position] : []));
+        if (hits.length === 1) {
+          index = hits[0]!;
+          break;
+        }
+        if (hits.length > 1) {
+          const names = hits.slice(0, MAX_LISTED_OPTIONS).map((position) => labelOf(options[position]!)).join(' | ');
+          throw new Error(`browser select option is ambiguous: ${names}`);
+        }
+      }
+      if (index < 0) throw new Error(`browser select has no option like that; options: ${listed()}`);
+    } else {
+      throw new Error('browser select needs option, value or index');
+    }
+    const chosen = options[index]!;
+    if (chosen.disabled) throw new Error('browser select option is disabled');
+    if (selectElement.multiple) chosen.selected = true;
+    else selectElement.selectedIndex = index;
+    const realm = (element.ownerDocument.defaultView ?? win) as BrowserDomWindow;
+    selectElement.focus?.({ preventScroll: true });
+    element.dispatchEvent(new realm.Event('input', { bubbles: true, composed: true }));
+    element.dispatchEvent(new realm.Event('change', { bubbles: true, composed: true }));
+    return { selected: true, ref: refFor(element), option: { label: labelOf(chosen), index } };
   }
 
   function wait(args: Record<string, unknown>): Promise<{
@@ -870,32 +1343,66 @@ export function createBrowserAutomation(
       throw new Error('browser wait reference is invalid');
     }
 
+    const matches = (): boolean => {
+      if (condition === 'load') return win.document.readyState === 'complete';
+      if (condition === 'text') {
+        return visiblePageText(MAX_TEXT_CHARS)
+          .text.toLocaleLowerCase()
+          .includes(redactBrowserText(query).toLocaleLowerCase());
+      }
+      const element = references.get(ref);
+      return Boolean(element?.isConnected && isElementVisible(win, element));
+    };
+
+    // Event-driven: a full visible-text walk every 50 ms burned CPU on big
+    // pages for the whole wait. Mutations (coalesced) and readystatechange
+    // trigger a check; a slow tick covers changes no mutation reports (media
+    // queries, timers that only touch layout).
     return new Promise((resolve, reject) => {
-      const check = (): void => {
-        let matched = false;
-        if (condition === 'load') matched = win.document.readyState === 'complete';
-        if (condition === 'text') {
-          const body = win.document.body;
-          matched = body
-            ? collectVisibleText(win, body, MAX_TEXT_CHARS)
-                .text.toLocaleLowerCase()
-                .includes(redactBrowserText(query).toLocaleLowerCase())
-            : false;
-        }
-        if (condition === 'ref') {
-          const element = references.get(ref);
-          matched = Boolean(element?.isConnected && isElementVisible(win, element));
-        }
-        if (matched) {
-          resolve({ matched: true, condition, elapsedMs: Date.now() - startedAt });
-          return;
-        }
-        if (Date.now() - startedAt >= timeoutMs) {
-          reject(new Error('browser wait timed out'));
-          return;
-        }
-        win.setTimeout(check, POLL_MS);
+      let settled = false;
+      let pending: number | undefined;
+      let observer: MutationObserver | undefined;
+      const cleanup = (): void => {
+        settled = true;
+        observer?.disconnect();
+        win.document.removeEventListener('readystatechange', schedule);
+        win.clearTimeout(pending);
+        win.clearTimeout(deadline);
+        win.clearInterval(fallback);
       };
+      const check = (): void => {
+        pending = undefined;
+        if (settled) return;
+        if (matches()) {
+          cleanup();
+          resolve({ matched: true, condition, elapsedMs: Date.now() - startedAt });
+        }
+      };
+      function schedule(): void {
+        if (!settled && pending === undefined) pending = win.setTimeout(check, POLL_MS);
+      }
+      const deadline = win.setTimeout(() => {
+        if (settled) return;
+        check();
+        if (settled) return;
+        cleanup();
+        reject(new Error('browser wait timed out'));
+      }, timeoutMs);
+      const fallback = win.setInterval(check, WAIT_FALLBACK_TICK_MS);
+      if (typeof win.MutationObserver === 'function') {
+        observer = new win.MutationObserver(schedule);
+        // Shadow roots and frames do not report to an observer on the document.
+        for (const root of searchRoots()) {
+          try {
+            observer.observe(root, {
+              subtree: true, childList: true, characterData: true, attributes: true,
+            });
+          } catch {
+            // A root the observer cannot attach to is still covered by the tick.
+          }
+        }
+      }
+      win.document.addEventListener('readystatechange', schedule);
       check();
     });
   }
@@ -1057,10 +1564,7 @@ export function createBrowserAutomation(
         throw new Error('browser element is not visible');
       }
     } else {
-      target =
-        win.document.activeElement instanceof win.Element
-          ? win.document.activeElement
-          : win.document.body;
+      target = deepActiveElement() ?? win.document.body;
     }
     (target as HTMLElement).focus?.({ preventScroll: true });
     // Synthesized KeyboardEvents carry isTrusted=false; this is the best a
@@ -1255,7 +1759,11 @@ export function createBrowserAutomation(
       if (command === 'inspect') return inspect(args);
       if (command === 'find') return find(args);
       if (command === 'click') return click(args);
+      if (command === 'input_prepare') return inputPrepare(args);
+      if (command === 'input_confirm') return inputConfirm(args);
+      if (command === 'element_rect') return elementRect(args);
       if (command === 'fill') return fill(args);
+      if (command === 'select') return select(args);
       if (command === 'wait') return wait(args);
       if (command === 'scroll') return scroll(args);
       if (command === 'press') return press(args, options?.signal);

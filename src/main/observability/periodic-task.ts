@@ -60,12 +60,13 @@ export interface PeriodicTaskSlowReport extends PeriodicTaskDiagnostic {
 const states = new Map<string, TaskState>();
 const MAX_IDLE_HISTORY = 64;
 /**
- * A slice is wall-clock between checkpoints, so every task that starts in the
- * same tick measures the same event-loop stall (one worker shim per agent made
- * 7 identical rows per tick). One report per task name per window; the rest is
- * only counted. The event-loop monitor already carries the loop-level truth.
+ * Every task that starts in the same tick measures the same event-loop stall
+ * (one worker shim per agent made 7 identical rows per tick). One report per
+ * task name per window; the rest is only counted. The event-loop monitor
+ * already carries the loop-level truth, so a minute is enough: at 5 s the
+ * `periodic-task-slow` rows were 95% of the rotated trace (~7 days).
  */
-export const SLOW_REPORT_MIN_INTERVAL_MS = 5_000;
+export const SLOW_REPORT_MIN_INTERVAL_MS = 60_000;
 const slowReportWindows = new Map<string, { lastAt: number; suppressed: number; suppressedMaxSliceMs: number }>();
 let slowSink: ((report: PeriodicTaskSlowReport) => void) | null = null;
 
@@ -135,14 +136,35 @@ export function runPeriodicTask(
   };
   states.set(id, state);
   const waits = new Set<Promise<unknown>>();
+  // A slice is CPU: the synchronous run (microtasks included) since the last
+  // checkpoint or wait. A bare `await` on I/O outside `wait()` used to count
+  // its whole wait as CPU (the fast-lane tick awaiting a delivery check
+  // reported seconds of "slice" every run; 95% of the trace). A one-shot
+  // setImmediate marks the first time the event loop ran a macrotask after
+  // the slice started: only the run before that yield is CPU. Never re-armed
+  // while waiting, so it cannot spin the loop.
   let sliceStartedAt = performance.now();
+  let yieldedAt: number | null = null;
+  let yieldProbe: ReturnType<typeof setImmediate> | null = null;
+  const startSlice = () => {
+    sliceStartedAt = performance.now();
+    yieldedAt = null;
+    if (yieldProbe === null) {
+      yieldProbe = setImmediate(() => { yieldProbe = null; yieldedAt ??= performance.now(); });
+    }
+  };
+  startSlice();
   const assertCurrent = () => {
     if (controller.signal.aborted) throw controller.signal.reason ?? new Error('periodic task aborted');
     if (states.get(id) !== state) throw new Error('periodic task superseded');
   };
   const measureSlice = () => {
-    const elapsed = performance.now() - sliceStartedAt;
+    const yielded = yieldedAt !== null;
+    const elapsed = Math.max(0, (yieldedAt ?? performance.now()) - sliceStartedAt);
     state.diagnostic = { ...state.diagnostic, sliceMsMax: Math.max(state.diagnostic.sliceMsMax, elapsed) };
+    // After a yield the rest of the wall time was waiting: the next slice
+    // starts now (the run right after resuming is not attributed).
+    if (yielded) startSlice();
     return elapsed;
   };
   const context: PeriodicTaskContext = {
@@ -155,7 +177,7 @@ export function runPeriodicTask(
         await new Promise<void>((resolve) => setImmediate(resolve));
         assertCurrent();
         state.diagnostic = { ...state.diagnostic, lastYieldAt: Date.now() };
-        sliceStartedAt = performance.now();
+        startSlice();
       }
     },
     wait<T>(promise: Promise<T>): Promise<T> {
@@ -170,7 +192,7 @@ export function runPeriodicTask(
           return result;
         } finally {
           state.diagnostic = { ...state.diagnostic, waitingIo: state.diagnostic.waitingIo - 1 };
-          sliceStartedAt = performance.now();
+          startSlice();
         }
       })();
       waits.add(wait);
@@ -203,6 +225,7 @@ export function runPeriodicTask(
       try { assertCurrent(); } catch (currentError) { error = currentError; failed = true; }
     }
     measureSlice();
+    if (yieldProbe !== null) { clearImmediate(yieldProbe); yieldProbe = null; }
     if (timeout) clearTimeout(timeout);
     options.signal?.removeEventListener('abort', abort);
     state.flight = null;
