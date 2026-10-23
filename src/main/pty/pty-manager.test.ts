@@ -5146,6 +5146,8 @@ describe("cli-agent spawn argv hardening", () => {
         "danger-full-access",
         "--ask-for-approval",
         "on-request",
+        "-c",
+        'service_tier="default"',
         initialPrompt,
       ]);
       expect(
