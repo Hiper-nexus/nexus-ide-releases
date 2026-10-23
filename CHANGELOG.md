@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.425 — Navegador de agente sem derrubar o Mac
+
+Correção macOS arm64 sobre a 0.76.424. O resto da base é o mesmo pacote; não há mudança de composição de UI, roteamento, contas, adapters ou runtime de missão.
+
+- **Navegador de agente com device (F-1656):** `nexus_browser_open` com `device` num pane recém-criado encerrava o processo principal. O Electron 43.8.3, em `WebContents::EnableDeviceEmulation`, faz `frame_host->GetView()->GetRenderWidgetHost()` sem checar o `GetView()`; o pane nasce escondido e sem documento, então o `GetView()` é nulo e o Main morre com SIGSEGV em null+0xf8. A UA continua indo antes do primeiro request; as métricas do viewport entram no commit do primeiro documento, pelo mesmo `did-navigate` que já reaplicava a emulação a cada navegação. O caminho do operador (barra de design sobre um pane já carregado) não mudou, e o desligamento da emulação ganhou a mesma cerca.
+
 ## 0.76.424 — Composição de UI como regra do Nexus
 
 - **Regra básica sempre entregue (F-1655):** hierarquia, agrupamento, espaçamento e alinhamento por função deixam de depender de Design Pro ou de a LLM carregar Impeccable. O MCP entrega a regra para todo papel/provedor; briefs compartilhados e a Via Rápida também a levam, inclusive sem MCP e em retomadas.

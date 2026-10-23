@@ -12943,7 +12943,7 @@ const RELEASE_076423_FULL: AppRelease = {
 
 export const RELEASE_076423: AppRelease = RELEASE_076423_FULL;
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076424: AppRelease = {
   version: '0.76.424',
   date: '2026-10-23',
   codename: 'Composição de UI como regra do Nexus',
@@ -12959,4 +12959,20 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076424: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.425',
+  date: '2026-10-23',
+  codename: 'Navegador de agente sem derrubar o Mac',
+  summary:
+    'No macOS, abrir um pane de agente com emulação de device não encerra ' +
+    'mais o processo principal. O resto da base é a 0.76.424.',
+  highlights: [
+    { title: 'O navegador do agente abre com device', detail: 'nexus_browser_open com device num pane recém-criado encerrava o app antes do primeiro carregamento. A emulação agora espera o commit do documento; a UA continua valendo para o primeiro request (F-1656).' },
+    { title: 'Base preservada', detail: 'A regra de composição de UI, o roteamento, as contas, os adapters e o runtime de missão seguem os da 0.76.424; esta versão corrige o navegador embutido (F-1656).' },
+  ],
+  fixes: [
+    { title: 'Emulação de device só depois do primeiro documento', detail: 'O Electron 43.8.3 desreferencia o frame host sem view. As métricas entram no did-navigate, o mesmo caminho que já reaplicava a emulação a cada navegação, e o desligamento ganhou a mesma cerca (F-1656).' },
+  ],
+};
+
+export const RELEASE_076425: AppRelease = CURRENT_RELEASE;
