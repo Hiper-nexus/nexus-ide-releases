@@ -12996,7 +12996,7 @@ export const RELEASE_076427: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076428: AppRelease = {
   version: '0.76.428',
   date: '2026-10-23',
   codename: 'Ferramentas sem proibições desatualizadas',
@@ -13013,4 +13013,23 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076428: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.429',
+  date: '2026-10-23',
+  codename: 'Navegador do agente sobrevive à aba que cai',
+  summary:
+    'No macOS, um pane de navegador cujo renderer caiu não derruba mais o ' +
+    'processo principal quando recebe um dispositivo (F-1659). Traz também ' +
+    'o Codex em Standard (F-1658) e o launcher do Impeccable (F-1657) da 0.76.428.',
+  highlights: [
+    { title: 'Aba que caiu não derruba o app', detail: 'Depois de crash, falta de memória ou kill da página, pedir mobile, tablet ou desktop chamava a emulação nativa sem view. Agora a cerca fecha quando o renderer morre e o dispositivo entra quando a página recarrega (F-1659).' },
+    { title: 'Codex começa em Standard', detail: 'Panes novos e retomados não herdam Fast da configuração nativa ou do perfil (F-1658).' },
+    { title: 'Impeccable com seu launcher', detail: 'A carta permite o executável documentado da skill instalada; sem ele, o agente relata a limitação e continua (F-1657).' },
+  ],
+  fixes: [
+    { title: 'Emulação nativa por um único caminho', detail: 'enableDeviceEmulation e disableDeviceEmulation só passam por native-device-emulation.ts, que exige documento commitado, WebContents vivo e renderer de pé. Um teste reprova chamada direta fora dele (F-1659).' },
+    { title: 'Mesma causa do F-1656', detail: 'O Electron 43.8.3 lê o GetView() nulo nessas duas funções e encerra o Main com SIGSEGV em null+0xf8. Reproduzido no Electron real com o renderer morto (F-1659).' },
+  ],
+};
+
+export const RELEASE_076429: AppRelease = CURRENT_RELEASE;

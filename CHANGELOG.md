@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.429 — Navegador do agente sobrevive à aba que cai
+
+Carimbo macOS arm64. Traz para o Mac o que saiu na Windows 0.76.428 (F-1657 e F-1658) e fecha o resto do crash do navegador embutido (F-1659). A 0.76.425 é o carimbo macOS anterior.
+
+- **Renderer morto não derruba mais o app (F-1659):** a correção do F-1656 cercava só o pane que nunca tinha carregado um documento. Quando o renderer de um pane de navegador morria (crash da página, falta de memória, kill do macOS), a cerca continuava aberta. O próximo pedido de device (navegação do agente com `device`, `nexus_browser_responsive` ou o seletor de dispositivo do operador) chamava a emulação nativa sem view, e o processo principal morria com o mesmo SIGSEGV em null+0xf8. Reproduzido no Electron real. Agora a morte do renderer fecha a cerca até a página recarregar, e o dispositivo pedido entra nesse momento.
+- **Emulação nativa por um único caminho:** `enableDeviceEmulation` e `disableDeviceEmulation` só passam por `native-device-emulation.ts`, que exige documento commitado, WebContents vivo e renderer de pé. Um teste reprova qualquer chamada direta fora dele. No fonte do Electron 43.8.3, essas são as duas únicas leituras da render view sem checagem de nulo.
+- **Codex sem Fast herdado (F-1658)** e **Impeccable com o launcher documentado (F-1657)**, como descritos na 0.76.428.
+
+A queda do renderer não foi provocada no app empacotado; a prova é a reprodução no Electron e os testes de contrato.
+
 ## 0.76.428 — Ferramentas sem proibições desatualizadas
 
 - **Codex sem Fast herdado (F-1658):** panes novos e retomados começam em Standard, mesmo quando o arquivo nativo ou perfil conserva `service_tier = "priority"`. Modelo, esforço e configuração global ficam intactos; o operador ainda pode mudar o modo dentro da própria sessão.
