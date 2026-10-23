@@ -13032,7 +13032,7 @@ export const RELEASE_076429: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076430: AppRelease = {
   version: '0.76.430',
   date: '2026-10-23',
   codename: 'Navegador do agente no Linux',
@@ -13051,4 +13051,23 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076430: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.431',
+  date: '2026-10-23',
+  codename: 'Kimi K3.1 Pro',
+  summary:
+    'O Kimi K3.1 Pro vira o padrão do Kimi e entra na rota de todos os ' +
+    'tiers, na revisão e no front; o K3.1 Pro Highspeed fica disponível ' +
+    'para escolha manual (F-1660).',
+  highlights: [
+    { title: 'Kimi K3.1 Pro no lugar do K3', detail: 'Padrão do Kimi e primeira opção Kimi em todos os tiers. No difícil lidera quando não há Claude, à frente do GLM 5.3; no crítico entra depois de Claude e Codex. DeepSWE 75,5 e Terminal-Bench 4.0 65,7 na tabela oficial da Moonshot (F-1660).' },
+    { title: 'K3.1 Pro julga revisões', detail: 'Entra na lane de revisão e auditoria pela mesma regra do Gemini Argon e do Grok 4.7: DeepSWE publicado acima do Sonnet 5.5. O K3 continua fora (F-1660).' },
+    { title: 'K3.1 Pro Highspeed no seletor', detail: 'Mesma capacidade, 2 a 3 vezes mais rápido e o dobro da cota. Aparece com aviso e só roda quando você escolhe; a rota automática não o usa (F-1660).' },
+  ],
+  fixes: [
+    { title: 'CLI sem o K3.1 continua no K3', detail: 'Se o Kimi Code ainda não listou o modelo novo, o Nexus usa o K3 e o default da própria CLI, sem abrir pane com modelo inexistente. Na lane visual o K3 é reserva do mesmo assento (F-1660).' },
+    { title: 'Custo estimado', detail: 'A Moonshot não publicou preço do K3.1 Pro; a estimativa usa o do K3 e o Highspeed conta o dobro (F-1660).' },
+  ],
+};
+
+export const RELEASE_076431: AppRelease = CURRENT_RELEASE;
