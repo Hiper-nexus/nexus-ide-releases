@@ -112,12 +112,14 @@ it.runIf(Boolean(process.env.F764_WORKER_ENTRY))('drives the real Main PTY bridg
   const authoritySeal = resolveCurrentMissionSpawnAuthoritySeal(scope, mission.id);
   const ids: string[] = []; const paused = new Set<string>(); const credits = new Map<string, PtyOutputCredits>();
   let generatedBytes = 0; let receivedBytes = 0; let supervisorScans = 0;
+  let creditResumeWake: (() => void) | undefined;
   const generatedHashes = new Map<string, ReturnType<typeof createHash>>(); const receivedHashes = new Map<string, ReturnType<typeof createHash>>();
   const receivedChunks = new Map<string, number>();
   const bridge = createPtyHostBridge({ ensure: () => {}, post: (message: HostControlMsg) => {
     if (message.type === 'spawn') credits.set(message.sessionId, new PtyOutputCredits({
       send: (data) => { receivedBytes += Buffer.byteLength(data); receivedHashes.get(message.sessionId)?.update(data); receivedChunks.set(message.sessionId, (receivedChunks.get(message.sessionId) ?? 0) + 1); bridge.dispatchEvent({ type: 'data', sessionId: message.sessionId, data }); },
-      pause: () => { paused.add(message.sessionId); }, resume: () => { paused.delete(message.sessionId); },
+      pause: () => { paused.add(message.sessionId); },
+      resume: () => { paused.delete(message.sessionId); if (message.sessionId === ids[0]) creditResumeWake?.(); },
     }));
     else if (message.type === 'analysis-credit') credits.get(message.sessionId)?.grant(message.bytes);
     else if (message.type === 'output-flow') { if (message.paused) paused.add(message.sessionId); else paused.delete(message.sessionId); }
@@ -211,7 +213,16 @@ it.runIf(Boolean(process.env.F764_WORKER_ENTRY))('drives the real Main PTY bridg
         }).catch((error) => { allocationError = error; return null; }));
       }
       if (performance.now() - lastSupervisor >= 100) { await reconcileDelegationSupervisor(); supervisorScans++; lastSupervisor = performance.now(); }
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      // A real paused host wakes on credit, not a hot setImmediate polling loop.
+      const now = performance.now();
+      const waitMs = Math.min(25 - (now - lastSideFrame), duration - (now - start));
+      if (paused.has(ids[0]) && waitMs > 0) {
+        await new Promise<void>((resolve) => {
+          const finish = () => { clearTimeout(timer); creditResumeWake = undefined; resolve(); };
+          const timer = setTimeout(finish, waitMs);
+          creditResumeWake = finish;
+        });
+      } else await new Promise<void>((resolve) => setImmediate(resolve));
     }
     await Promise.all(allocations); if (allocationError) throw allocationError;
     await Promise.all(ids.map((id) => flush(id, 'loaded')));
