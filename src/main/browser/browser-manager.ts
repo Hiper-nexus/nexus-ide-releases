@@ -125,6 +125,7 @@ import { assertInspectableBrowserDom } from './browser-visual-inspection';
 import { attachCdpRelay } from './cdp-relay-attach';
 import type { CdpRelayConnection } from './cdp-relay';
 import { BrowserVisualRefusal } from './browser-visual-refusal';
+import { disableNativeDeviceEmulation, enableNativeDeviceEmulation } from './native-device-emulation';
 import { validateDecisionImages } from '../decision-models/decision-images';
 import {
   registerBrowserAutomationResponseHandler,
@@ -205,10 +206,10 @@ export interface BrowserEntry {
   exactNavigationLock?: string;
   restoringExactNavigation: boolean;
   /**
-   * O primeiro documento principal já commitou, então existe RenderWidgetHostView.
-   * `enableDeviceEmulation` do Electron 43.8.3 faz
-   * `frame_host->GetView()->GetRenderWidgetHost()` sem checar o `GetView()` e
-   * mata o Main (SIGSEGV em null+0xf8) num WebContents recém-criado e escondido.
+   * Um documento principal commitou desde o último renderer vivo, então existe
+   * RenderWidgetHostView. Liga no `did-navigate` e desliga no
+   * `render-process-gone`: sem view, a emulação nativa do Electron 43.8.3 mata
+   * o Main (SIGSEGV em null+0xf8). Ver `native-device-emulation.ts`.
    */
   renderViewReady: boolean;
   /** Isolated internal relay leases; no production CDP transport is registered. */
@@ -304,25 +305,20 @@ function applyBrowserDeviceEmulation(
     const emulatedHeight = tablet ? TABLET_EMULATION_HEIGHT : MOBILE_EMULATION_HEIGHT;
     entry.emulatedViewport = { width: width as number, height: emulatedHeight };
     // As métricas são do widget do documento: sem RenderWidgetHostView (pane
-    // nascido agora, nenhum commit) o nativo do Electron desreferencia null.
-    // A UA acima já vale para o primeiro request; o viewport entra no commit,
-    // pelo `did-navigate`, que reaplica `entry.emulatedViewport`.
-    if (entry.renderViewReady) {
-      wc.enableDeviceEmulation({
-        screenPosition: 'mobile',
-        screenSize: { width: width as number, height: emulatedHeight },
-        viewPosition: { x: 0, y: 0 },
-        viewSize: { width: width as number, height: emulatedHeight },
-        deviceScaleFactor: 0,
-        scale: 1,
-      });
-    }
+    // nascido agora ou renderer morto) a cerca recusa a chamada nativa. A UA
+    // acima já vale para o primeiro request; o viewport entra no commit, pelo
+    // `did-navigate`, que reaplica `entry.emulatedViewport`.
+    enableNativeDeviceEmulation(wc, entry.renderViewReady, {
+      screenPosition: 'mobile',
+      screenSize: { width: width as number, height: emulatedHeight },
+      viewPosition: { x: 0, y: 0 },
+      viewSize: { width: width as number, height: emulatedHeight },
+      deviceScaleFactor: 0,
+      scale: 1,
+    });
   } else {
-    // Mesma cerca do enable: desligar num widget que ainda não existe também
-    // desreferencia o frame host sem view.
-    if (entry.renderViewReady) {
-      wc.disableDeviceEmulation();
-    }
+    // Sem render view não há emulação viva: o renderer novo nasce sem ela.
+    disableNativeDeviceEmulation(wc, entry.renderViewReady);
     entry.emulatedViewport = undefined;
     const original = originalUserAgents.get(key);
     if (original) {
@@ -1155,6 +1151,9 @@ async function createEntry(
     );
     entry.loading = false;
     entry.error = `browser renderer exited: ${details.reason}`;
+    // O RenderWidgetHostView morreu junto: a emulação nativa volta a esperar o
+    // commit do renderer novo (F-1659). `emulatedViewport` fica como pedido.
+    entry.renderViewReady = false;
     // The document died with the renderer: a live design session here would
     // keep isDesignModeActive() true for a page that no longer exists (and
     // with it the write-back gate). Same reset as a navigation.

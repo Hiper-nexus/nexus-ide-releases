@@ -1434,6 +1434,64 @@ describe('loadBrowser device emulation', () => {
     destroyBrowser(PANE, scope);
   });
 
+  it('closes the fence when the renderer dies and reopens it on the next commit (F-1659)', async () => {
+    // Reproduzido no Electron 43: depois de `render-process-gone` (crash,
+    // OOM, kill do macOS) o RenderWidgetHostView some e o enable mata o Main
+    // em null+0xf8, igual ao pane sem documento. O pedido de device fica
+    // guardado e entra quando o renderer novo commitar.
+    await bootCommitted();
+    await loadBrowser(PANE, 'https://example.test/app', { scope, device: 'mobile' });
+    expect(state.guest.enableDeviceEmulation).toHaveBeenCalledOnce();
+    fire('render-process-gone', {}, { reason: 'oom', exitCode: 0 });
+    vi.mocked(state.guest.enableDeviceEmulation).mockClear();
+    await loadBrowser(PANE, 'https://example.test/app', { scope, device: 'tablet' });
+    expect(state.guest.setUserAgent).toHaveBeenLastCalledWith(expect.stringContaining('iPad'));
+    expect(state.guest.enableDeviceEmulation).not.toHaveBeenCalled();
+    fire('did-navigate', {}, 'https://example.test/app');
+    expect(state.guest.enableDeviceEmulation).toHaveBeenCalledWith(
+      expect.objectContaining({ viewSize: { width: 800, height: 1366 } }),
+    );
+    destroyBrowser(PANE, scope);
+  });
+
+  it('turning emulation off on a dead renderer restores the UA without touching the native widget (F-1659)', async () => {
+    await bootCommitted();
+    await loadBrowser(PANE, 'https://example.test/app', { scope, device: 'mobile' });
+    fire('render-process-gone', {}, { reason: 'crashed', exitCode: 11 });
+    await loadBrowser(PANE, 'https://example.test/app', { scope, device: 'desktop' });
+    expect(state.guest.disableDeviceEmulation).not.toHaveBeenCalled();
+    expect(state.guest.setUserAgent).toHaveBeenLastCalledWith('desktop-ua');
+    vi.mocked(state.guest.enableDeviceEmulation).mockClear();
+    fire('did-navigate', {}, 'https://example.test/app');
+    expect(state.guest.enableDeviceEmulation).not.toHaveBeenCalled();
+    destroyBrowser(PANE, scope);
+  });
+
+  it('the operator device toggle on a crashed pane waits for the reload commit (F-1659)', async () => {
+    // O `isCrashed()` cobre a janela em que o renderer já morreu e o
+    // `render-process-gone` ainda não chegou ao Main.
+    await bootCommitted();
+    registerBrowserIpc({} as never);
+    bindResolvedRendererWorkspaceScope(state.owner, scope);
+    const toggle = state.handlers.get(BROWSER_CHANNELS.deviceEmulation)!;
+    state.guest.isCrashed.mockReturnValue(true);
+    try {
+      await expect(
+        toggle({ sender: state.owner }, { paneId: PANE, width: 390 }),
+      ).resolves.toEqual({ paneId: PANE, emulating: true });
+      expect(state.guest.enableDeviceEmulation).not.toHaveBeenCalled();
+      expect(state.guest.reload).toHaveBeenCalled();
+    } finally {
+      state.guest.isCrashed.mockReturnValue(false);
+    }
+    fire('render-process-gone', {}, { reason: 'killed', exitCode: 9 });
+    fire('did-navigate', {}, 'https://example.test/app');
+    expect(state.guest.enableDeviceEmulation).toHaveBeenCalledWith(
+      expect.objectContaining({ viewSize: { width: 390, height: 844 } }),
+    );
+    destroyBrowser(PANE, scope);
+  });
+
   it('a refused navigation (file:// or private address) does not touch the device', async () => {
     await boot();
     await expect(
