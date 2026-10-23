@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.426 — Composição de UI e navegador no Linux
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions. A 0.76.425 continua o carimbo macOS e não recebe estes arquivos. A 0.76.424 continua o carimbo Windows. A 0.76.422 é o pacote Linux anterior.
+
+- **Composição de UI (F-1655):** hierarquia, agrupamento, espaçamento e alinhamento por função passam a ir em todo papel, pelo MCP e pelos briefs, inclusive na Via Rápida sem MCP e nas retomadas. Não depende de Design Pro nem de carregar Impeccable. Texto à esquerda continua válido; a regra rejeita empilhar ou centralizar tudo por reflexo.
+- **Navegador de agente (F-1656):** `nexus_browser_open` com `device` num pane sem view de render não derruba mais o processo principal. O Electron 43.8.3 lia `GetView()` nulo. A UA segue antes do primeiro request; as métricas entram no commit do primeiro documento.
+- **Node 22.23.4:** o runtime de release sobe contra as CVEs de outubro de 2026. O npm continua 12.0.0.
+
+Esta release não toma a marca Latest e não anexa arquivos Linux a releases Mac ou Windows.
+
 ## 0.76.425 — Navegador de agente sem derrubar o Mac
 
 Correção macOS arm64 sobre a 0.76.424. O resto da base é o mesmo pacote; não há mudança de composição de UI, roteamento, contas, adapters ou runtime de missão.

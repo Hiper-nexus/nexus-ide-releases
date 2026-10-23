@@ -12959,7 +12959,7 @@ export const RELEASE_076424: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076425: AppRelease = {
   version: '0.76.425',
   date: '2026-10-23',
   codename: 'Navegador de agente sem derrubar o Mac',
@@ -12975,4 +12975,24 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076425: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.426',
+  date: '2026-10-23',
+  codename: 'Composição de UI e navegador no Linux',
+  summary:
+    'No desktop Linux, a regra de composição chega a todo papel (F-1655) e ' +
+    'o navegador de agente com device não derruba mais o processo (F-1656). ' +
+    'O runtime de release passa a Node 22.23.4. A 0.76.425 continua o ' +
+    'carimbo macOS e não recebe estes arquivos. A 0.76.422 é o pacote Linux anterior.',
+  highlights: [
+    { title: 'Composição sem depender de skill', detail: 'Hierarquia, grupos e alinhamento por função vão pelo MCP e pelos briefs, inclusive na Via Rápida sem MCP. Não depende de Design Pro (F-1655).' },
+    { title: 'Navegador de agente não derruba o app', detail: 'nexus_browser_open com device num pane sem view de render não chama a emulação nativa antes do primeiro documento. A UA continua no primeiro request (F-1656).' },
+    { title: 'Node 22.23.4', detail: 'O runtime empacotado sobe para a correção das CVEs de outubro de 2026. O npm continua 12.0.0.' },
+  ],
+  fixes: [
+    { title: 'Emulação só com view', detail: 'O Electron 43.8.3 lia GetView() nulo e encerrava o Main. As métricas entram no did-navigate, e o desligamento usa a mesma cerca (F-1656).' },
+    { title: 'Brief sem MCP também recebe a regra', detail: 'A composição não depende de palavras de UI no pedido. O bloco é deduplicado e não pede captura em tarefa de backend (F-1655).' },
+  ],
+};
+
+export const RELEASE_076426: AppRelease = CURRENT_RELEASE;
