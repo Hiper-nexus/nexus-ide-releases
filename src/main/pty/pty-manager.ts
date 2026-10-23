@@ -2796,7 +2796,8 @@ export function spawnAgentSession(
     // constant after governed reconstruction and before any positional prompt.
     // Do not mutate the operator's global config or affect startup intent.
     if (adapter.id === "codex") {
-      args.push("-c", 'service_tier="default"');
+      const delimiter = args.indexOf("--");
+      args.splice(delimiter < 0 ? args.length : delimiter, 0, "-c", 'service_tier="default"');
     }
     if (safeNativeInitialPrompt !== undefined) {
       // Append after governed reconstruction: Codex/Claude rebuild argv from

@@ -3344,6 +3344,7 @@ describe('F-1643/F-1644 startup reaches the real Codex overlay', () => {
     { label: 'generated high effort', version: '0.163.0', model: 'gpt-6.1-sol', resume: false, args: [], optIn: false, wantDaybreak: false, wantTrust: true, effort: 'high' },
     { label: 'explicit provider config override after controls', version: '0.163.0', model: 'gpt-6.1-sol', resume: false, args: [], optIn: false, wantDaybreak: undefined, wantTrust: false, providerArgs: ['-c', 'daybreak=true'] },
     { label: 'stale priority provider argument', version: '0.163.0', model: 'gpt-6.1-sol', resume: false, args: [], optIn: false, wantDaybreak: undefined, wantTrust: false, providerArgs: ['-c', 'service_tier="priority"'] },
+    { label: 'argument delimiter', version: '0.163.0', model: 'gpt-6.1-sol', resume: false, args: ['--'], optIn: false, wantDaybreak: false, wantTrust: true },
   ];
   it.each(scenarios)('$label', async scenario => {
     setSquadCliPolicyLookupForTests(() => 'operator-choice');
@@ -3380,6 +3381,9 @@ describe('F-1643/F-1644 startup reaches the real Codex overlay', () => {
       const actual = host.specFor(sessionId);
       const tiers = actual.args.filter(arg => /^service_tier\s*=/.test(arg));
       expect(tiers.at(-1)).toBe('service_tier="default"');
+      if (actual.args.includes('--')) {
+        expect(actual.args.indexOf('service_tier="default"')).toBeLessThan(actual.args.indexOf('--'));
+      }
       expect(actual.args).toContain(`model_reasoning_effort=${scenario.effort ?? 'medium'}`);
       const effective = actual.env.CODEX_HOME!;
       const config = parse(fs.readFileSync(path.join(effective, 'config.toml'), 'utf8')) as {
