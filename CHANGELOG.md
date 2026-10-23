@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.76.420 — Windows: MiniMax GA e instaladores corrigidos
+
+Atualização Windows x64 com a base completa da main 0.76.419 e da última entrega macOS 0.76.417.
+
+- **MiniMax Flash GA:** padrão e rotas passam a `minimax/MiniMax-M3.1-Flash`; o alias exato do Preview é migrado em panes, squads e catálogos antigos (F-1649). Modelos restantes e autenticação permanecem sob as regras da CLI/conta. A versão 0.6.12 foi validada neste Windows com SQLite nativo e um turno real respondendo OK.
+- **Atualizador MiniMax Windows:** a identidade canônica `minimax-code` acompanha seleção, preparação, execução e reparo, em vez de ser deduzida do nome `mcode.cmd` (F-1646).
+- **Instalação no macOS:** o PATH resolvido chega ao processo instalador; a descoberta inclui Node 22 do Homebrew em Macs Intel, preservando o Node já escolhido pelo usuário (F-1647).
+- **Muse sem Homebrew:** usa primeiro o instalador nativo oficial; a atualização reconhece o mesmo destino. O cask continua no canal Homebrew. Instalação e sondas de versão impedem login automático e modificações de PATH pelo launcher (F-1648).
+- **Diagnóstico de instalação:** stdout e stderr alimentam uma mensagem limitada e com redação de segredos; identidade e semântica de cancelamento/timeout do erro original são preservadas (F-1650).
+
+Inclui as melhorias anteriores de contas Claude, missões sem Git, escolha automática de contas, Grok, AGY/Codex, kits de UI, navegador e REA. Os fluxos de instalação macOS foram verificados por testes de seleção, ambiente e execução controlada; a instalação real no Mac do amigo não foi executada nesta máquina Windows. Node/npm continuam sendo pré-requisitos das receitas npm de MiniMax e MiMo. Computer use universal permanece na branch separada.
+
+A prova instalada N→N+1 permanece não executada, com a dispensa expressa do operador restrita a esta entrega Windows. Smoke do pacote, testes e assinatura YubiKey permanecem obrigatórios.
+
 ## 0.76.419 — A conta em uso abre sem pedir login
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions. É a mesma árvore da 0.76.417, com só a versão deste pacote Linux.
