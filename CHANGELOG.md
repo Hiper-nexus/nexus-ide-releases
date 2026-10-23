@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.76.422 — MiniMax Flash GA no Linux
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions. A 0.76.421 continua o carimbo Windows e não recebe estes arquivos. A 0.76.419 é o pacote Linux anterior.
+
+- **MiniMax Flash GA (F-1649):** o padrão e as rotas passam a `minimax/MiniMax-M3.1-Flash`. O id exato do Preview é migrado em panes, squads e catálogos antigos. A CLI e a conta continuam donas da oferta; não há preço nem benchmark novo.
+- **Detector de limite (F-1652):** a regex só roda quando o texto contém a pista literal. Prioridade, cooldown, sinais Unicode e texto citado permanecem os mesmos.
+- **Instalador (F-1650):** a causa da falha, vinda de stdout ou stderr, aparece com tamanho limitado e segredos redigidos. Cancelamento e timeout conservam a identidade do erro.
+- **Script POSIX (F-1647):** o instalador usa o bash resolvido e o PATH que achou o runner. A descoberta extra de Node 22 do Homebrew Intel é do macOS e não muda o Linux.
+- **Sonda do Muse (F-1648):** a checagem de versão não dispara login automático nem altera o PATH. O instalador nativo oficial continua sendo o canal do macOS.
+
+A 0.76.417 permanece o rascunho macOS. Esta release não toma a marca Latest e não anexa arquivos Linux a releases Mac ou Windows.
+
 ## 0.76.421 — Windows: MiniMax GA e instaladores corrigidos
 
 Atualização Windows x64 com a base completa da main 0.76.419 e da última entrega macOS 0.76.417.

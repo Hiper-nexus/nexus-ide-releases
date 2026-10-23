@@ -12877,7 +12877,7 @@ const RELEASE_076419_FULL: AppRelease = {
 
 export const RELEASE_076419: AppRelease = RELEASE_076419_FULL;
 
-export const CURRENT_RELEASE: AppRelease = {
+const RELEASE_076421_FULL: AppRelease = {
   version: '0.76.421',
   date: '2026-10-22',
   codename: 'Windows: MiniMax GA e instaladores corrigidos',
@@ -12897,4 +12897,30 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076421: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076421: AppRelease = RELEASE_076421_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.422',
+  date: '2026-10-23',
+  codename: 'MiniMax Flash GA no Linux',
+  summary:
+    'No desktop Linux, o MiniMax Code passa a abrir no Flash GA e o id ' +
+    'exato do Preview é migrado (F-1649). O detector de limite só avalia a ' +
+    'regex quando o texto traz a pista literal (F-1652). A falha de ' +
+    'instalação mostra a causa redigida (F-1650), e o script POSIX usa o ' +
+    'bash e o PATH resolvidos (F-1647). A 0.76.421 continua o carimbo ' +
+    'Windows e não recebe estes arquivos. A 0.76.419 é o pacote Linux anterior.',
+  highlights: [
+    { title: 'MiniMax abre no Flash GA', detail: 'O padrão e as rotas passam a MiniMax-M3.1-Flash. Uma escolha gravada do Preview migra para o id GA. A CLI e a conta continuam donas da oferta (F-1649).' },
+    { title: 'Detector de limite sem varredura vazia', detail: 'A regex só roda quando o texto contém a pista literal. Prioridade, cooldown, sinais Unicode e texto citado permanecem os mesmos (F-1652).' },
+    { title: 'A instalação diz a causa', detail: 'Stdout e stderr da falha viram uma mensagem curta, com segredos redigidos. Cancelamento e timeout conservam o erro original (F-1650).' },
+    ...RELEASE_076421_FULL.highlights.slice(4),
+  ],
+  fixes: [
+    { title: 'Script POSIX usa o PATH resolvido', detail: 'O instalador por script roda o bash que foi resolvido, com o PATH que achou o runner. A pasta extra do Homebrew Intel não altera o Linux (F-1647).' },
+    { title: 'Sonda Muse não inicia login', detail: 'A checagem de versão não dispara login automático nem altera o PATH. O instalador nativo oficial continua sendo o canal do macOS (F-1648).' },
+    ...RELEASE_076421_FULL.fixes.slice(2),
+  ],
+};
+
+export const RELEASE_076422: AppRelease = CURRENT_RELEASE;
