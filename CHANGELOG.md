@@ -2,6 +2,7 @@
 
 ## 0.76.427 — Ferramentas sem proibições desatualizadas
 
+- **Codex sem Fast herdado (F-1658):** panes novos e retomados começam em Standard, mesmo quando o arquivo nativo ou perfil conserva `service_tier = "priority"`. Modelo, esforço e configuração global ficam intactos; o operador ainda pode mudar o modo dentro da própria sessão.
 - **Impeccable liberado corretamente (F-1657):** a carta deixa de proibir o launcher documentado da skill instalada. Windows usa `impeccable.cmd`; ausência de um comando global não é ausência da skill. Sem ferramenta, o agente declara a limitação e continua com o contexto local, sem inventar pacote/comando.
 - **Preferência não é proibição:** operador e Maestro podem usar ferramentas web alternativas autorizadas. Kits incompatíveis não obrigam trocar framework; mudanças pequenas preservam componentes e tokens existentes.
 - **Modo e runtime reais:** piloto respeita consulta/plano/solo e o nascimento legado `delegateOnly`; preview estático não é receita universal para SSR ou UI nativa. Nenhuma validação alternativa contorna as provas de conclusão do Main.

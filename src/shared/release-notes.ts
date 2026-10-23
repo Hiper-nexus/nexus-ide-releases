@@ -13006,6 +13006,7 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'A missão respeita seu modo', detail: 'Consulta/plano/solo não precisam abrir workers; o piloto preserva contratos delegateOnly legados. SSR e UI nativa podem usar seus runtimes autorizados, sem falsificar a evidência do gate.' },
   ],
   fixes: [
+    { title: 'Codex começa em Standard', detail: 'A abertura e a retomada não herdam Fast da configuração nativa ou do perfil. Modelo e esforço ficam como escolhidos; o Nexus não reescreve o arquivo global (F-1658).' },
     { title: 'Base recente da main', detail: 'Inclui o pin Node 22.23.4 e a cerca de emulação de device da 0.76.425 (F-1656), sem afirmar teste em Mac físico nesta entrega Windows.' },
     { title: 'Liberdade sem remover segurança', detail: 'Autenticação, segredos, isolamento, consentimento, Hardened, revisão formal e provas de conclusão continuam. A análise de memória não foi convertida em uma correção silenciosa.' },
   ],
