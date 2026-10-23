@@ -1,5 +1,3 @@
-import { mountPromptContextBlocks } from './prompt-context-blocks';
-
 /**
  * Product baseline, not optional Design Pro coaching or a skill grant.
  * MCP initialize reaches every provider/role; briefs and the operator hook
@@ -25,7 +23,3 @@ export const UI_COMPOSITION_REVIEW =
 
 // A known, leading context block: routing classifies the task, not these rules.
 export const UI_COMPOSITION_CONTEXT = `<nexus-ui-composition>\n${UI_COMPOSITION_POLICY}\n</nexus-ui-composition>`;
-
-export function withUiCompositionPolicy(prompt: string): string {
-  return mountPromptContextBlocks(prompt, [UI_COMPOSITION_CONTEXT]);
-}

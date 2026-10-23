@@ -5,7 +5,7 @@ import { createVisualTaskRequirement, isReadOnlyVisualLane, visualTaskRequiremen
 import { assertLicensedAgentCapacity, licensedAgentCount } from '../license-enforcement';
 import { licenseErrorFrom } from '../../shared/license-errors';
 import { withWorkspaceDesignRule } from './workspace-design-rule';
-import { mountPromptContextBlocks } from './prompt-context-blocks';
+import { mountPromptContextBlocks, withUiCompositionPolicy } from './prompt-context-blocks';
 import {
   businessModelContextBlock,
   taskBusinessContextBlock,
@@ -65,7 +65,7 @@ import { hasBoundHandoffForExactDispatchWorker } from './task-dispatch-codec';
 import { migrateModelId } from '../../shared/model-defaults';
 import { resolveCwdForScope } from './workspace-path';
 import { withHandoffContract } from './worker-handoff-contract';
-import { UI_COMPOSITION_CONTEXT, withUiCompositionPolicy } from './ui-composition-policy';
+import { UI_COMPOSITION_CONTEXT } from './ui-composition-policy';
 import { hasNexusBrowserAlternative } from './nexus-browser-policy';
 import {
   assertReleaseQualifiedMissionWorkerSpawn,

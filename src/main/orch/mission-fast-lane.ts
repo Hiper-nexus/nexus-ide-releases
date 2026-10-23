@@ -65,7 +65,7 @@ import {
 import { getAcpDriverSession, listAcpDriverAgentSessions } from '../acp/acp-harness-driver';
 import { getAdapter, listAdapterInfos } from '../adapters/adapter-registry';
 import { deliverAgentPrompt, proveNativeArgvBriefAccepted, withProjectContextBlocksAsync } from './tool-util';
-import { withUiCompositionPolicy } from './ui-composition-policy';
+import { withUiCompositionPolicy } from './prompt-context-blocks';
 import { canUseNexusMcp } from './cli-mcp-inject';
 import {
   NEXUS_BROWSER_BRIEF_RULE,

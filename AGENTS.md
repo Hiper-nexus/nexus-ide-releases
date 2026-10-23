@@ -3283,11 +3283,13 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
 MCP initialize, montagem compartilhada de briefs, contrato de handoff e retomada
 da Via Rápida. Não depende de Design Pro nem de carregar Impeccable. O hook de
 UI do operador o reforça, e a captura verificada leva o critério ao revisor.
+Kimi recebe também pelo hook sem classificador (não lê as instructions do MCP).
 Não empilhar tudo à esquerda por reflexo nem centralizar tudo: usar hierarquia,
 grupos, eixos consistentes e alinhamento por função, respeitando a direção do
 operador e o contrato visual vigente. Inspecionar o resultado ou declarar a
 limitação. O bloco inicial `<nexus-ui-composition>` é contexto, não tarefa:
-deduplicar e remover ao classificar trabalho para não exigir captura do backend.
+deduplicar e remover somente seu corpo exato ao classificar trabalho para não
+exigir captura do backend nem permitir que uma tag forjada esconda a tarefa.
 Não confundir entrega da instrução com garantia de obediência ou de qualidade.
 
 ## Revisão de 22/10: navegador, portão visual e missão

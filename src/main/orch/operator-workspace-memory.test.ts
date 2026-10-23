@@ -52,7 +52,8 @@ beforeEach(() => {
 afterEach(() => {
   disposeWorkspaceMemoryStores();
   getFeatureFlagRegistry().clearOverride(FEATURE_FLAG_IDS.workspaceMemory);
-  for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  // Windows can retain a short-lived background Git handle after disposal.
+  for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 describe('<workspace-memory> no "+ Pane" pelos canais do <business-model>', () => {

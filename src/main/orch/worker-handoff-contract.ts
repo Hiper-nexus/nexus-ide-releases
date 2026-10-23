@@ -8,8 +8,7 @@ import { getOrchSettings } from '../persistence/settings-store';
 import { canUseNexusMcp } from './cli-mcp-inject';
 import { isPaneMetaTask } from './mission-fast-lane';
 import { NEXUS_BROWSER_BRIEF_RULE } from './nexus-browser-policy';
-import { withUiCompositionPolicy } from './ui-composition-policy';
-import { withoutMountedPromptContextBlocks } from './prompt-context-blocks';
+import { withoutMountedPromptContextBlocks, withUiCompositionPolicy } from './prompt-context-blocks';
 
 /**
  * UI-shaped work, detectado no brief da tarefa + título do pane/nome do agente.
