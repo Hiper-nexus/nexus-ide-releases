@@ -263,12 +263,12 @@ export async function handleMcpMessage(
         ? requested
         : MCP_PROTOCOL_VERSION;
       const instructions = joinPromptContextBlocks([
-        UI_COMPOSITION_POLICY,
         operatorDelegationInstructions(ctx),
         maestroStandingContext(ctx, "mcp"),
         operatorBusinessModelContext(ctx, "mcp"),
         operatorUiKitContext(ctx, "mcp"),
         operatorWorkspaceMemoryContext(ctx, "mcp"),
+        UI_COMPOSITION_POLICY,
       ]);
       return ok(id, {
         protocolVersion: version,
