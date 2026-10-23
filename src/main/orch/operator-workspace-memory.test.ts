@@ -124,7 +124,10 @@ describe('<workspace-memory> no "+ Pane" pelos canais do <business-model>', () =
     replaceOrchSettings({ workspaceMemoryInjection: false });
     try {
       expect(await instructionsFor({ role: 'user', providerId: 'grok' })).not.toContain('<workspace-memory');
-      expect(withProjectContextBlocks({ prompt: 'instale com pnpm', scope })).toBe('instale com pnpm');
+      const brief = withProjectContextBlocks({ prompt: 'instale com pnpm', scope })!;
+      expect(brief).not.toContain('<workspace-memory');
+      expect(brief).toContain('# Nexus UI composition baseline');
+      expect(brief.endsWith('\n\ninstale com pnpm')).toBe(true);
     } finally {
       replaceOrchSettings({ workspaceMemoryInjection: previous });
     }

@@ -205,6 +205,10 @@ describe('Via Rápida first-wave — entrega do briefing por colagem para o work
       undefined,
       { adapterId: 'kimi' },
     );
+    // This route bypasses withHandoffContract and this fixture has no MCP.
+    // Assert the actual spawn and paste payloads, not a policy helper alone.
+    expect(state.spawnPrompts[0]).toContain('# Nexus UI composition baseline');
+    expect(deliverAgentPromptMock.mock.calls[0]?.[1]).toContain('# Nexus UI composition baseline');
   });
 
   it('P2-8: worker da 1ª onda recebe o <business-model> atestado no briefing entregue (argv e colagem)', async () => {

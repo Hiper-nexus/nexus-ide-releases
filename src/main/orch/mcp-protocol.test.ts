@@ -229,13 +229,25 @@ describe('handleMcpMessage', () => {
     });
   });
 
+  // Transport contract: removing the policy from initialize must break this,
+  // regardless of provider, role, optional design skills or Design Pro.
+  it.each(['claude', 'codex', 'grok', 'agy', 'kimi', 'qwen', 'opencode', 'mimo-code', 'minimax-code', 'muse', 'devin'])
+    ('initialize delivers the mandatory UI baseline to every role on %s', async (providerId) => {
+      for (const base of [userCtx, missionCtx, orchestratorMissionCtx]) {
+        const ctx = { ...base(), providerId };
+        const res = await handleMcpMessage(makeRegistry(), ctx, req('initialize', {}));
+        expect((res?.result as { instructions?: string }).instructions)
+          .toContain('# Nexus UI composition baseline');
+      }
+    });
+
   it('initialize entrega a doutrina de delegação só à mão do operador sem missão', async () => {
     const user = await handleMcpMessage(makeRegistry(), userCtx(), req('initialize', {}));
     expect((user?.result as { instructions?: string }).instructions).toContain('nexus_pane_spawn');
     const worker = await handleMcpMessage(makeRegistry(), missionCtx(), req('initialize', {}));
-    expect((worker?.result as { instructions?: string }).instructions).toBeUndefined();
+    expect((worker?.result as { instructions?: string }).instructions).not.toContain('nexus_pane_spawn');
     const orch = await handleMcpMessage(makeRegistry(), orchestratorMissionCtx(), req('initialize', {}));
-    expect((orch?.result as { instructions?: string }).instructions).toBeUndefined();
+    expect((orch?.result as { instructions?: string }).instructions).not.toContain('nexus_pane_spawn');
   });
 
   it('reports the completed tool result to the transport observer without changing the response', async () => {

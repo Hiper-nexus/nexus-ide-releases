@@ -7,6 +7,7 @@ import { createScopedBrowserArtifactStore } from '../browser/browser-artifact-st
 import { testProjectScope } from './__tests__/scope-fixture';
 import { ProcessGitRunner } from '../runtime/git-command';
 import * as candidateSnapshots from '../context/candidate-working-tree-snapshot';
+import { UI_COMPOSITION_REVIEW } from './ui-composition-policy';
 import {
   __resetVisualHandoffBouncesForTests, checkVisualHandoff, recordVisualHandoffEvidence, visualCandidateBindingsSettled,
   visualHandoffSendBack, visualTaskRequirement, visualTaskAtSpawn, visualEvidenceVerified, VISUAL_CAPTURE_STALE_REASON,
@@ -258,6 +259,7 @@ describe('review 22/10: a capture is bound to the preview and to the candidate',
       path: image.path, url: 'http://127.0.0.1:4567/precos', width: 1, height: 1, capturedAt: 1100 });
     expect(verdict.required && verdict.verified && verdict.reviewHint).toContain(image.path);
     expect(verdict.required && verdict.verified && verdict.reviewHint).toMatch(/antes de aceitar/);
+    expect(verdict.required && verdict.verified && verdict.reviewHint).toContain(UI_COMPOSITION_REVIEW);
   });
 
   it('the check waits for a capture-time observation still running', async () => {

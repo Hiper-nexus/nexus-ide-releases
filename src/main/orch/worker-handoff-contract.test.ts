@@ -13,6 +13,22 @@ import { NEXUS_BROWSER_BRIEF_RULE } from "./nexus-browser-policy";
 import { charterTierForWorker, withHandoffContract } from "./worker-handoff-contract";
 
 describe("worker handoff transport contract", () => {
+  it.each([
+    { quirks: { nexusMcp: 'opencode' } },
+    { quirks: { mcpAutoload: false, nexusMcp: 'none' } },
+  ])('delivers UI composition without Design Pro or an optional skill (%j)', (adapter) => {
+    for (const hints of [{ category: 'executor' }, { category: 'reviewer', readOnly: true }]) {
+      const prompt = withHandoffContract('Refaça o cartão de trabalho', adapter, hints);
+      expect(prompt).toContain('# Nexus UI composition baseline');
+    }
+  });
+
+  it('carries a self-gating baseline even when the task vocabulary does not identify UI', () => {
+    const prompt = withHandoffContract('Corrija a paginação SQL do backend', { quirks: {} });
+    expect(prompt).toContain('# Nexus UI composition baseline');
+    expect(prompt).not.toContain('Validação visual de interface ou jogo');
+  });
+
   it("teaches a CLI without Nexus MCP the filesystem shim before the physical PTY fallback", () => {
     const prompt = withHandoffContract("Corrija o fluxo da missão.", {
       quirks: { mcpAutoload: false, nexusMcp: "none" },

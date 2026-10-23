@@ -6,6 +6,7 @@ import { getOrchSettings } from '../persistence/settings-store';
 import { composeDesignCharter } from './design-profile';
 import { resolveWorkspaceDesignContract } from './design-system-reader';
 import { homeRelativePath, OUTSIDE_HOME_LABEL } from './home-relative-path';
+import { UI_COMPOSITION_POLICY } from './ui-composition-policy';
 
 /** Cabeçalho da regra. O hook do operador o procura para não repeti-la a um helper que já nasceu com ela. */
 export const WORKSPACE_DESIGN_RULE_HEADING = 'Regra de design do projeto';
@@ -132,5 +133,6 @@ export function operatorDesignContext(
   const lines = authorityLines(workspaceRoot, prompt, options, true);
   if (!lines) return null;
   const rule = ruleText(lines);
-  return options.charter ? `${rule}\n\n${options.charter}` : rule;
+  const baseline = `${rule}\n\n${UI_COMPOSITION_POLICY}`;
+  return options.charter ? `${baseline}\n\n${options.charter}` : baseline;
 }

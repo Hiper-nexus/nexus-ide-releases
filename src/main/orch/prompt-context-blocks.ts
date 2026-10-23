@@ -30,7 +30,7 @@ function mountedOpenings(text: string): Set<string> {
 }
 
 /** Tags dos blocos de contexto que o próprio Nexus monta na frente do prompt. */
-const NEXUS_CONTEXT_TAGS = new Set(['business-model', 'workspace-memory']);
+const NEXUS_CONTEXT_TAGS = new Set(['business-model', 'workspace-memory', 'nexus-ui-composition']);
 
 /**
  * O texto depois dos blocos montados na frente: a tarefa, sem o contexto do

@@ -3277,6 +3277,19 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
     recusada para escrita; a recusa diz a saída (tirar só o link e instalar,
     ou instalar no checkout principal). Materializar sozinho foi descartado.
 
+## Composição de UI obrigatória (F-1655, 23/10)
+
+`orch/ui-composition-policy.ts` é o baseline de composição para qualquer LLM:
+MCP initialize, montagem compartilhada de briefs, contrato de handoff e retomada
+da Via Rápida. Não depende de Design Pro nem de carregar Impeccable. O hook de
+UI do operador o reforça, e a captura verificada leva o critério ao revisor.
+Não empilhar tudo à esquerda por reflexo nem centralizar tudo: usar hierarquia,
+grupos, eixos consistentes e alinhamento por função, respeitando a direção do
+operador e o contrato visual vigente. Inspecionar o resultado ou declarar a
+limitação. O bloco inicial `<nexus-ui-composition>` é contexto, não tarefa:
+deduplicar e remover ao classificar trabalho para não exigir captura do backend.
+Não confundir entrega da instrução com garantia de obediência ou de qualidade.
+
 ## Revisão de 22/10: navegador, portão visual e missão
 
 Achados de `docs/analysis/2026-10-22-revisao-kit-ui-jev-navegador-missao.md`; o
