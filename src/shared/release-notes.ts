@@ -12878,7 +12878,7 @@ const RELEASE_076419_FULL: AppRelease = {
 export const RELEASE_076419: AppRelease = RELEASE_076419_FULL;
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.420',
+  version: '0.76.421',
   date: '2026-10-22',
   codename: 'Windows: MiniMax GA e instaladores corrigidos',
   summary: 'A base da última entrega Mac chega ao Windows com MiniMax Flash GA, ' +
@@ -12897,4 +12897,4 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076420: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076421: AppRelease = CURRENT_RELEASE;

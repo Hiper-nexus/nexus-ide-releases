@@ -1,8 +1,10 @@
 # Changelog
 
-## 0.76.420 — Windows: MiniMax GA e instaladores corrigidos
+## 0.76.421 — Windows: MiniMax GA e instaladores corrigidos
 
 Atualização Windows x64 com a base completa da main 0.76.419 e da última entrega macOS 0.76.417.
+
+A candidata local 0.76.420 foi preservada sem publicação. Esta versão incorpora a atualização do registro de procedência do catálogo GA e a sincronização da prova real de atraso do event loop.
 
 - **MiniMax Flash GA:** padrão e rotas passam a `minimax/MiniMax-M3.1-Flash`; o alias exato do Preview é migrado em panes, squads e catálogos antigos (F-1649). Modelos restantes e autenticação permanecem sob as regras da CLI/conta. A versão 0.6.12 foi validada neste Windows com SQLite nativo e um turno real respondendo OK.
 - **Atualizador MiniMax Windows:** a identidade canônica `minimax-code` acompanha seleção, preparação, execução e reparo, em vez de ser deduzida do nome `mcode.cmd` (F-1646).
