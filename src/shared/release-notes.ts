@@ -12975,15 +12975,16 @@ export const RELEASE_076425: AppRelease = {
   ],
 };
 
-export const RELEASE_076426: AppRelease = {
-  version: '0.76.426',
+export const RELEASE_076427: AppRelease = {
+  version: '0.76.427',
   date: '2026-10-23',
   codename: 'Composição de UI e navegador no Linux',
   summary:
     'No desktop Linux, a regra de composição chega a todo papel (F-1655) e ' +
     'o navegador de agente com device não derruba mais o processo (F-1656). ' +
     'O runtime de release passa a Node 22.23.4. A 0.76.425 continua o ' +
-    'carimbo macOS e não recebe estes arquivos. A 0.76.422 é o pacote Linux anterior.',
+    'carimbo macOS e não recebe estes arquivos. A 0.76.422 é o pacote Linux anterior. ' +
+    'A tag v0.76.426 ficou sem pacote.',
   highlights: [
     { title: 'Composição sem depender de skill', detail: 'Hierarquia, grupos e alinhamento por função vão pelo MCP e pelos briefs, inclusive na Via Rápida sem MCP. Não depende de Design Pro (F-1655).' },
     { title: 'Navegador de agente não derruba o app', detail: 'nexus_browser_open com device num pane sem view de render não chama a emulação nativa antes do primeiro documento. A UA continua no primeiro request (F-1656).' },
@@ -12996,7 +12997,7 @@ export const RELEASE_076426: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.427',
+  version: '0.76.428',
   date: '2026-10-23',
   codename: 'Ferramentas sem proibições desatualizadas',
   summary: 'Regras alinhadas às ferramentas e ao modo real da missão: launcher Impeccable permitido, alternativas web autorizadas, kits compatíveis e validação adequada ao runtime.',
@@ -13012,4 +13013,4 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076427: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076428: AppRelease = CURRENT_RELEASE;

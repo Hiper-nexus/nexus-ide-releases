@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.76.427 — Ferramentas sem proibições desatualizadas
+## 0.76.428 — Ferramentas sem proibições desatualizadas
 
 - **Codex sem Fast herdado (F-1658):** panes novos e retomados começam em Standard, mesmo quando o arquivo nativo ou perfil conserva `service_tier = "priority"`. Modelo, esforço e configuração global ficam intactos; o operador ainda pode mudar o modo dentro da própria sessão.
 - **Impeccable liberado corretamente (F-1657):** a carta deixa de proibir o launcher documentado da skill instalada. Windows usa `impeccable.cmd`; ausência de um comando global não é ausência da skill. Sem ferramenta, o agente declara a limitação e continua com o contexto local, sem inventar pacote/comando.
@@ -10,9 +10,9 @@
 
 Autenticação, proteção de segredos, isolamento, consentimento, Hardened, revisão formal, licenças e assinatura permanecem. Os testes com Codex e Claude verificam decisões diante das instruções; não garantem obediência universal nem substituem inspeção visual. A auditoria de memória permanece separada e a perda do aviso `reverify` não é corrigida nesta entrega.
 
-## 0.76.426 — Composição de UI e navegador no Linux
+## 0.76.427 — Composição de UI e navegador no Linux
 
-Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions. A 0.76.425 continua o carimbo macOS e não recebe estes arquivos. A 0.76.424 continua o carimbo Windows. A 0.76.422 é o pacote Linux anterior.
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions. A 0.76.425 continua o carimbo macOS e não recebe estes arquivos. A 0.76.424 continua o carimbo Windows. A 0.76.422 é o pacote Linux anterior. A tag v0.76.426 ficou sem pacote: a suíte recusou o hash antigo do ledger de `browser-manager.ts`.
 
 - **Composição de UI (F-1655):** hierarquia, agrupamento, espaçamento e alinhamento por função passam a ir em todo papel, pelo MCP e pelos briefs, inclusive na Via Rápida sem MCP e nas retomadas. Não depende de Design Pro nem de carregar Impeccable. Texto à esquerda continua válido; a regra rejeita empilhar ou centralizar tudo por reflexo.
 - **Navegador de agente (F-1656):** `nexus_browser_open` com `device` num pane sem view de render não derruba mais o processo principal. O Electron 43.8.3 lia `GetView()` nulo. A UA segue antes do primeiro request; as métricas entram no commit do primeiro documento.
