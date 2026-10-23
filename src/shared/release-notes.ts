@@ -13052,11 +13052,11 @@ export const RELEASE_076430: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.432',
+  version: '0.76.433',
   date: '2026-10-23',
-  codename: 'Kimi K3.1 Pro',
+  codename: 'Kimi K3.1 Pro no Linux',
   summary:
-    'O Kimi K3.1 Pro vira o padrão do Kimi e entra na rota de todos os ' +
+    'No Linux, o Kimi K3.1 Pro vira o padrão do Kimi e entra na rota de todos os ' +
     'tiers, na revisão e no front; o K3.1 Pro Highspeed fica disponível ' +
     'para escolha manual (F-1660).',
   highlights: [
@@ -13067,7 +13067,8 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'CLI sem o K3.1 continua no K3', detail: 'Se o Kimi Code ainda não listou o modelo novo, o Nexus usa o K3 e o default da própria CLI, sem abrir pane com modelo inexistente. Na lane visual o K3 é reserva do mesmo assento (F-1660).' },
     { title: 'Custo com o preço oficial', detail: 'K3.1 Pro a $2/$10 por milhão de tokens (2/3 do K3) e Highspeed a $4/$20, com cache a $0,20 nos dois (F-1660).' },
+    { title: 'Pacote Linux independente', detail: 'A 0.76.432 continua o carimbo macOS e não recebe estes arquivos. A 0.76.430 é o pacote Linux anterior. A 0.76.428 continua o Windows. A tag v0.76.431 ficou sem pacote.' },
   ],
 };
 
-export const RELEASE_076432: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076433: AppRelease = CURRENT_RELEASE;
