@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.436 — Pane do operador entra na missão, assinado com YubiKey
+
+Atualização Windows x64 assinada com YubiKey. A 0.76.435 continua o carimbo Linux, a 0.76.434 é o pacote Windows anterior sem assinatura e a 0.76.432 continua o macOS.
+
+- **CLI fora do roster aceita por escolha explícita (F-1661):** `+ Pane → Nesta missão` não devolve mais `roster_rejected` para uma CLI instalada que abre pane, mesmo quando ela não estava no squad aprovado. O participante nasce `operatorOpened`, visível ao Maestro e ao Quadro, e só o operador o fecha.
+- **Squad e contrato intactos:** a escolha autoriza somente o participante extra, sem reescrever squad, contrato ou selo da missão. Workers automáticos do Maestro continuam sujeitos ao roster e ao modo livre da missão.
+- **Demais cercas preservadas:** escopo, estado da missão, instalação, transporte, identidade física da conta e registro durável continuam validados. Hardened continua recusando esse caminho manual.
+- **Assinatura e prova:** executáveis com Authenticode válido pelo certificado HIPERSEND fixado e carimbo de tempo. A prova instalada N→N+1 não foi concluída e permanece explicitamente não verificada, com dispensa registrada.
+
 ## 0.76.435 — Pane do operador entra na missão
 
 Pacote Linux do F-1661, empacotado para x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions. A 0.76.434 continua o carimbo Windows e não recebe estes arquivos. A 0.76.433 é o pacote Linux anterior. A 0.76.432 continua o macOS.

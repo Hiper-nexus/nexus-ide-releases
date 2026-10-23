@@ -13090,7 +13090,7 @@ export const RELEASE_076434: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076435: AppRelease = {
   version: '0.76.435',
   date: '2026-10-23',
   codename: 'Pane do operador entra na missão',
@@ -13109,4 +13109,24 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076435: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.436',
+  date: '2026-10-23',
+  codename: 'Pane do operador entra na missão, assinado com YubiKey',
+  summary:
+    'No Windows, + Pane → Nesta missão aceita uma CLI instalada fora do ' +
+    'roster quando você a escolhe explicitamente, sem alterar o squad nem ' +
+    'liberar essa escolha para os workers automáticos (F-1661). Pacote assinado com YubiKey.',
+  highlights: [
+    { title: 'Sua CLI entra na missão', detail: 'A escolha no picker abre um participante operatorOpened, visível ao Maestro e ao Quadro, em vez de falhar com roster_rejected (F-1661).' },
+    { title: 'Squad e contrato preservados', detail: 'O participante extra não reescreve o squad, o contrato ou o selo da missão, e só você o fecha.' },
+    { title: 'Assinado com YubiKey', detail: 'Executáveis com Authenticode válido pelo certificado HIPERSEND fixado e carimbo de tempo. A 0.76.435 continua o Linux e a 0.76.434 é o Windows anterior sem assinatura.' },
+  ],
+  fixes: [
+    { title: 'Roster automático continua protegido', detail: 'Workers abertos pelo Maestro seguem sujeitos ao roster e ao modo livre; a exceção vale somente para a escolha explícita do operador.' },
+    { title: 'Cercas de missão intactas', detail: 'Escopo, estado, instalação, transporte, identidade física da conta e registro durável continuam validados; Hardened segue recusando este caminho.' },
+    { title: 'Upgrade não verificado', detail: 'A prova instalada N→N+1 não foi concluída e continua explicitamente não verificada, com dispensa registrada.' },
+  ],
+};
+
+export const RELEASE_076436: AppRelease = CURRENT_RELEASE;
