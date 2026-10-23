@@ -110,7 +110,8 @@ import {
 import type { CliVersionCheck } from '../adapters/cli-auto-update';
 import { trace } from '../observability/main-trace';
 import { execFile } from 'node:child_process';
-import { redactSecretText } from '../../shared/secret-redaction';
+import { redactSecretText, redactTerminalText } from '../../shared/secret-redaction';
+import { stripAnsi } from '../../shared/ansi-text';
 import {
   getKey,
   getSecret,
@@ -2843,11 +2844,34 @@ function recordCliAutoUpdate(adapterId: string, outcome: Omit<CliAutoUpdateOutco
   if (outcome.status === 'failed') broadcast();
 }
 
-function shortInstallError(error: unknown): string {
-  const raw = String(error instanceof Error ? error.message : error);
-  const sanitized = redactSecretText(raw).text;
-  const lines = sanitized.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
-  return (lines.at(-1) ?? 'erro desconhecido').slice(0, 200);
+// Keep only a bounded, redacted diagnostic; never replace the native Error or
+// copy its raw output. Identity, AbortError, code, signal and killed stay intact.
+const installFailureDetails = new WeakMap<Error, string>();
+
+function installOutputSummary(raw: string, maxLength: number): string | undefined {
+  // execFile already bounds each captured stream (8 MiB). Redact BEFORE
+  // selecting/capping lines so wrapped tokens and PEM bodies remain covered.
+  const lines = redactTerminalText(stripAnsi(raw)).split('\n')
+    .map(line => line.trim().replace(/^npm\s+(?:ERR!|error)\s*/iu, ''))
+    .filter(line => line && !/^(?:Command failed(?::|$)|A complete log of this run)/iu.test(line));
+  const cause = [...lines].reverse().find(line =>
+    /\b(?:err(?:or)?|fatal|failed|denied|refused|EACCES|ENOENT|unsupported|unreachable|falhou)\b/iu.test(line));
+  return (cause ?? lines.at(-1))?.slice(0, maxLength);
+}
+
+function captureInstallFailure(error: Error, stdout?: string | Buffer, stderr?: string | Buffer): Error {
+  const state = error as Error & { code?: unknown; killed?: boolean };
+  // Interrupted output is not a completed package failure.
+  if (error.name === 'AbortError' || state.code === 'ABORT_ERR' || state.killed) return error;
+  const detail = installOutputSummary(`${String(stderr ?? '')}\n${String(stdout ?? '')}`, 300);
+  if (detail) installFailureDetails.set(error, detail);
+  return error;
+}
+
+function shortInstallError(error: unknown, maxLength = 200): string {
+  const captured = error instanceof Error ? installFailureDetails.get(error) : undefined;
+  return captured?.slice(0, maxLength) ??
+    installOutputSummary(String(error instanceof Error ? error.message : error), maxLength) ?? 'erro desconhecido';
 }
 
 /**
@@ -3102,7 +3126,7 @@ export function startCliAutoUpdate(
               await runTracked(repair.recipe, repair.prepared);
               return 'repaired';
             } catch (error) {
-              console.warn(`[cli-auto-update] ${id}: repair failed`, error);
+              console.warn(`[cli-auto-update] ${id}: repair failed`, shortInstallError(error));
               return 'broken';
             }
           };
@@ -3112,7 +3136,7 @@ export function startCliAutoUpdate(
             await runTracked(repairOnly?.recipe ?? selected.recipe,
               repairOnly?.prepared ?? selected.prepared ?? undefined);
           } catch (error) {
-            console.warn(`[cli-auto-update] ${id}: ${repairOnly ? 'repair' : 'update'} failed`, error);
+            console.warn(`[cli-auto-update] ${id}: ${repairOnly ? 'repair' : 'update'} failed`, shortInstallError(error));
             if (stopped || error === authorityChanged) return false;
             const state = await repairIfBroken();
             if (state !== 'repaired') {
@@ -3291,7 +3315,9 @@ async function installedCliVersion(adapterId: string, binPath: string): Promise<
     execFile(
       executable,
       args,
-      { timeout: 10_000, maxBuffer: 16 * 1024, windowsHide: true },
+      { timeout: 10_000, maxBuffer: 16 * 1024, windowsHide: true,
+        ...(adapterId === 'muse' ? { env: { ...process.env, MUSE_LOGIN: '0', MUSE_NO_MODIFY_PATH: '1' } } : {}),
+      },
       (error, stdout) => {
         const version = String(stdout).trim().split(/\r?\n/u)[0]?.trim();
         resolve(error || !version ? null : version.slice(0, 100));
@@ -3410,7 +3436,7 @@ async function runPosixScriptRecipe(
         runner.binPath,
         [file],
         hooks?.childSignal ? { ...options, signal: hooks.childSignal } : options,
-        (error) => (error ? reject(error) : resolve()),
+        (error, stdout, stderr) => (error ? reject(captureInstallFailure(error, stdout, stderr)) : resolve()),
       );
       child?.stdin?.end();
     }), hooks);
@@ -3459,7 +3485,7 @@ async function runPowerShellScriptInstall(
         resolveRunnerPath('powershell') ?? 'powershell.exe',
         ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', file],
         hooks?.childSignal ? { ...options, signal: hooks.childSignal } : options,
-        (error) => (error ? reject(error) : resolve()),
+        (error, stdout, stderr) => (error ? reject(captureInstallFailure(error, stdout, stderr)) : resolve()),
       );
     }), hooks);
   } catch (error) {
@@ -3549,7 +3575,7 @@ export async function runInstallRecipe(
         invocation.executable,
         [...invocation.args],
         hooks?.childSignal ? { ...invocation.options, signal: hooks.childSignal } : invocation.options,
-        (error) => (error ? reject(error) : resolve()),
+        (error, stdout, stderr) => (error ? reject(captureInstallFailure(error, stdout, stderr)) : resolve()),
       );
       // F-1395: sem TTY e stdin fechado — um prompt (sudo do brew) recebe EOF e
       // falha na hora, em vez de pendurar até o timeout.
@@ -3842,7 +3868,7 @@ export async function maybeOfferFirstRunProvisioning(
       done.push(provider.label);
     } catch (err) {
       pending.push(
-        `${provider.label} — ${err instanceof Error ? err.message.slice(0, 120) : 'falhou'}`,
+        `${provider.label} — ${shortInstallError(err, 120)}`,
       );
     } finally { cliUpdateLease.release(provider.adapterId); }
   }
@@ -3995,10 +4021,7 @@ export function registerProviderIpc(): void {
       const operation = updating ? 'atualização' : 'instalação';
       return {
         ok: false,
-        error:
-          err instanceof Error
-            ? `${operation} falhou: ${err.message.slice(0, 300)}`
-            : `${operation} falhou`,
+        error: `${operation} falhou: ${shortInstallError(err, 300)}`,
       };
     }
     // Re-fold PATH + re-probe absolute bins so the new CLI is spawnable now.

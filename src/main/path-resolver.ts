@@ -671,7 +671,9 @@ function runCliVersionProbe(
       }
       execFile(launch.file, [...launch.argsPrefix, '--version'], {
         encoding: 'utf8', timeout: CLI_VERSION_PROBE_TIMEOUT_MS, maxBuffer: 16 * 1024,
-        windowsHide: true, env: { ...process.env, PATH: effectivePath },
+        windowsHide: true, env: { ...process.env, PATH: effectivePath,
+          ...(adapterId === 'muse' ? { MUSE_LOGIN: '0', MUSE_NO_MODIFY_PATH: '1' } : {}),
+        },
       }, (error, stdout) => {
         // Unreadable version: retain PATH order, and memoise the failure.
         resolve(error ? null : /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/.exec(stdout)?.[0] ?? null);

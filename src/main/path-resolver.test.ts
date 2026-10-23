@@ -10,6 +10,7 @@ import {
   commonCliBinDirs,
   lookupInPath,
   onCliVersionLearned,
+  probeCliBinaryVersion,
   probeLoginShellPath,
   retryLoginShellPathIfMissed,
   revalidateExecutable,
@@ -387,6 +388,29 @@ describe('path-resolver CLI binary resolution', () => {
   it('lookupInPath finds an executable on a minimal PATH', () => {
     const found = lookupInPath('claude', binDir);
     expect(found).toBe(executable);
+  });
+
+  it.each(['muse', 'codex'])('F-1648: discovery probes %s without enabling Muse login', async adapterId => {
+    const bin = path.join(binDir, `${adapterId}.exe`);
+    fs.writeFileSync(bin, 'fixture: never executed');
+    vi.stubEnv('MUSE_LOGIN', '1');
+    vi.stubEnv('MUSE_NO_MODIFY_PATH', '0');
+    const expected = adapterId === 'muse'
+      ? { MUSE_LOGIN: '0', MUSE_NO_MODIFY_PATH: '1' }
+      : { MUSE_LOGIN: '1', MUSE_NO_MODIFY_PATH: '0' };
+    vi.mocked(execFile).mockImplementationOnce(((...args: unknown[]) => {
+      const env = (args[2] as { env: NodeJS.ProcessEnv }).env;
+      const safe = env.MUSE_LOGIN === expected.MUSE_LOGIN &&
+        env.MUSE_NO_MODIFY_PATH === expected.MUSE_NO_MODIFY_PATH;
+      (args.at(-1) as (error: Error | null, stdout: string) => void)(
+        safe ? null : new Error('fixture refused changed login policy'), `${adapterId} 1.2.3`);
+      return {};
+    }) as typeof execFile);
+    try {
+      expect(await probeCliBinaryVersion(bin, binDir, adapterId)).toBe('1.2.3');
+      expect(process.env.MUSE_LOGIN).toBe('1');
+      expect(process.env.MUSE_NO_MODIFY_PATH).toBe('0');
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it.skipIf(process.platform !== 'win32')(

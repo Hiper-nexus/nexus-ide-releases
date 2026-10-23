@@ -762,9 +762,9 @@ describe('background CLI maintenance during pane startup', () => {
         const secretBearer = 'Bearer synthetic-secret-token-abcdef1234567890';
         spawnDeps.execFile.mockImplementation((...args: unknown[]) => {
           const argv = args[1] as string[];
-          const callback = args.at(-1) as (error: Error | null, stdout: string) => void;
+          const callback = args.at(-1) as (error: Error | null, stdout: string, stderr?: string) => void;
           if (argv[0] === 'update') {
-            callback(new Error(`Command failed: claude update\nnpm ERR! 401 Unauthorized: ${secretBearer}`), '');
+            callback(new Error('Command failed: claude update'), '', `npm ERR! 401 Unauthorized: ${secretBearer}`);
           } else {
             callback(null, '1.0.0');
           }
@@ -772,6 +772,9 @@ describe('background CLI maintenance during pane startup', () => {
         });
         stop = startCliAutoUpdate('/fixture-quota-home', () => false);
         await vi.advanceTimersByTimeAsync(5_000);
+        const log = warn.mock.calls.flat().map(value => value instanceof Error ? value.stack : String(value)).join('\n');
+        expect(log).not.toContain('synthetic-secret-token-abcdef1234567890');
+        expect(log).toContain('[REDACTED]');
         warn.mockRestore();
 
         const cliUpdateCalls = traceSpy.mock.calls.filter((call) => (call[0] as { kind?: string })?.kind === 'cli-update');
@@ -3308,6 +3311,166 @@ describe('F-210: instalação de Claude verifica e reutiliza o binário real', (
     expect(spawnDeps.execFile.mock.calls.at(-1)?.slice(0, 2)).toEqual([
       '/fixture-quota-home/.local/share/claude/versions/4.12.7', ['--version'],
     ]);
+  });
+});
+
+describe('F-1650: installer diagnostics from real child callbacks', () => {
+  const secret = 'sk-synthetic0123456789ABCDEFGHIJKLMN';
+  let resolver: ReturnType<typeof spawnDeps.resolveCliBinary.getMockImplementation>;
+  let stdout: string;
+  let stderr: string;
+  let failure: Error & { code?: string | number; killed?: boolean; signal?: string };
+  type RecipeKind = 'argv' | 'script' | 'powershell-script';
+
+  beforeEach(() => {
+    resolver = spawnDeps.resolveCliBinary.getMockImplementation();
+    spawnDeps.resolveCliBinary.mockImplementation(runner => runner === 'powershell'
+      ? { binPath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe' } : resolver!(runner));
+    stdout = '';
+    stderr = '';
+    failure = Object.assign(new Error('Command failed: ' + 'launcher '.repeat(80)), { code: 1 });
+    spawnDeps.confirmInstall.mockReset().mockResolvedValue({ response: 1 });
+    spawnDeps.rescanBinaries.mockReset().mockResolvedValue([]);
+    vi.spyOn(fsp, 'writeFile').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'rm').mockResolvedValue(undefined);
+    spawnDeps.execFile.mockReset().mockImplementation((...args: unknown[]) => {
+      const argv = args[1] as string[];
+      const callback = args.at(-1) as (err: Error | null, out: string, errout: string) => void;
+      if (argv.includes('--version')) callback(null, '1.2.3', '');
+      else callback(failure, stdout, stderr);
+      return { stdin: { end: () => undefined } } as unknown as ChildProcess;
+    });
+    registerProviderIpc();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks(); vi.unstubAllEnvs();
+    spawnDeps.resolveCliBinary.mockImplementation(resolver!);
+  });
+
+  async function install(kind: RecipeKind): Promise<{ ok: boolean; error?: string }> {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue(kind === 'powershell-script' ? 'win32' : 'darwin');
+    const adapterId = kind === 'argv' ? 'codex' : kind === 'script' ? 'muse' : 'agy';
+    return await spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.installCli)!({}, { adapterId }) as { ok: boolean; error?: string };
+  }
+
+  it.each(['argv', 'script', 'powershell-script'] as const)('%s reports stdout-only failure instead of the command header', async kind => {
+    stdout = 'Downloading package...\nERROR: permission denied writing destination\nSee installation guide';
+    const result = await install(kind);
+    expect(result).toMatchObject({ ok: false });
+    expect(result.error).toContain('permission denied writing destination');
+    expect(result.error).not.toContain('Command failed');
+    expect(result.error).not.toContain('launcher');
+  });
+
+  it('redacts wrapped secrets and terminal controls before bounding the diagnostic', async () => {
+    stderr = `\u001b[31mERROR: permission denied for ${secret.slice(0, 12)}\n${secret.slice(12)}\u001b[0m\n` +
+      'detail '.repeat(200) + '\nERROR: ' + 'destination not writable '.repeat(100);
+    const result = await install('argv');
+    expect(result.error).toContain('destination not writable');
+    expect(result.error!.length).toBeLessThanOrEqual(320);
+    expect(result.error).not.toMatch(/\u001b|synthetic|ABCDEFGHIJKLMN/);
+  });
+
+  it('redacts stdout secrets even when the secret itself fits inside the visible summary', async () => {
+    stdout = `ERROR: registry refused Bearer ${secret}`;
+    const result = await install('argv');
+    expect(result.error).toContain('registry refused');
+    expect(result.error).toContain('[REDACTED]');
+    expect(result.error).not.toContain(secret);
+  });
+
+  it('redacts a secret split across output lines before choosing the failure line', async () => {
+    stdout = `ERROR: registry refused ${secret.slice(0, 12)}\n${secret.slice(12)}`;
+    const result = await install('argv');
+    expect(result.error).toContain('registry refused');
+    expect(result.error).toContain('[REDACTED]');
+    expect(result.error).not.toMatch(/synthetic|ABCDEFGHIJKLMN/);
+  });
+
+  it('prefers a stdout failure to incidental stderr warnings', async () => {
+    stderr = 'Warning: update notifier unavailable';
+    stdout = 'ERROR: destination permission denied';
+    expect((await install('argv')).error).toContain('destination permission denied');
+  });
+
+  it('reports the npm cause instead of its trailing log-file notice', async () => {
+    stderr = 'npm error code EACCES\nnpm error EACCES: permission denied writing destination\n' +
+      'npm error\nnpm error A complete log of this run can be found in: /fixture/npm-debug.log';
+    const result = await install('argv');
+    expect(result.error).toContain('permission denied writing destination');
+    expect(result.error).not.toContain('npm-debug.log');
+  });
+
+  it('captures ordinary failure output without replacing or mutating the child Error', async () => {
+    stdout = 'ERROR: destination permission denied';
+    const message = failure.message;
+    await expect(runInstallRecipe({ kind: 'argv', runner: 'npm', runnerHint: '', argv: ['npm', 'install', '-g', 'fixture'] }, 'codex'))
+      .rejects.toBe(failure);
+    expect(failure).toMatchObject({ name: 'Error', code: 1, message });
+    expect(failure).not.toHaveProperty('stdout');
+  });
+
+  it('preserves the exact child error, code, name and timeout metadata', async () => {
+    failure = Object.assign(new Error('timed out'), { name: 'TimeoutError', code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM' });
+    stdout = 'ERROR: misleading partial output';
+    await expect(runInstallRecipe({ kind: 'argv', runner: 'npm', runnerHint: '', argv: ['npm', 'install', '-g', 'fixture'] }, 'codex'))
+      .rejects.toBe(failure);
+    expect(failure).toMatchObject({ name: 'TimeoutError', code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM', message: 'timed out' });
+  });
+
+  it('an aborted child stays aborted rather than being presented as a package error', async () => {
+    failure = Object.assign(new Error('The operation was aborted'), { name: 'AbortError', code: 'ABORT_ERR' });
+    stdout = 'ERROR: misleading partial download';
+    const result = await install('argv');
+    expect(result.error).toContain('The operation was aborted');
+    expect(result.error).not.toContain('partial download');
+    await expect(runInstallRecipe({ kind: 'argv', runner: 'npm', runnerHint: '', argv: ['npm', 'install', '-g', 'fixture'] }, 'codex'))
+      .rejects.toBe(failure);
+    expect(failure.name).toBe('AbortError');
+    expect(failure.code).toBe('ABORT_ERR');
+  });
+
+  it('canceling confirmation never starts the installer or captures output', async () => {
+    spawnDeps.confirmInstall.mockResolvedValueOnce({ response: 0 });
+    stdout = 'ERROR: must never appear';
+    expect(await install('argv')).toEqual({ ok: false, error: 'instalação cancelada' });
+    expect(spawnDeps.execFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('F-1648: Muse version probes cannot opt into login', () => {
+  beforeEach(() => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    vi.stubEnv('MUSE_LOGIN', '1');
+    vi.stubEnv('MUSE_NO_MODIFY_PATH', '0');
+    spawnDeps.confirmInstall.mockReset().mockResolvedValue({ response: 1 });
+    vi.spyOn(fsp, 'writeFile').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'rm').mockResolvedValue(undefined);
+    spawnDeps.execFile.mockReset().mockImplementation((...args: unknown[]) => {
+      const [file, argv, opts] = args as [string, string[], { env?: NodeJS.ProcessEnv }];
+      const callback = args.at(-1) as (err: Error | null, out: string) => void;
+      const env = opts.env ?? process.env;
+      if (file.endsWith('/muse') && argv.includes('--version')) {
+        callback(env.MUSE_LOGIN === '0' && env.MUSE_NO_MODIFY_PATH === '1' ? null : new Error('fixture refused potential device login'), 'muse 1.2.3');
+      } else callback(null, 'other-cli 2.3.4');
+      return {} as ChildProcess;
+    });
+    registerProviderIpc();
+  });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+  it('the postinstall version result succeeds under hostile inherited Muse settings', async () => {
+    const result = await spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.installCli)!({}, { adapterId: 'muse' });
+    expect(result).toMatchObject({ ok: true, version: 'muse 1.2.3' });
+    expect(process.env.MUSE_LOGIN).toBe('1');
+    expect(process.env.MUSE_NO_MODIFY_PATH).toBe('0');
+  });
+  it('does not impose Muse settings on unrelated CLI probes', async () => {
+    const result = await spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.installCli)!({}, { adapterId: 'codex' });
+    expect(result).toMatchObject({ ok: true, version: 'other-cli 2.3.4' });
+    const probe = spawnDeps.execFile.mock.calls.find(call => (call[1] as string[]).includes('--version'));
+    const env = (probe?.[2] as { env?: NodeJS.ProcessEnv }).env ?? process.env;
+    expect(env.MUSE_LOGIN).toBe('1');
+    expect(env.MUSE_NO_MODIFY_PATH).toBe('0');
   });
 });
 
