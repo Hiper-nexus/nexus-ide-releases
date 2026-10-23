@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.76.423 — Muse e MiniMax prontos no Mac
+
+Atualização macOS arm64 sobre a main `fa3ca26917ebbdb10c36790fed5a1fe91e0acde8`, incorporando as mudanças posteriores ao pacote macOS 0.76.417 e presentes no Windows 0.76.421.
+
+- **Muse (F-1648):** instalação pelo canal nativo oficial, sem exigir Homebrew; atualização preserva o destino e sondas não iniciam login nem alteram o PATH.
+- **MiniMax Flash GA (F-1649):** padrão e roteamento usam `minimax/MiniMax-M3.1-Flash`; o alias exato do Preview é migrado em escolhas e catálogos persistidos. A CLI e a conta continuam determinando a oferta.
+- **Instaladores POSIX (F-1647):** bash e PATH resolvidos chegam ao instalador; a busca inclui Node 22 do Homebrew Intel e preserva o Node escolhido pelo usuário.
+- **Falhas de instalação (F-1650):** causa resumida com segredos redigidos, preservando cancelamento e timeout.
+- **Análise de terminais (F-1652):** evita varreduras negativas e cópias por caractere, preservando regras de limite, Unicode, prioridade, cooldowns e texto citado.
+
+A correção da identidade do atualizador MiniMax em `.cmd` (F-1646) é exclusiva do Windows. Não há mudança nas telas nem no runtime de retomada de missão desde a 0.76.417; esta versão não anuncia uma correção nova de reinício. Node/npm continuam necessários para receitas npm. A instalação em um Mac Intel físico não foi verificada nesta rodada. Os canais Windows 0.76.421 e Linux 0.76.422 permanecem independentes.
+
 ## 0.76.422 — MiniMax Flash GA no Linux
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions. A 0.76.421 continua o carimbo Windows e não recebe estes arquivos. A 0.76.419 é o pacote Linux anterior.

@@ -12899,7 +12899,7 @@ const RELEASE_076421_FULL: AppRelease = {
 
 export const RELEASE_076421: AppRelease = RELEASE_076421_FULL;
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076422: AppRelease = {
   version: '0.76.422',
   date: '2026-10-23',
   codename: 'MiniMax Flash GA no Linux',
@@ -12923,4 +12923,22 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076422: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.423',
+  date: '2026-10-23',
+  codename: 'Muse e MiniMax prontos no Mac',
+  summary:
+    'Atualização macOS com instalação nativa do Muse, MiniMax Flash GA, ' +
+    'mensagens de falha mais claras e menos trabalho na análise dos terminais.',
+  highlights: [
+    { title: 'Muse pelo instalador oficial', detail: 'O Mac instala o Muse pelo canal nativo, sem exigir Homebrew. Atualização e consulta de versão preservam o destino e não iniciam login automático (F-1648).' },
+    { title: 'MiniMax abre no Flash GA', detail: 'O padrão e as rotas usam MiniMax-M3.1-Flash. Escolhas gravadas do Preview migram para o modelo GA, respeitando a oferta da CLI e da conta (F-1649).' },
+    { title: 'Menos trabalho ao analisar terminais', detail: 'O detector evita varreduras sem candidatos e mantém prioridade, sinais Unicode, cooldowns e proteção de texto citado (F-1652).' },
+  ],
+  fixes: [
+    { title: 'Instaladores encontram o Node escolhido', detail: 'Scripts usam o bash e o PATH resolvidos. A busca inclui Node 22 do Homebrew em Macs Intel, sem substituir a escolha do usuário (F-1647).' },
+    { title: 'A falha de instalação explica a causa', detail: 'A mensagem mostra um resumo limitado da saída, com segredos redigidos. Cancelamento e timeout conservam seu comportamento (F-1650).' },
+  ],
+};
+
+export const RELEASE_076423: AppRelease = CURRENT_RELEASE;
