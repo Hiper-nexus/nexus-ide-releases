@@ -12959,7 +12959,7 @@ export const RELEASE_076424: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+const RELEASE_076425_FULL: AppRelease = {
   version: '0.76.425',
   date: '2026-10-23',
   codename: 'Navegador de agente sem derrubar o Mac',
@@ -12975,4 +12975,22 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076425: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076425: AppRelease = RELEASE_076425_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.426',
+  date: '2026-10-23',
+  codename: 'Ferramentas sem proibições desatualizadas',
+  summary: 'Regras alinhadas às ferramentas e ao modo real da missão: launcher Impeccable permitido, alternativas web autorizadas, kits compatíveis e validação adequada ao runtime.',
+  highlights: [
+    { title: 'Impeccable com seu launcher', detail: 'A carta permite o executável documentado da skill instalada, inclusive impeccable.cmd no Windows. Se indisponível, o agente relata a limitação e continua sem inventar comandos (F-1657).' },
+    { title: 'Alternativas sem travar o trabalho', detail: 'Preferir o navegador Nexus não proíbe outras ferramentas autorizadas. Um kit React incompatível não obriga trocar o framework nem abandonar componentes já existentes.' },
+    { title: 'A missão respeita seu modo', detail: 'Consulta/plano/solo não precisam abrir workers; o piloto preserva contratos delegateOnly legados. SSR e UI nativa podem usar seus runtimes autorizados, sem falsificar a evidência do gate.' },
+  ],
+  fixes: [
+    { title: 'Base recente da main', detail: 'Inclui o pin Node 22.23.4 e a cerca de emulação de device da 0.76.425 (F-1656), sem afirmar teste em Mac físico nesta entrega Windows.' },
+    { title: 'Liberdade sem remover segurança', detail: 'Autenticação, segredos, isolamento, consentimento, Hardened, revisão formal e provas de conclusão continuam. A análise de memória não foi convertida em uma correção silenciosa.' },
+  ],
+};
+
+export const RELEASE_076426: AppRelease = CURRENT_RELEASE;

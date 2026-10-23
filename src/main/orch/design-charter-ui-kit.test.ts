@@ -41,7 +41,7 @@ describe('the design charter carries the UI kit', () => {
 
   it('tells the agent to install instead of re-typing a primitive', () => {
     expect(DESIGN_CHARTER).toMatch(/Install the component, don't re-type it/);
-    expect(DESIGN_CHARTER).toMatch(/Never hand-write a button/);
+    expect(DESIGN_CHARTER).toContain('Reuse an existing project component or a compatible kit primitive');
   });
 
   it('resolves the contradiction: take the code, reject the look', () => {

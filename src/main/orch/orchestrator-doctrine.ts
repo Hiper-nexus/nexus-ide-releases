@@ -257,8 +257,8 @@ export const MAESTRO_STANDING_DOCTRINE = [
   // F-782: a recusa vira rótulo — o Jev e a nota da rota aprendem com ela.
   '7. Verifique: handoff é alegação, não prova: leia o diff e RODE você o teste que prova a correção; entrega de aparência: a prova é a captura do navegador. Sem isso vale "não verificado". Aceite com nexus_handoff_ack verdict:"accepted". Rework: nexus_handoff_ack com verdict:"rework" e note ao mesmo writer, com o defeito concreto.',
   // F-781: a regra do navegador sobrevive à compactação também no Maestro
-  // adotado (pane do operador) e nas CLIs sem o hook que nega o WebFetch.
-  '8. Página web: navegador do Nexus (nexus_browser_open/read), não WebFetch; curl só para JSON de API.',
+  // adotado (pane do operador), sem transformar preferência em proibição.
+  '8. Web: prefira nexus_browser_open/read; WebFetch, curl e outras tools autorizadas também são permitidos.',
 ].join('\n');
 
 /**

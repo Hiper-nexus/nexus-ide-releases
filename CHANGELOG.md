@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.426 — Ferramentas sem proibições desatualizadas
+
+- **Impeccable liberado corretamente (F-1657):** a carta deixa de proibir o launcher documentado da skill instalada. Windows usa `impeccable.cmd`; ausência de um comando global não é ausência da skill. Sem ferramenta, o agente declara a limitação e continua com o contexto local, sem inventar pacote/comando.
+- **Preferência não é proibição:** operador e Maestro podem usar ferramentas web alternativas autorizadas. Kits incompatíveis não obrigam trocar framework; mudanças pequenas preservam componentes e tokens existentes.
+- **Modo e runtime reais:** piloto respeita consulta/plano/solo e o nascimento legado `delegateOnly`; preview estático não é receita universal para SSR ou UI nativa. Nenhuma validação alternativa contorna as provas de conclusão do Main.
+- **Base atualizada:** inclui o Node 22.23.4 fixado na main e a cerca de emulação de device da 0.76.425 (F-1656). Não se anuncia prova em Mac físico nesta build Windows.
+
+Autenticação, proteção de segredos, isolamento, consentimento, Hardened, revisão formal, licenças e assinatura permanecem. Os testes com Codex e Claude verificam decisões diante das instruções; não garantem obediência universal nem substituem inspeção visual. A auditoria de memória permanece separada e a perda do aviso `reverify` não é corrigida nesta entrega.
+
 ## 0.76.425 — Navegador de agente sem derrubar o Mac
 
 Correção macOS arm64 sobre a 0.76.424. O resto da base é o mesmo pacote; não há mudança de composição de UI, roteamento, contas, adapters ou runtime de missão.

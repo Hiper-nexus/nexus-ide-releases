@@ -364,7 +364,7 @@ describe('doutrina permanente do Maestro (F-701)', () => {
     expect(MAESTRO_STANDING_DOCTRINE).toContain('Esteira');
     // F-781: a regra do navegador sobrevive à compactação também no Maestro
     // adotado (pane do operador) e nas CLIs sem o hook do WebFetch.
-    expect(MAESTRO_STANDING_DOCTRINE).toMatch(/nexus_browser_open\/read.*não WebFetch/);
+    expect(MAESTRO_STANDING_DOCTRINE).toMatch(/nexus_browser_open\/read.*WebFetch.*permitidos/);
   });
 
   it('o Maestro VERIFICA o que os workers entregam: handoff é alegação, não prova (dever do operador, 02/10)', () => {

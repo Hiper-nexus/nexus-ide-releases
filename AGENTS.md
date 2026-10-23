@@ -3277,6 +3277,18 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
     recusada para escrita; a recusa diz a saída (tirar só o link e instalar,
     ou instalar no checkout principal). Materializar sozinho foi descartado.
 
+## Ferramentas: preferência não é proibição (F-1657, 23/10)
+
+As instruções compartilhadas seguem as capacidades reais da sessão/projeto:
+launchers documentados pela skill instalada são permitidos (Impeccable inclui
+`scripts/impeccable`/`impeccable.cmd`); não inventar comando global ou pacote.
+Navegador Nexus é preferência pela sessão/evidência, não veto a alternativas
+autorizadas. Preview é para build web estático: SSR/native usam seus runtimes e
+ferramentas disponíveis, sem fingir satisfação dos gates do Main. Kit incompatível
+não obriga trocar stack. O piloto segue o modo efetivo consult/plan/solo, preserva
+`delegateOnly` legado e usa o schema de spawn anunciado, sem inventar batch.
+Nada disso amplia autoridade, escopo, consentimento ou acesso a segredos.
+
 ## Composição de UI obrigatória (F-1655, 23/10)
 
 `orch/ui-composition-policy.ts` é o baseline de composição para qualquer LLM:

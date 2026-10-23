@@ -155,11 +155,13 @@ export function withHandoffContract(
       'uma tarefa visual fica partial. Um caminho ou hash ' +
       'de screenshot não é inspeção: observe a imagem com uma ferramenta autorizada disponível. Build, testes ' +
       'e leitura do código não comprovam aparência nem gameplay. Entrega ainda não ' +
-      'servida não é ferramenta indisponível: gere o build e sirva-o com ' +
+      'servida não é ferramenta indisponível. Para um build web estático, gere o build e sirva-o com ' +
       'nexus_preview_start({dir}) (ex.: dir "dist"), abra a URL que ele devolve com ' +
       'nexus_browser_open e confira com nexus_browser_responsive. O navegador do ' +
-      'Nexus recusa localhost de um servidor de dev e file://, então não suba ' +
-      '`npm run dev` para verificar. Se uma ' +
+      'Nexus recusa localhost de um servidor de dev e file://: não envie essas URLs a ele. ' +
+      'SSR sem export estático e UI nativa podem usar o runtime do projeto e outras ferramentas ' +
+      'autorizadas disponíveis, inclusive servidor de desenvolvimento quando necessário. ' +
+      'Informe o que inspecionou; essa alternativa não substitui automaticamente a captura que o Main exige. Se uma ' +
       'ferramenta ou ' +
       'ambiente necessário falhar mesmo assim, registre a validação como não verificada e envie ' +
       'handoff com status "partial" (ou "blocked" se impedir a tarefa), com os passos ' +

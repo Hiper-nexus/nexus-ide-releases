@@ -97,9 +97,10 @@ export const NEXUS_BROWSER_BRIEF_RULE =
   'use nexus_browser_extract({paneId, fields}); para conferência visual da tela renderizada ' +
   '(erro visível, bloqueio, layout quebrado, objetivo cumprido), use ' +
   'nexus_browser_judge_visual({paneId, goal}). Ele renderiza JavaScript e mantém a sessão da aba. ' +
-  'Para ver o app do PROJETO, gere o build e sirva com nexus_preview_start({dir}); abra a URL ' +
+  'Para um build web estático do PROJETO, gere o build e sirva com nexus_preview_start({dir}); abra a URL ' +
   'que ele devolve e confira com nexus_browser_responsive — localhost de servidor de dev e ' +
-  'file:// são recusados por segurança. ' +
+  'file:// são recusados por segurança. Para SSR sem export estático ou UI nativa, use o runtime ' +
+  'do projeto e outras ferramentas autorizadas disponíveis; relate os limites da evidência sem contornar gates. ' +
   'WebFetch, o fetch nativo da sua CLI e curl também estão liberados (curl ' +
   'serve bem para JSON de API, arquivo cru ou o fim de uma página longa demais ' +
   'para o read, truncated: true). A busca na web nativa continua valendo.';
