@@ -333,7 +333,7 @@ contra a identidade fixada) e o inventário Squirrel antes de criar drafts e só
 então publica a canônica seguida do espelho público.
 
 O runtime de release também é autoridade versionada: use exatamente Node
-`22.23.2`, conforme `package.json > nexusRelease.node`. Outro patch de Node 22
+`22.23.4`, conforme `package.json > nexusRelease.node`. Outro patch de Node 22
 falha antes da build.
 
 O runbook canônico, incluindo cadastro interativo da credencial no Keychain,

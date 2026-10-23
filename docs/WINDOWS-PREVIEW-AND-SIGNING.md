@@ -22,7 +22,7 @@ the installer, and are not eligible for a public release. A push to a
 
 ## Build an unsigned preview
 
-Use Windows x64 with Node 22.23.2, Python, and the Visual Studio C++ build tools:
+Use Windows x64 with Node 22.23.4, Python, and the Visual Studio C++ build tools:
 
 ```powershell
 npm ci

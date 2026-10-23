@@ -7,7 +7,9 @@ export function validateBuildNodeVersion(version) {
   if (!match) return false;
   const major = Number(match[1]);
   const minor = Number(match[2]);
-  return major === 22 && minor >= 12;
+  const patch = Number(match[3]);
+  // engines: >=22.23.4 <23 (security release of 21 Oct 2026).
+  return major === 22 && (minor > 23 || (minor === 23 && patch >= 4));
 }
 
 // @electron/packager does not traverse a symlinked node_modules: the app.asar
@@ -30,7 +32,7 @@ if (entryPoint === import.meta.url) {
   if (!validateBuildNodeVersion(process.versions.node)) {
     console.error(
       [
-        `NexusIDE release builds require Node >=22.12.0 <23. Current Node: ${process.version}.`,
+        `NexusIDE release builds require Node >=22.23.4 <23. Current Node: ${process.version}.`,
         'Use the pinned Node/npm toolchain from package.json before package/make.',
       ].join('\n'),
     );

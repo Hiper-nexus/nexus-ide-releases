@@ -14,7 +14,7 @@ O commit deste documento acrescenta somente documentação e certificado públic
 
 ## Começar na máquina Windows
 
-Use Windows x64. Instale Git, Node **22.23.2**, Python e Visual Studio Build
+Use Windows x64. Instale Git, Node **22.23.4**, Python e Visual Studio Build
 Tools com C++ e Windows SDK. Entre no GitHub com uma conta que tenha acesso
 ao repositório privado. Em uma pasta de desenvolvimento, execute no PowerShell:
 

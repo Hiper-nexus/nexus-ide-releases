@@ -85,7 +85,7 @@ Esta release é construída, verificada e publicada **localmente**. Não execute
 `gh workflow run`, não dispare o workflow de release e não dependa de GitHub
 Actions.
 
-Use exatamente Node `22.23.2`, fixado em `package.json > nexusRelease.node`.
+Use exatamente Node `22.23.4`, fixado em `package.json > nexusRelease.node`.
 `make:release` e o gate de segurança baixam o pacote npm na versão declarada por
 `packageManager`, conferem o SHA-512 fixado em
 `build/release-npm-integrity.json` e o executam em cache temporário privado. O
