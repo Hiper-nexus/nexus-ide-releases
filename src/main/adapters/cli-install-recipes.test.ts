@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { selectAutomaticCliUpdateRecipe } from './cli-auto-update';
 import {
   cliInstallRecipeCandidates,
   cliInstallRecipeFor,
@@ -524,6 +525,60 @@ describe('updating the CLI that Nexus launches', () => {
         recipe: { argv: [binPath, 'update'] },
       });
     }
+  });
+
+  describe('F-1648: updates the installed native Muse channel', () => {
+    const base = {
+      adapterId: 'muse', platform: 'darwin' as const,
+      userHome: '/Users/operator',
+      binPath: '/Users/operator/.local/bin/muse',
+      realBinPath: '/Users/operator/.local/bin/muse',
+      isRunnerResolvable: (runner: string) => runner === 'bash',
+    };
+
+    it('manual update reuses the official installer at the exact native destination', () => {
+      expect(selectCliUpdateRecipe(base)).toMatchObject({ ok: true, recipe: {
+        kind: 'script', runner: 'bash', scriptUrl: 'https://dev.meta.ai/install.sh',
+        env: { MUSE_LOGIN: '0', MUSE_NO_MODIFY_PATH: '1', MUSE_INSTALL_DIR: '/Users/operator/.local/bin' },
+      } });
+    });
+
+    it('automatic update admits the same native channel only when writable', () => {
+      expect(selectAutomaticCliUpdateRecipe({ ...base, isTargetWritable: () => true })).toMatchObject({
+        kind: 'script', automaticUpdate: true, scriptUrl: 'https://dev.meta.ai/install.sh',
+        env: { MUSE_LOGIN: '0', MUSE_NO_MODIFY_PATH: '1', MUSE_INSTALL_DIR: '/Users/operator/.local/bin' },
+      });
+      expect(selectAutomaticCliUpdateRecipe({ ...base, isTargetWritable: () => false })).toBeNull();
+    });
+
+    it.each([
+      { binPath: '/private/custom/muse', realBinPath: '/private/custom/muse' },
+      { realBinPath: '/private/custom/muse' },
+      { userHome: '/Users/other' },
+      { userHome: undefined },
+      { installationDistribution: 'enterprise-portal' },
+      { platform: 'linux' as const },
+    ])('refuses an unrecognized native target %j', changed => {
+      expect(selectCliUpdateRecipe({ ...base, ...changed })).toBeNull();
+      expect(selectAutomaticCliUpdateRecipe({ ...base, ...changed, isTargetWritable: () => true })).toBeNull();
+    });
+
+    it('does not silently switch to another installation when native bash is missing', () => {
+      expect(selectCliUpdateRecipe({ ...base, isRunnerResolvable: runner => runner === 'brew' }))
+        .toMatchObject({ ok: false, missingRunnerHints: [expect.stringContaining('bash')] });
+    });
+
+    it.each(['/opt/homebrew', '/usr/local'])('preserves cask ownership under %s, even with a user-home alias', prefix => {
+      const input = { ...base,
+        realBinPath: `${prefix}/Caskroom/muse-code/1.4.12-R6909.1/muse-aarch64-macos`,
+        isRunnerResolvable: () => true,
+      };
+      expect(selectCliUpdateRecipe(input)).toMatchObject({ ok: true, recipe: {
+        kind: 'argv', runner: `${prefix}/bin/brew`, argv: [`${prefix}/bin/brew`, 'upgrade', '--cask', 'muse-code'],
+      } });
+      expect(selectAutomaticCliUpdateRecipe({ ...input, isTargetWritable: () => true, caskArtifactKinds: ['binary'] }))
+        .toMatchObject({ kind: 'argv', runner: `${prefix}/bin/brew` });
+    });
   });
 
   it('uses the official PowerShell installer for a Windows Devin launcher', () => {

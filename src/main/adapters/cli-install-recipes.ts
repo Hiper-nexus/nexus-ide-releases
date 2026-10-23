@@ -610,6 +610,18 @@ export function selectCliUpdateRecipe(input: CliUpdateRecipeInput): InstallRecip
       }
       continue;
     }
+    if (candidate.kind === 'script' && input.adapterId === 'muse' && input.platform === 'darwin') {
+      // F-1648: the official installer owns this regular launcher and its
+      // versioned siblings. A cask symlink/custom destination is another channel.
+      if (!home || binPath !== `${home}/.local/bin/muse` || realPath !== binPath ||
+          (input.installationDistribution && input.installationDistribution !== 'curl-bash')) continue;
+      return selectInstallRecipe([{
+        ...candidate,
+        automaticUpdate: true,
+        // Pin the destination even if the parent has MUSE_INSTALL_DIR set.
+        env: { ...candidate.env, MUSE_INSTALL_DIR: `${home}/.local/bin` },
+      }], input.isRunnerResolvable);
+    }
     if (candidate.kind === 'script' && input.adapterId === 'devin') {
       const marker = '/devin/cli/_versions/';
       const index = realPath.indexOf(marker);
