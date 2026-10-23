@@ -1310,21 +1310,54 @@ describe("F-231 — '+ Pane' dentro da missão (spawnOperatorPaneFromRenderer)",
       .findByPaneId("pane-op-1")).toBeNull();
   });
 
-  it("recusa adapter fora do roster selado da missão", async () => {
+  it("F-1661: aceita CLI fora do roster como participante explícito do operador", async () => {
+    const squadStore = await import("./squad-store");
+    const { PET_STUDIO_SQUAD } = await import("../../shared/pet-studio");
+    const getSquad = squadStore.getSquad;
+    vi.spyOn(squadStore, "getSquad").mockImplementation((id) =>
+      id === PET_STUDIO_SQUAD.id ? PET_STUDIO_SQUAD : getSquad(id),
+    );
+    expect(PET_STUDIO_SQUAD.agents.some((agent) => agent.cli === "test-cli")).toBe(false);
     const suite = requireProjectDomainStoreRegistry().forScope(scope);
+    const templateMissionId = await liveMission();
+    const template = suite.missions.get(templateMissionId)!;
     const mission = suite.missions.create({
       title: "Selada",
       squadId: "nexus-pet-studio",
+      orchestratorSessionId: template.orchestratorSessionId,
+      intentState: "dispatched",
+      intentVersion: template.intentVersion,
+      intentContract: {
+        ...template.intentContract!,
+        freeAgentChoice: false,
+      },
     });
-    // test-cli instalado, mas fora do roster pet-studio (só codex).
+    suite.missions.update(mission.id, { status: "running" });
+    const approved = suite.missions.get(mission.id)!;
 
     const result = await authority().spawnOperatorPaneFromRenderer(owner, {
       missionId: mission.id,
       adapterId: "test-cli",
     });
 
-    expect(result).toEqual({ ok: false, error: "roster_rejected" });
-    expect(operatorSpawn.calls).toHaveLength(0);
+    expect(result).toEqual({
+      ok: true,
+      paneId: "pane-op-1",
+      sessionId: "pty-op-1",
+    });
+    expect(operatorSpawn.calls[0]).toMatchObject({
+      missionId: mission.id,
+      adapterId: "test-cli",
+      operatorOpened: true,
+      authoritySeal: expect.objectContaining({ intentVersion: 1 }),
+    });
+    expect(suite.missionPanes.findByPaneId("pane-op-1")).toMatchObject({
+      missionId: mission.id,
+      adapterId: "test-cli",
+      operatorOpened: true,
+    });
+    expect(operatorSpawn.present).toHaveBeenCalledExactlyOnceWith(owner, "pane-op-1");
+    expect(suite.missions.get(mission.id)).toEqual(approved);
   });
 
   it("recusa missão que não está em execução", async () => {

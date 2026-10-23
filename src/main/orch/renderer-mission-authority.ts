@@ -1559,9 +1559,11 @@ export class RendererMissionAuthority {
    * worker, mas mortalidade, TTL pós-handoff e teardown nunca o fecham —
    * no fim da missão a ficha volta a `user` (ver mission-runtime-termination).
    *
-   * Escolhas do renderer NUNCA viram autoridade: escopo, missão, status,
-   * adapter instalado, `cli-pty` e roster selado são conferidos aqui no
-   * Main, e adapter/modelo são explícitos (nenhum roteador é consultado).
+   * A ação do operador autoriza somente este `operatorOpened`, inclusive com
+   * CLI fora do roster, sem editar o squad. Escopo, missão, status, adapter
+   * instalado, `cli-pty` e selo atual são conferidos no Main; os workers do
+   * Maestro continuam sujeitos ao roster pelo próprio gate. Nenhum roteador é
+   * consultado.
    */
   async spawnOperatorPaneFromRenderer(
     owner: WebContents,
@@ -1592,13 +1594,9 @@ export class RendererMissionAuthority {
     if (!isAdapterInstalled(adapter.id)) {
       return { ok: false, error: "adapter_not_installed" };
     }
-    // Roster selado (squad aprovado): adapter fora da composição é recusado
-    // com erro legível — o picker mostra a recusa em vez de abrir e morrer.
     const squad = mission.squadId ? getSquad(mission.squadId) : null;
-    if (mission.squadId) {
-      if (!squad) return { ok: false, error: "roster_rejected" };
-      const inRoster = squad.agents.some((agent) => agent.cli === adapter.id);
-      if (!inRoster) return { ok: false, error: "roster_rejected" };
+    if (mission.squadId && !squad) {
+      return { ok: false, error: "roster_rejected" };
     }
     const executionScope = missionExecutionScope(rendererScope, mission);
     const authoritySeal = resolveMissionPaneAuthoritySeal(
