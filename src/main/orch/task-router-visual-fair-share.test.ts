@@ -211,6 +211,22 @@ describe('F-1400 ADD2: revezamento por modelo e exceção Next/jogo', () => {
     expect(picks).toEqual(new Set(['devin:swe-2-high', 'kimi:kimi-code/k3']));
   });
 
+  it('Kimi com K3.1 Pro e K3 ocupa um assento só no rodízio: o K3 é reserva de CLI antiga', () => {
+    const reserveOnly: AdapterAvailability[] = [
+      { id: 'devin', installed: true, models: ['swe-2-high', 'swe-2-medium'] },
+      { id: 'kimi', installed: true, models: ['kimi-code/k3.1-pro', 'kimi-code/k3'] },
+    ];
+    const picks = new Set<string>();
+    const reserveUse = new Map<string, number>();
+    for (let index = 0; index < 4; index++) {
+      const decision = route('implementar a tela responsiva de cadastro com estados vazios', reserveOnly, { visualUseCounts: reserveUse });
+      const key = `${decision.adapterId}:${decision.model}`;
+      picks.add(key);
+      reserveUse.set(key, (reserveUse.get(key) ?? 0) + 1);
+    }
+    expect(picks).toEqual(new Set(['devin:swe-2-high', 'kimi:kimi-code/k3.1-pro']));
+  });
+
   it('F-1623: Opus ocupado passa a vez a outro do topo, não ao Sonnet (reserva)', () => {
     const decision = route('implementar a tela responsiva de cadastro', topPool, {
       visualUseCounts: new Map([['claude:claude-opus-5-5', 10]]),

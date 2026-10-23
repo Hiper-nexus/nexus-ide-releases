@@ -59,11 +59,13 @@
   "models": {
     "flag": "--model",
     "list": [
+      "kimi-code/k3.1-pro",
+      "kimi-code/k3.1-pro-highspeed",
       "kimi-code/k3",
       "kimi-code/kimi-for-coding-highspeed",
       "kimi-code/kimi-for-coding"
     ],
-    "default": "kimi-code/k3"
+    "default": "kimi-code/k3.1-pro"
   },
   "promptInjection": {
     "method": "arg",

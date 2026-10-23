@@ -150,10 +150,17 @@ describe('tier critical com diversidade instalada', () => {
     );
     expect(decision!.tier).toBe('critical');
     // No specialty prior anymore; both remain native critical candidates
-    // (no cheaper-tier borrow).
-    expect(decision!.adapterId).toBe('agy');
+    // (no cheaper-tier borrow). Desde 23/10 o K3.1 Pro (DeepSWE 75,5) fica
+    // antes do agy; a CLI só com o K3 mantém a ordem antiga (agy primeiro).
+    expect(decision).toMatchObject({ adapterId: 'kimi', model: 'kimi-code/k3.1-pro' });
     expect(decision!.specialty).toBe('security');
     expect(decision!.reason).not.toContain('melhor opção instalada');
+    const legacy = routeTask(
+      'auditar a segurança da autenticação',
+      adapters('agy').map((a) => (a.id === 'kimi' ? { ...a, installed: true, models: ['kimi-code/k3'] } : a)),
+    );
+    expect(legacy!.tier).toBe('critical');
+    expect(legacy!.adapterId).toBe('agy');
   });
 
   it('kimi sozinho também é candidato do próprio tier critical', () => {

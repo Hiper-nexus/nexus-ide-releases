@@ -13,6 +13,7 @@ import {
   quarantineRejectedModel,
   resetModelAccessQuarantineForTests,
 } from './model-access-quarantine';
+import { PUBLISHED_BENCHMARKS } from './published-benchmarks';
 
 // F-233 (regra do operador, 01/10): revisão/auditoria/veredito só com modelos
 // de ponta — GLM/MiMo davam "veredito APROVAR" em revisão de código. A lane
@@ -121,7 +122,7 @@ describe('lane de julgamento (F-233: só modelos de ponta julgam)', () => {
     expect(decision!.reason).not.toContain('lane de julgamento');
   });
 
-  it('lane lista exatamente os oito assentos de topo', () => {
+  it('lane lista exatamente os nove assentos de topo', () => {
     expect([...JUDGE_FRONTIER_LANE]).toEqual([
       { adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max' },
       { adapterId: 'claude', model: 'claude-fable-5-1' },
@@ -131,7 +132,17 @@ describe('lane de julgamento (F-233: só modelos de ponta julgam)', () => {
       { adapterId: 'codex', model: 'gpt-6-astra' },
       { adapterId: 'agy', model: 'gemini-4-argon' },
       { adapterId: 'grok', model: 'grok-4.7' },
+      { adapterId: 'kimi', model: 'kimi-code/k3.1-pro' },
     ]);
+  });
+
+  it('F-779: todo assento de fora de Claude/Codex/Muse tem DeepSWE publicado ≥ o do Sonnet 5.5', () => {
+    const floor = PUBLISHED_BENCHMARKS['claude:claude-sonnet-5-5']!.deepSWE!;
+    for (const seat of JUDGE_FRONTIER_LANE) {
+      if (['claude', 'codex', 'muse'].includes(seat.adapterId)) continue;
+      expect(PUBLISHED_BENCHMARKS[`${seat.adapterId}:${seat.model}`]?.deepSWE, seat.model)
+        .toBeGreaterThanOrEqual(floor);
+    }
   });
 
   // F-779: com Claude e Codex já sentados na missão, a próxima revisão vai

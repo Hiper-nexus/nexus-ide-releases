@@ -63,6 +63,11 @@ export const PUBLISHED_BENCHMARKS: Readonly<Record<string, PublishedBenchmark>> 
   'agy:gemini-3.8-flash': { deepSWE: 73.7, terminalBench21: 89.4, source: 'https://deepmind.google/models/model-cards/gemini-3-8-flash/' },
   'agy:gemini-3.7-flash': { deepSWE: 65.3, terminalBench21: 85.8, source: 'https://deepmind.google/models/model-cards/gemini-3-7-flash/' },
   'agy:gemini-3.6-flash': { deepSWE: 49.0, terminalBench21: 78.0, source: 'https://deepmind.google/models/model-cards/gemini-3-6-flash/' },
+  // K3.1 Pro (23/10): tabela oficial com as mesmas DeepSWE de Fable 5.1 (67,4)
+  // e Astra (74,1) acima. Highspeed: "identical model capabilities" na doc do
+  // Kimi Code — só a velocidade e a cota mudam.
+  'kimi:kimi-code/k3.1-pro': { deepSWE: 75.5, source: 'https://www.kimi.ai/blog/kimi-k3-1-pro' },
+  'kimi:kimi-code/k3.1-pro-highspeed': { sameModelAs: 'kimi:kimi-code/k3.1-pro', source: 'https://www.kimi.com/code/docs/en/kimi-code/models.html' },
   'kimi:kimi-code/k3': { deepSWE: 67.5, terminalBench21: 88.3, source: 'https://huggingface.co/moonshotai/Kimi-K3' },
   'devin:swe-2': { deepSWE: 73.0, terminalBench21: 92.8, source: 'https://cognition.com/blog/swe-2' },
   'longcat:LongCat-2.0': { terminalBench21: 70.8, source: 'https://huggingface.co/meituan-longcat/LongCat-2.0' },

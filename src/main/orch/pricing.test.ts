@@ -80,6 +80,10 @@ describe('priceForModel', () => {
 
   it('matches compound names and namespaced models correctly', () => {
     expect(priceForModel('kimi-code/k3')).toEqual(MODEL_PRICES['kimi-code/k3']);
+    // O prefixo `kimi-code/k3` não pode engolir o Highspeed (2× a cota).
+    expect(priceForModel('kimi-code/k3.1-pro-highspeed')).toEqual(MODEL_PRICES['kimi-code/k3.1-pro-highspeed']);
+    expect(priceForModel('kimi-code/k3.1-pro-highspeed').inputPerM)
+      .toBe(2 * priceForModel('kimi-code/k3.1-pro').inputPerM);
     expect(priceForModel('moonshot/kimi-k2')).toEqual(MODEL_PRICES.kimi);
     expect(priceForModel('xiaomi/mimo-v2')).toEqual(MODEL_PRICES.mimo);
     expect(priceForModel('openrouter/anthropic/claude-fable-5-1')).toEqual(

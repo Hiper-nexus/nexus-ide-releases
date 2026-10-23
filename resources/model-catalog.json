@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-22T00:00:00.000Z",
+  "updatedAt": "2026-10-23T00:00:00.000Z",
   "adapters": {
     "claude": {
       "default": "claude-sonnet-5-5",
@@ -281,8 +281,21 @@
       ]
     },
     "kimi": {
-      "default": "kimi-code/k3",
+      "default": "kimi-code/k3.1-pro",
       "models": [
+        {
+          "id": "kimi-code/k3.1-pro",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
+          "id": "kimi-code/k3.1-pro-highspeed",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote",
+          "warning": "Mesma capacidade do K3.1 Pro, 2–3× mais rápido e 2× a cota — fora da rota automática, só quando escolhido."
+        },
         {
           "id": "kimi-code/k3",
           "availability": "paid",

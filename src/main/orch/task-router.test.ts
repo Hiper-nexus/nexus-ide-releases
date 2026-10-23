@@ -253,7 +253,41 @@ describe('routeTask', () => {
       'easy',
     );
     expect(decision!.adapterId).toBe('kimi');
-    expect(decision!.model).toBe('kimi-code/k3');
+    expect(decision!.model).toBe('kimi-code/k3.1-pro');
+    // CLI que ainda não listou o alias do K3.1 segue no K3, nunca num id morto.
+    const legacy = routeTask(
+      'corrigir typo no README do projeto agora',
+      [{ id: 'kimi', installed: true, models: ['kimi-code/k3', 'kimi-code/kimi-for-coding'] }],
+      DEFAULT_ROUTING_TABLE,
+      'easy',
+    );
+    expect(legacy).toMatchObject({ adapterId: 'kimi', model: 'kimi-code/k3' });
+  });
+
+  it('K3.1 Pro lidera o hard sem Claude, à frente do GLM; sem ele o GLM volta a liderar', () => {
+    const withK31: AdapterAvailability[] = [
+      { id: 'glm', installed: true, models: ['glm-5.3'] },
+      { id: 'kimi', installed: true, models: ['kimi-code/k3.1-pro', 'kimi-code/k3.1-pro-highspeed', 'kimi-code/k3'] },
+    ];
+    const hard = routeTask('refatorar o módulo de cobrança', withK31, DEFAULT_ROUTING_TABLE, 'hard', false,
+      undefined, { multiScore: false });
+    expect(hard).toMatchObject({ adapterId: 'kimi', model: 'kimi-code/k3.1-pro' });
+    const legacy = routeTask('refatorar o módulo de cobrança',
+      [withK31[0], { id: 'kimi', installed: true, models: ['kimi-code/k3'] }],
+      DEFAULT_ROUTING_TABLE, 'hard', false, undefined, { multiScore: false });
+    expect(legacy).toMatchObject({ adapterId: 'glm', model: 'glm-5.3' });
+  });
+
+  it('K3.1 Pro Highspeed nunca é escolhido pela rota automática (2× a cota)', () => {
+    const highspeedOnly: AdapterAvailability[] = [
+      { id: 'kimi', installed: true, models: ['kimi-code/k3.1-pro-highspeed'] },
+      { id: 'glm', installed: true, models: ['glm-5.3'] },
+    ];
+    for (const tier of ['trivial', 'easy', 'medium', 'hard', 'critical'] as const) {
+      const decision = routeTask('tarefa', highspeedOnly, DEFAULT_ROUTING_TABLE, tier, false,
+        undefined, { multiScore: false });
+      expect(decision?.model, tier).not.toBe('kimi-code/k3.1-pro-highspeed');
+    }
   });
 
   it('routes easy/trivial work to qwen3.8-max when only qwen is installed (F-722)', () => {
@@ -1552,7 +1586,7 @@ describe('F-1313 — preferência explícita e espalhamento', () => {
       });
     expect(decision!.specialty).toBe('visual');
     expect(decision!.adapterId).toBe('kimi');
-    expect(decision!.model).toBe('kimi-code/k3');
+    expect(decision!.model).toBe('kimi-code/k3.1-pro');
   });
 
   it('F-1400 ADD2: Kimi é topo e recebe front quando é o único assento pronto', () => {

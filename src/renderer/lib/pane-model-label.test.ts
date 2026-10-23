@@ -144,6 +144,12 @@ describe('resolveModelChipLabel', () => {
       expect(label!.medium).toBe('Kimi K3');
     });
 
+    it('kimi + kimi-code/k3.1-pro e o Highspeed', () => {
+      expect(resolveModelChipLabel('kimi', 'kimi-code/k3.1-pro', undefined)!.full).toBe('Kimi K3.1 Pro');
+      expect(resolveModelChipLabel('kimi', 'kimi-code/k3.1-pro-highspeed', undefined)!.full)
+        .toBe('Kimi K3.1 Pro Highspeed');
+    });
+
     it('kimi + kimi-k2.8', () => {
       const label = resolveModelChipLabel('kimi', 'kimi-k2.8', undefined);
       expect(label!.family).toBe('Kimi');

@@ -247,8 +247,20 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       ],
     },
     kimi: {
-      default: 'kimi-code/k3',
+      // K3.1 Pro (kimi.ai/blog/kimi-k3-1-pro, 23/10): sucessor do K3 no mesmo
+      // plano. CLI que ainda não listou o alias cai no default dela (K3).
+      default: 'kimi-code/k3.1-pro',
       models: [
+        { id: 'kimi-code/k3.1-pro', availability: 'paid', costTier: 'medium', source: 'bundled' },
+        // Mesma capacidade, 2–3× mais rápido e 2× a cota (kimi.com/code/docs
+        // models.html): como o grok-4.7-build-fast, fica fora da rota automática.
+        {
+          id: 'kimi-code/k3.1-pro-highspeed',
+          availability: 'paid',
+          costTier: 'high',
+          source: 'bundled',
+          warning: 'Mesma capacidade do K3.1 Pro, 2–3× mais rápido e 2× a cota — fora da rota automática, só quando escolhido.',
+        },
         { id: 'kimi-code/k3', availability: 'paid', costTier: 'medium', source: 'bundled' },
         { id: 'kimi-k2.8', availability: 'paid', costTier: 'medium', source: 'bundled' },
         { id: 'kimi-code/kimi-for-coding-highspeed', availability: 'cheap', costTier: 'low', source: 'bundled' },

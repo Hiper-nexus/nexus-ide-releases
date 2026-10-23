@@ -208,6 +208,9 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // AGY 1.4.0 não lista mais 3.7/3.6; a reserva free saiu com eles.
     { adapterId: 'agy', model: 'gemini-3.8-flash-low', effort: 'low' },
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'low' },
+    // K3.1 Pro (23/10) com o K3 de reserva para a CLI que ainda não o lista.
+    // O Highspeed (mesma capacidade, 2× a cota) não entra na rota automática.
+    { adapterId: 'kimi', model: 'kimi-code/k3.1-pro', effort: 'low' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low' },
     { adapterId: 'glm-flash', model: 'glm-5.3-flash[1m]', effort: 'low' },
     // DeepSeek roda na CLI do Claude no endpoint Anthropic-compatible deles;
@@ -236,6 +239,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'muse', model: 'muse-spark-1.3' },
   ],
   easy: [
+    { adapterId: 'kimi', model: 'kimi-code/k3.1-pro', effort: 'low' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low' },
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'low' },
     // AGY 1.4.0: 3.8 Flash low. O 3.7-low (free) saiu do `agy models`.
@@ -269,6 +273,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
+    { adapterId: 'kimi', model: 'kimi-code/k3.1-pro', effort: 'medium' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'medium' },
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'medium' },
     // Gemini 3.8 Flash > 3.1 Pro em código/agentic (TB2.1 81,3 × 70,8, Vals;
@@ -302,6 +307,11 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // (revisão cruzada; risco alto). Fable 5.1 gasta até 50% da cota
     // semanal do Max e perde do Opus 5.5 no TB4 — não é o default.
     { adapterId: 'claude', model: 'claude-fable-5-1', effort: 'high' },
+    // K3.1 Pro (kimi.ai/blog/kimi-k3-1-pro, 23/10): DeepSWE 75,5 (Opus 5.5
+    // 74,2; Sol 6.1 75,2) e TB4.0 65,7 (Opus 5.5 66,4) no plano do Kimi Code —
+    // lidera o hard sem Claude, à frente do GLM 5.3 (66,9). O K3 segue de
+    // reserva no lugar antigo, para a CLI que ainda não lista o K3.1.
+    { adapterId: 'kimi', model: 'kimi-code/k3.1-pro', effort: 'high' },
     { adapterId: 'glm', model: 'glm-5.3', effort: 'high' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'high' },
     { adapterId: 'deepseek', model: 'deepseek-v4-pro', effort: 'high' },
@@ -355,6 +365,8 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'codex', model: 'gpt-6-sol', effort: 'xhigh' },
     { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'xhigh' },
     { adapterId: 'codex', model: 'gpt-5.6-terra', effort: 'xhigh' },
+    // K3.1 Pro: depois de Claude e Codex, antes do GLM 5.3 (DeepSWE 75,5 × 66,9).
+    { adapterId: 'kimi', model: 'kimi-code/k3.1-pro', effort: 'xhigh' },
     { adapterId: 'glm', model: 'glm-5.3', effort: 'xhigh' },
     // Diversidade também no crítico: sem estes, uma máquina sem claude/codex/
     // glm empresta de outro tier e o worker crítico colapsa num só provider.
@@ -794,6 +806,12 @@ export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
    * entra quando nenhum assento de grupo menor está pronto.
    */
   group?: number;
+  /**
+   * Reserva do assento anterior do mesmo adapter e grupo: só entra quando ele
+   * ficou de fora (CLI sem o modelo novo). Sem isso a CLI com os dois ganharia
+   * dois assentos no rodízio.
+   */
+  fallback?: true;
 }> = Object.freeze([
   { adapterId: 'claude', model: 'claude-opus-5-5', effort: 'max' },
   { adapterId: 'agy', model: 'gemini-4-argon' },
@@ -805,7 +823,8 @@ export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
   { adapterId: 'claude', model: 'deepseek-flash', group: 2 },
   { adapterId: 'qwen', model: 'deepseek-flash', group: 2 },
   { adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max', group: 3 },
-  { adapterId: 'kimi', model: 'kimi-code/k3', group: 3 },
+  { adapterId: 'kimi', model: 'kimi-code/k3.1-pro', group: 3 },
+  { adapterId: 'kimi', model: 'kimi-code/k3', group: 3, fallback: true },
   { adapterId: 'codex', model: 'gpt-6.1-sol', group: 3 },
   { adapterId: 'devin', model: 'swe-2-high', group: 3 },
 ]);
@@ -892,6 +911,8 @@ export const JUDGE_FRONTIER_LANE: ReadonlyArray<{
   // por experiência do operador (F-233), não por benchmark.
   { adapterId: 'agy', model: 'gemini-4-argon' },
   { adapterId: 'grok', model: 'grok-4.7' },
+  // Mesma regra (23/10): Kimi K3.1 Pro, DeepSWE 75,5. O K3 (67,5) não passa.
+  { adapterId: 'kimi', model: 'kimi-code/k3.1-pro' },
 ]);
 
 /**
@@ -2357,12 +2378,16 @@ export function routeTask(
     }
   }
   const applyFrontierLane = (
-    lane: ReadonlyArray<{ adapterId: string; model: string; preferenceOnly?: true; effort?: RouteEffort | 'max'; group?: number }>,
+    lane: ReadonlyArray<{ adapterId: string; model: string; preferenceOnly?: true; effort?: RouteEffort | 'max'; group?: number; fallback?: true }>,
   ): boolean => {
     const laneSeats: Array<{ lane: number; group: number; adapterId: string; model: string; preferenceOnly: boolean }> = [];
     lane.forEach((seat, laneIndex) => {
       const adapter = available.get(seat.adapterId);
       if (!adapter?.installed) return;
+      if (
+        seat.fallback &&
+        laneSeats.some((placed) => placed.adapterId === seat.adapterId && placed.group === (seat.group ?? 0))
+      ) return;
       const eligible = eligibleModels(adapter);
       const resolved = resolveRoutableModel(seat.model, adapter.models);
       // `resolved.ok` cobre o id exato; senão tenta o mais novo da MESMA

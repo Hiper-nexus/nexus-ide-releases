@@ -243,9 +243,12 @@ describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
     // deixou de ser verdade. O fixture agora tem só CLIs fora da lane, o que
     // mantém a premissa — e a asserção fica a mesma. O caso do grok é o teste
     // seguinte (política que mudou por decisão, F-817).
+    // O K3.1 Pro entrou na lane em 23/10 (teste abaixo do Grok): o Kimi do
+    // fixture fica só com o K3, fora dela, para manter a premissa.
     const decision = routeTask(
       FIELD_TEXT,
-      inventory(['mimo-code', 'glm', 'kimi']),
+      inventory(['mimo-code', 'glm', 'kimi']).map((a) =>
+        (a.id === 'kimi' ? { ...a, models: ['kimi-code/k3'] } : a)),
       DEFAULT_ROUTING_TABLE,
       'hard',
       false,
@@ -266,10 +269,11 @@ describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
     // propósito: o operador pediu "usar todas as LLMs" e o Grok 4.7 tem
     // DeepSWE publicado igual ao do Sonnet 5.5, o piso da lane. O Grok é o
     // default da própria CLI (sem prova de acesso extra, ao contrário do
-    // Argon). GLM/Kimi/MiMo seguem fora por experiência do operador (F-233).
+    // Argon). GLM/MiMo seguem fora por experiência do operador (F-233).
     const decision = routeTask(
       FIELD_TEXT,
-      inventory(['mimo-code', 'glm', 'kimi', 'grok']),
+      inventory(['mimo-code', 'glm', 'kimi', 'grok']).map((a) =>
+        (a.id === 'kimi' ? { ...a, models: ['kimi-code/k3'] } : a)),
       DEFAULT_ROUTING_TABLE,
       'hard',
       false,
@@ -277,6 +281,23 @@ describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
       missionHistory,
     );
     expect(decision).toMatchObject({ adapterId: 'grok', model: 'grok-4.7' });
+    expect(decision!.reason).toContain('lane de julgamento');
+    expect(decision!.judgeUnavailable).toBeUndefined();
+  });
+
+  it('23/10: com o Kimi K3.1 Pro no pool (assento da lane), a revisão vai a ele — decisão de política, não regressão', () => {
+    // Mesma regra do Grok (F-779): DeepSWE oficial 75,5 ≥ 71,0 do Sonnet 5.5.
+    // O K3 (67,5) continua fora — o teste "sem modelo de topo" acima.
+    const decision = routeTask(
+      FIELD_TEXT,
+      inventory(['mimo-code', 'glm', 'kimi']),
+      DEFAULT_ROUTING_TABLE,
+      'hard',
+      false,
+      catalog,
+      missionHistory,
+    );
+    expect(decision).toMatchObject({ adapterId: 'kimi', model: 'kimi-code/k3.1-pro' });
     expect(decision!.reason).toContain('lane de julgamento');
     expect(decision!.judgeUnavailable).toBeUndefined();
   });
