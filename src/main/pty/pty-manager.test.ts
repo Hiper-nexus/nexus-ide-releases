@@ -3142,6 +3142,12 @@ describe("AGY advisory native profile", () => {
         expect.arrayContaining(["--model", "gpt-5.6-sol"]),
       );
       expect(spec.args).not.toContain("gpt-5.5");
+      // F-1658: model/effort overrides alone do not reset a native priority tier.
+      expect(spec.args).toContain('service_tier="default"');
+      expect(spec.args[spec.args.indexOf('service_tier="default"') - 1]).toBe("-c");
+      expect(spec.args.indexOf('service_tier="default"')).toBeLessThan(
+        spec.args.indexOf("Implemente com Sol e entregue o handoff."),
+      );
     } finally {
       if (sessionId) await orchTerminateSession(sessionId);
       fs.rmSync(root, { recursive: true, force: true });
@@ -3337,6 +3343,8 @@ describe('F-1643/F-1644 startup reaches the real Codex overlay', () => {
     { label: 'explicit native opt-in', version: '0.163.0', model: 'gpt-6.1-sol', resume: false, args: [] as string[], optIn: true, wantDaybreak: true, wantTrust: true },
     { label: 'generated high effort', version: '0.163.0', model: 'gpt-6.1-sol', resume: false, args: [], optIn: false, wantDaybreak: false, wantTrust: true, effort: 'high' },
     { label: 'explicit provider config override after controls', version: '0.163.0', model: 'gpt-6.1-sol', resume: false, args: [], optIn: false, wantDaybreak: undefined, wantTrust: false, providerArgs: ['-c', 'daybreak=true'] },
+    { label: 'stale priority provider argument', version: '0.163.0', model: 'gpt-6.1-sol', resume: false, args: [], optIn: false, wantDaybreak: undefined, wantTrust: false, providerArgs: ['-c', 'service_tier="priority"'] },
+    { label: 'argument delimiter', version: '0.163.0', model: 'gpt-6.1-sol', resume: false, args: ['--'], optIn: false, wantDaybreak: false, wantTrust: true },
   ];
   it.each(scenarios)('$label', async scenario => {
     setSquadCliPolicyLookupForTests(() => 'operator-choice');
@@ -3351,7 +3359,7 @@ describe('F-1643/F-1644 startup reaches the real Codex overlay', () => {
     });
     const nativeHome = path.join(root, 'home', '.codex');
     fs.mkdirSync(nativeHome, { recursive: true });
-    const nativeConfig = '[features]\njs_repl = true\n' + (scenario.optIn ? 'cli_daybreak = true\n' : '');
+    const nativeConfig = 'service_tier = "priority"\n[features]\njs_repl = true\n' + (scenario.optIn ? 'cli_daybreak = true\n' : '');
     fs.writeFileSync(path.join(nativeHome, 'config.toml'), nativeConfig);
     cliVersions.set('/mock/bin/codex', scenario.version);
     const host = fakeHost();
@@ -3370,7 +3378,14 @@ describe('F-1643/F-1644 startup reaches the real Codex overlay', () => {
         generatedControlArgs,
       }, trustedSpawn(cwd));
       sessionId = spawned.sessionId;
-      const effective = host.specFor(sessionId).env.CODEX_HOME!;
+      const actual = host.specFor(sessionId);
+      const tiers = actual.args.filter(arg => /^service_tier\s*=/.test(arg));
+      expect(tiers.at(-1)).toBe('service_tier="default"');
+      if (actual.args.includes('--')) {
+        expect(actual.args.indexOf('service_tier="default"')).toBeLessThan(actual.args.indexOf('--'));
+      }
+      expect(actual.args).toContain(`model_reasoning_effort=${scenario.effort ?? 'medium'}`);
+      const effective = actual.env.CODEX_HOME!;
       const config = parse(fs.readFileSync(path.join(effective, 'config.toml'), 'utf8')) as {
         features?: Record<string, unknown>; projects?: Record<string, { trust_level?: string }>;
       };
@@ -5131,6 +5146,8 @@ describe("cli-agent spawn argv hardening", () => {
         "danger-full-access",
         "--ask-for-approval",
         "on-request",
+        "-c",
+        'service_tier="default"',
         initialPrompt,
       ]);
       expect(

@@ -25,7 +25,7 @@ export const OPERATOR_DELEGATION_DOCTRINE = [
   '9. Dúvida de CLI, modelo, esforço ou skill: nexus_route_task({ task }) (devolve a skill sugerida). Dúvida de ferramenta: nexus_tool_pick({ need }). Decisão do projeto: nexus_memory_recall antes.',
   '10. Código: skill ponytail — reuse o que existe, o menor diff correto e um teste que falhe se a lógica quebrar.',
   '11. UI: leia o contrato (DESIGN.md ou .context/docs/design-system.md); sem ele, use uma referência de nexus_design_system_local_list e diga qual. Sem cara de IA: emoji como ícone, texto em gradiente, gradiente roxo, cards iguais.',
-  '12. Páginas (ler, extrair, responsividade, screenshot): nexus_browser_* (já tem sessão), não WebFetch, Playwright ou Firecrawl.',
+  '12. Páginas: prefira nexus_browser_*; WebFetch, Playwright, Firecrawl e curl também são permitidos no escopo autorizado.',
 ].join('\n');
 
 /**

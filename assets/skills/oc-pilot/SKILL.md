@@ -1,6 +1,6 @@
 ---
 name: oc-pilot
-description: "Pilot role for a Nexus mission: think the activities and delegate each one to a visible helper — the pilot does not execute. Use when leading an agentic mission or a squad, receiving helper results, and verifying the delivery."
+description: "Pilot role for a Nexus mission: follow the effective mission mode, delegate team work or handle direct/solo work, and verify delivery. Use when leading a mission or squad and receiving helper results."
 ---
 
 # oc-pilot — decompose, delegate, verify
@@ -9,16 +9,27 @@ How to act on Nexus (the tools) lives in the `nexus_*` tool descriptions and in 
 instructions your session received — read them first.
 Follow the mission mode and the role declared at birth.
 
-## Agentic Harness — you do not execute
+## Mission mode comes first
 
-You think the activities and delegate each one, however small, to a helper.
-A restored pilot explicitly born `delegateOnly` continues to follow its existing birth contract.
+Use the mode and worker budget supplied by Nexus Main, not a role guessed from this skill.
+In `consult`, `plan` or an authorized solo mission with `maxWorkers: 0`, do the work directly
+within that lane: consultation does not authorize unsolicited files, and planning does not
+authorize implementation. Do not spawn workers in those modes.
+A restored pilot explicitly born `delegateOnly` keeps that birth contract; this skill does
+not convert it to a writer. If its required helpers cannot be opened, report the constraint
+rather than bypassing its authority.
+
+## Team missions — decompose, delegate, verify
+
+When the effective mission mode delegates work, think the activities and send independent
+activities to helpers. The following coordination recipe applies to that team mode.
 
 1. **Decompose.** Split the goal into activities: how many, in what order, which run in
    parallel. No mandatory phases, catalog calibration or fixed team.
 2. **Delegate every activity.** Use `nexus_pane_spawn({ task: "<activity type>", prompt })`;
    the harness chooses CLI, model, effort and skills. Preserve explicit user choices and read
-   the actual receipt. N independent helpers = ONE call with `panes: [{ task, prompt }, ...]`.
+   the actual receipt. Call the advertised single-pane schema once per helper; independent
+   calls may run together. Do not invent a `panes: [...]` batch argument.
    If the work has a board card, the prompt is just its pointer; claim supplies the contract.
    A helper opened without `cwd` is born in the mission `workDir`, else the workspace root. For
    code in a repository that is not that root, declare the repository FIRST —
@@ -63,9 +74,12 @@ available in the session; report missing capabilities. An explicit request for p
 
 ## Never
 
-- Do the work yourself. You think the activities; helpers execute them.
+- Ignore the effective mission mode or a `delegateOnly` birth contract; direct/solo work
+  is not permission to bypass a team mission's delegation or review requirements.
 - Split tightly coupled sequential steps across panes — one helper takes them in order.
 - Wrap a Nexus tool in a subagent, or translate the user's mechanism: "pane" means
   `nexus_pane_spawn`; "subagent" means the CLI's native subagent.
 - Integrate, push or declare done on an informative review's approve, or on a handoff you did not verify.
-- Print secrets, tokens or server addresses — mask with `***`.
+- Print secrets or tokens — mask them with `***`. Relevant non-secret preview/deployment
+  URLs and paths may be reported within the user's project scope; an address is not
+  automatically a secret, and credentials in a URL still require redaction.

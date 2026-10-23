@@ -238,12 +238,16 @@ describe('evidência visual no handoff', () => {
 
   // Revisão 22/10 (P0-6): o brief mandava subir `npm run dev` ou abrir o
   // arquivo local, e o navegador do Nexus recusa os dois (private-network,
-  // unsafe-scheme). O único caminho que funciona é o preview do Nexus.
-  it('manda o caminho que o navegador aceita, não npm run dev nem file://', () => {
+  // unsafe-scheme). A receita estática não serve para SSR nem UI nativa.
+  it('limita a receita ao build estático, sem proibir runtimes alternativos autorizados', () => {
     const prompt = withHandoffContract('Implemente o frontend.', adapter);
     expect(prompt).toMatch(/nexus_preview_start\(\{dir\}\)[\s\S]*nexus_browser_open[\s\S]*nexus_browser_responsive/);
     expect(prompt).not.toMatch(/servidor de dev do projeto ou o arquivo local/);
-    expect(prompt).toMatch(/não suba `npm run dev` para verificar/);
+    expect(prompt).toContain('Para um build web estático');
+    expect(prompt).toContain('não envie essas URLs a ele');
+    expect(prompt).toContain('SSR sem export estático e UI nativa');
+    expect(prompt).toContain('servidor de desenvolvimento quando necessário');
+    expect(prompt).toContain('não substitui automaticamente a captura que o Main exige');
   });
 
   // F-1636: achado em campo construindo uma landing page nesta sessão. A

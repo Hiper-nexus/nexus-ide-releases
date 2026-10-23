@@ -35,9 +35,11 @@ rejected.
 
 ## Flow
 
-1. **Contract first.** If there is no `DESIGN.md` or
-   `.context/docs/design-system.md`, get one with **dembrandt** before you
-   build. Without it the output is the model's default styling.
+1. **Existing design first.** Read `DESIGN.md` or
+   `.context/docs/design-system.md` when present. For a narrow change without
+   a written contract, preserve the existing implementation's tokens and
+   components; do not block the task or invent a redesign. Use **dembrandt**
+   when a new visual direction genuinely needs a contract.
 2. **Don't know the slug? Describe the need.** `nexus_ui_kit_add({task})`
    with what you are building. Nexus picks the kit and the item against the
    live catalog — the Jev decides when it is available — and installs it. The
@@ -113,8 +115,11 @@ Configurações › Biblioteca › Kits de UI, and Nexus injects it from the vau
 
 ## Hard rules
 
-- **Do not hand-write a primitive the kit has.** Button, input, select, dialog,
-  table, sidebar, date picker, pagination: install them.
+- **Reuse before hand-writing.** Use an existing project component or a
+  compatible kit primitive for buttons, inputs, dialogs, tables and similar
+  controls. If the kit is unavailable or framework-incompatible, adapt the
+  project's own components and report the limitation; do not change stacks
+  or stall the task merely to satisfy a kit preference.
 - **Do not install blind when you choose by slug.** Read the source or the
   usage examples first; with `task`, read the receipt's `pick`.
 - **Do not ship vendor defaults as finished design.** Tokens from the contract,
@@ -123,10 +128,13 @@ Configurações › Biblioteca › Kits de UI, and Nexus injects it from the vau
   documents it as irreversible; it is the operator's call, not an agent's.
 - **Do not put a licence key in a tool argument, a prompt or a commit.** It
   lives in the vault.
-- **Verify in the browser through the Nexus preview.** Build, then
+- **For a static web build, prefer the Nexus preview.** Build, then
   `nexus_preview_start({dir})`, `nexus_browser_open(url)` and
   `nexus_browser_responsive`. The Nexus browser refuses a dev server's
-  `localhost` and `file://`; do not run `npm run dev` to check the result.
+  `localhost` and `file://`; do not route those URLs through it. SSR without
+  a static export and native UIs may use other available, authorized tools
+  and the project's normal runtime. Report what was actually inspected;
+  alternative inspection does not bypass a Main gate's evidence requirement.
 - **A private registry that answers 401** means its token is not stored, not
   that the item does not exist. Report the namespace from
   `missingRegistryKeys` and point at Configurações › Biblioteca › Kits de UI.

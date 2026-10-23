@@ -2791,6 +2791,14 @@ export function spawnAgentSession(
       operatorChoiceParticipation: executionPolicy.isFrictionless,
       missionWorker: writableWorkerIntent,
     });
+    // F-1658: native/profile config may retain priority independently of model
+    // and effort. Every Nexus Codex launch starts Standard; keep this trusted
+    // constant after governed reconstruction and before any positional prompt.
+    // Do not mutate the operator's global config or affect startup intent.
+    if (adapter.id === "codex") {
+      const delimiter = args.indexOf("--");
+      args.splice(delimiter < 0 ? args.length : delimiter, 0, "-c", 'service_tier="default"');
+    }
     if (safeNativeInitialPrompt !== undefined) {
       // Append after governed reconstruction: Codex/Claude rebuild argv from
       // an allowlist and would drop a positional prompt injected earlier.
