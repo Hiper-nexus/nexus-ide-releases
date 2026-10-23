@@ -19,7 +19,7 @@
       "upstreamPath": "packages/ai/src/error/rate-limit.ts + packages/ai/src/utils/retry-after.ts",
       "nexusPath": "src/vendor/omp/rate-limit/",
       "type": "adapted",
-      "changeSummary": "Taxonomia QUOTA/RATE_LIMIT/CAPACITY/SERVER e parsing de retry-after adaptados de headers HTTP para texto de PTY; integrados ao limit-detector do Nexus."
+      "changeSummary": "Taxonomia QUOTA/RATE_LIMIT/CAPACITY/SERVER e parsing de retry-after adaptados de headers HTTP para texto de PTY; integrados ao limit-detector do Nexus. F-1652: prefilter por hints literais obrigatórios adjacentes aos padrões, sem alterar regex, prioridade, taxonomy ou cooldown; padrões sem hints permanecem no fallback."
     },
     {
       "upstreamPath": "packages/coding-agent review pipeline (prompts/agents/reviewer.md, prompts/review-request.md, bundled/review)",

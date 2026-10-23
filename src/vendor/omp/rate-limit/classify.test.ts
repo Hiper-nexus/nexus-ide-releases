@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { classifyRateLimitText } from './classify';
 
 describe('provider response classification', () => {
+  it.each(['额度不足', '额度耗尽'])('preserves a pure Chinese quota response: %s', text => {
+    expect(classifyRateLimitText(text)).toEqual({ reason: 'QUOTA_EXHAUSTED', matched: text });
+  });
   it('does not classify a task mentioning an internal-error code or a status-table label', () => {
     expect(classifyRateLimitText('Investigue internal_error no app iOS.')).toBeNull();
     expect(classifyRateLimitText('Failure|rate-limit')).toBeNull();

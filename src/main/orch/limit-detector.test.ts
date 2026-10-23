@@ -571,6 +571,23 @@ describe('detectLimit — classificador vendorado do oh-my-pi', () => {
     expect(detectLimit('API 返回: 额度耗尽')?.kind).toBe('quota');
   });
 
+  it('F-1652: compact Codex rejection survives line breaks inside all literal hints', () => {
+    expect(detectLimit("■ The 'gpt-6-sol' mo\ndel is not supported when using Co\ndex with a Chat\nGPT account"))
+      .toMatchObject({ kind: 'model', adapterId: 'codex' });
+  });
+
+  it.each([
+    ['额度不足', 'quota'],
+    ['`额度不足`', null],
+    ['``额度不足``', null],
+    ['`额度不足', 'quota'],
+    ['``额度不足`', 'quota'],
+    ['`额度不足` 额度耗尽', 'quota'],
+  ])('F-1652: preserves live versus quoted quota after long Unicode runs: %s', (signal, kind) => {
+    const plain = 'é中😀'.repeat(4096);
+    expect(detectLimit(`${plain} ${signal} ${plain}`)?.kind ?? null).toBe(kind);
+  });
+
   it('capacidade do modelo → transient com cooldown curto (45s + jitter do omp)', () => {
     const hit = detectLimit('Error: 529 — the model is over capacity right now');
     expect(hit?.kind).toBe('transient');

@@ -11,6 +11,7 @@ A candidata local 0.76.420 foi preservada sem publicação. Esta versão incorpo
 - **Instalação no macOS:** o PATH resolvido chega ao processo instalador; a descoberta inclui Node 22 do Homebrew em Macs Intel, preservando o Node já escolhido pelo usuário (F-1647).
 - **Muse sem Homebrew:** usa primeiro o instalador nativo oficial; a atualização reconhece o mesmo destino. O cask continua no canal Homebrew. Instalação e sondas de versão impedem login automático e modificações de PATH pelo launcher (F-1648).
 - **Diagnóstico de instalação:** stdout e stderr alimentam uma mensagem limitada e com redação de segredos; identidade e semântica de cancelamento/timeout do erro original são preservadas (F-1650).
+- **Análise de terminais:** evita scans negativos desnecessários no detector de limites, preservando regexes, prioridade, cooldowns, sinais Unicode e proteção de texto citado (F-1652). O produtor do teste de carga espera crédito em vez de rodar em laço pausado; o gate mantém os limites originais (F-1653).
 
 Inclui as melhorias anteriores de contas Claude, missões sem Git, escolha automática de contas, Grok, AGY/Codex, kits de UI, navegador e REA. Os fluxos de instalação macOS foram verificados por testes de seleção, ambiente e execução controlada; a instalação real no Mac do amigo não foi executada nesta máquina Windows. Node/npm continuam sendo pré-requisitos das receitas npm de MiniMax e MiMo. Computer use universal permanece na branch separada.
 
