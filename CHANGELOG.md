@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.76.426 — Composição de UI e navegador no Linux
+## 0.76.427 — Composição de UI e navegador no Linux
 
-Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions. A 0.76.425 continua o carimbo macOS e não recebe estes arquivos. A 0.76.424 continua o carimbo Windows. A 0.76.422 é o pacote Linux anterior.
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions. A 0.76.425 continua o carimbo macOS e não recebe estes arquivos. A 0.76.424 continua o carimbo Windows. A 0.76.422 é o pacote Linux anterior. A tag v0.76.426 ficou sem pacote: a suíte recusou o hash antigo do ledger de `browser-manager.ts`.
 
 - **Composição de UI (F-1655):** hierarquia, agrupamento, espaçamento e alinhamento por função passam a ir em todo papel, pelo MCP e pelos briefs, inclusive na Via Rápida sem MCP e nas retomadas. Não depende de Design Pro nem de carregar Impeccable. Texto à esquerda continua válido; a regra rejeita empilhar ou centralizar tudo por reflexo.
 - **Navegador de agente (F-1656):** `nexus_browser_open` com `device` num pane sem view de render não derruba mais o processo principal. O Electron 43.8.3 lia `GetView()` nulo. A UA segue antes do primeiro request; as métricas entram no commit do primeiro documento.
