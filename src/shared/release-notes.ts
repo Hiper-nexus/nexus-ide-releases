@@ -13051,7 +13051,7 @@ export const RELEASE_076430: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076433: AppRelease = {
   version: '0.76.433',
   date: '2026-10-23',
   codename: 'Kimi K3.1 Pro no Linux',
@@ -13071,4 +13071,23 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076433: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.434',
+  date: '2026-10-23',
+  codename: 'Pane do operador entra na missão',
+  summary:
+    'No Windows, + Pane → Nesta missão aceita uma CLI instalada fora do ' +
+    'roster quando você a escolhe explicitamente, sem alterar o squad nem ' +
+    'liberar essa escolha para os workers automáticos (F-1661).',
+  highlights: [
+    { title: 'Sua CLI entra na missão', detail: 'A escolha no picker abre um participante operatorOpened, visível ao Maestro e ao Quadro, em vez de falhar com roster_rejected (F-1661).' },
+    { title: 'Squad e contrato preservados', detail: 'O participante extra não reescreve o squad, o contrato ou o selo da missão, e só você o fecha.' },
+    { title: 'Base completa da main', detail: 'Inclui o Kimi K3.1 Pro. A 0.76.433 continua o carimbo Linux e a 0.76.432 o macOS; a 0.76.428 é o Windows anterior.' },
+  ],
+  fixes: [
+    { title: 'Roster automático continua protegido', detail: 'Workers abertos pelo Maestro seguem sujeitos ao roster e ao modo livre; a exceção vale somente para a escolha explícita do operador.' },
+    { title: 'Cercas de missão intactas', detail: 'Escopo, estado, instalação, transporte, identidade física da conta e registro durável continuam validados; Hardened segue recusando este caminho.' },
+  ],
+};
+
+export const RELEASE_076434: AppRelease = CURRENT_RELEASE;
