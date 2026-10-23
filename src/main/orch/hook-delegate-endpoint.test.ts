@@ -42,6 +42,18 @@ const LONG = 'Implemente a tela de login, escreva os testes e revise a seguranç
 const NOT_CODE = 'Como está o andamento da missão e o que o time decidiu ontem?';
 
 describe('hook /hook/delegate', () => {
+  it('Kimi receives the UI baseline through its hook even for a card outside UI vocabulary', async () => {
+    const ctx = { ...operator, providerId: 'kimi', sessionId: 'kimi-composition' };
+    const deps = { advise: async () => null, design: () => null, now: () => 1000 };
+    const first = additionalContextText((await handleHookDelegateRequest(ctx, { prompt: 'Refaça o cartão de trabalho' }, deps)).payload);
+    expect(first).toContain('# Nexus UI composition baseline');
+    const second = additionalContextText((await handleHookDelegateRequest(ctx, { prompt: 'Continue' }, deps)).payload);
+    expect(second).not.toContain('# Nexus UI composition baseline');
+    const later = additionalContextText((await handleHookDelegateRequest(ctx, { prompt: 'Continue' }, {
+      ...deps, now: () => 1000 + 30 * 60_000,
+    })).payload);
+    expect(later).toContain('# Nexus UI composition baseline');
+  });
   it('parseUserPrompt lê o prompt do payload UserPromptSubmit', () => {
     expect(parseUserPrompt({ hook_event_name: 'UserPromptSubmit', prompt: 'x' })).toBe('x');
     expect(parseUserPrompt({ prompt: '' })).toBeNull();

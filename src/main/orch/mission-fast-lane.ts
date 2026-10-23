@@ -65,6 +65,7 @@ import {
 import { getAcpDriverSession, listAcpDriverAgentSessions } from '../acp/acp-harness-driver';
 import { getAdapter, listAdapterInfos } from '../adapters/adapter-registry';
 import { deliverAgentPrompt, proveNativeArgvBriefAccepted, withProjectContextBlocksAsync } from './tool-util';
+import { withUiCompositionPolicy } from './prompt-context-blocks';
 import { canUseNexusMcp } from './cli-mcp-inject';
 import {
   NEXUS_BROWSER_BRIEF_RULE,
@@ -1332,7 +1333,8 @@ async function spawnAgentPane(
     readonly readOnly?: boolean;
     /**
      * F-661: retoma a conversa gravada deste pane no pane novo (`--resume`).
-     * O prompt vai cru — os blocos de contexto são do 1º prompt da conversa.
+     * O contexto do projeto é do 1º prompt; o baseline obrigatório de UI é
+     * reaplicado sem duplicar blocos que já estiverem montados.
      */
     readonly resumeFromPaneId?: string;
     readonly accountId?: string;
@@ -1406,15 +1408,17 @@ async function spawnAgentPane(
     })
       ? `${briefPrompt}\n\n${NEXUS_BROWSER_BRIEF_RULE}`
       : briefPrompt;
-  const initialPrompt = resumeFromPaneId ? briefPrompt : await withProjectContextBlocksAsync({
-    prompt: brief,
-    scope,
-    executionScope,
-    missionId: mission.id,
-    role,
-    readOnly,
-    agentCategory: agent.category,
-  });
+  const initialPrompt = resumeFromPaneId
+    ? (briefPrompt ? withUiCompositionPolicy(briefPrompt) : briefPrompt)
+    : await withProjectContextBlocksAsync({
+        prompt: brief,
+        scope,
+        executionScope,
+        missionId: mission.id,
+        role,
+        readOnly,
+        agentCategory: agent.category,
+      });
   assertMcpInvocationCurrent(spawnOpts?.invocation);
   if (role === 'worker') {
     const isMeta =

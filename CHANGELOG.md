@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.424 — Composição de UI como regra do Nexus
+
+- **Regra básica sempre entregue (F-1655):** hierarquia, agrupamento, espaçamento e alinhamento por função deixam de depender de Design Pro ou de a LLM carregar Impeccable. O MCP entrega a regra para todo papel/provedor; briefs compartilhados e a Via Rápida também a levam, inclusive sem MCP e em retomadas.
+- **Sem centralizar tudo:** texto à esquerda continua válido quando faz sentido. A regra rejeita o empilhamento uniforme por reflexo, organiza metadados e ações e preserva responsividade, RTL, acessibilidade e o contrato visual vigente.
+- **Revisão com critério:** a evidência de captura verificada lembra o revisor de conferir a composição, em vez de aceitar só porque existe screenshot. Sem inspeção, a LLM deve declarar a limitação.
+
+Testes de transporte cobrem a montagem e entrega das instruções, não obediência determinística de toda LLM. Um ensaio real com Codex e Claude, sem skill ou ferramentas, verificou a aplicação da regra a descrições de cartões; não foi uma inspeção de tela renderizada. Conversas antigas já abertas precisam de novo contexto; a atualização não reescreve seu histórico. Esta entrega Windows mantém os canais macOS e Linux independentes.
+
 ## 0.76.423 — Muse e MiniMax prontos no Mac
 
 Atualização macOS arm64 sobre a main `fa3ca26917ebbdb10c36790fed5a1fe91e0acde8`, incorporando as mudanças posteriores ao pacote macOS 0.76.417 e presentes no Windows 0.76.421.

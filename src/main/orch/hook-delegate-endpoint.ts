@@ -53,6 +53,8 @@ import { helpersToOpenNow, type ParallelHelperBudget } from './pane-admission';
 import { currentParallelHelperBudget } from './parallel-helper-budget';
 import { isRecentHumanPrompt } from './operator-input-receipts';
 
+import { UI_COMPOSITION_POLICY } from './ui-composition-policy';
+
 export const HOOK_DELEGATE_MAX_BODY_BYTES = 64 * 1024;
 
 export function parseUserPrompt(body: unknown): string | null {
@@ -223,6 +225,7 @@ function updateLeanOptOut(sessionId: string, prompt: string): void {
   leanOptedOut.add(sessionId);
 }
 const designRemindedAt = new Map<string, number>();
+const uiCompositionRemindedAt = new Map<string, number>();
 const doctrineDeliveredAt = new Map<string, number>();
 const businessModelDeliveredAt = new Map<string, { hash: string; at: number }>();
 const businessEnsureAt = new Map<string, number>();
@@ -271,6 +274,7 @@ export function __resetLeanRemindersForTests(): void {
   leanRemindedAt.clear();
   leanOptedOut.clear();
   designRemindedAt.clear();
+  uiCompositionRemindedAt.clear();
   doctrineDeliveredAt.clear();
   businessModelDeliveredAt.clear();
   businessEnsureAt.clear();
@@ -809,6 +813,13 @@ export async function handleHookDelegateRequest(
         : null;
     const maestro = maestroDirective ?? maestroContextFor(ctx, now, doctrineFor, budgetOf);
     const parts: string[] = maestro ? [maestro] : [];
+    // Kimi ignores MCP initialize instructions: its hook is the delivery
+    // channel even for UI requests outside the lexical design vocabulary.
+    if (ctx.providerId?.trim().toLowerCase() === 'kimi' && ctx.sessionId &&
+        !remindedRecently(uiCompositionRemindedAt, ctx.sessionId, now)) {
+      markReminded(uiCompositionRemindedAt, ctx.sessionId, now);
+      parts.push(UI_COMPOSITION_POLICY);
+    }
     // Preferência do operador: pré-filtro regex no próprio módulo; o Jev só é
     // chamado quando há marcador. Fire-and-forget — não segura o prompt.
     const distillPreference = deps.distillPreference ?? distillOperatorPreferenceMemory;

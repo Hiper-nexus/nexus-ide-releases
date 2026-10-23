@@ -137,6 +137,7 @@ describe('withHandoffContract tiering', () => {
     expect(frontend).toContain('[ENGINEERING]');
     expect(frontend).toContain('[PONYTAIL]');
     expect(frontend).toContain('[DESIGN]');
+    expect(frontend).toContain('# Nexus UI composition baseline');
   });
 
   it('composes the design profile (direction + dials) into the design charter', async () => {
@@ -171,6 +172,7 @@ describe('withHandoffContract tiering', () => {
     expect(prompt).not.toContain('[ENGINEERING]');
     expect(prompt).not.toContain('[DESIGN]');
     expect(prompt).not.toContain('[PONYTAIL]');
+    expect(prompt).toContain('# Nexus UI composition baseline');
   });
 });
 
@@ -210,7 +212,10 @@ describe('withProjectContextBlocks (brief de spawn de toda CLI)', () => {
           executionScope: scope,
         }),
       ).toContain('<business-model');
-      expect(withProjectContextBlocks({ prompt: 'x', scope, transient: true })).toBe('x');
+      const transient = withProjectContextBlocks({ prompt: 'x', scope, transient: true })!;
+      expect(transient).toContain('# Nexus UI composition baseline');
+      expect(transient).not.toContain('<business-model');
+      expect(transient.endsWith('\n\nx')).toBe(true);
       expect(withProjectContextBlocks({ scope })).toBeUndefined();
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

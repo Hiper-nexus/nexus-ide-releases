@@ -10,6 +10,7 @@ import { getMissionEventRuntimeManager } from './mission-event-emit';
 import type { VisualTaskRequirement } from '../../shared/orch-types';
 import { createScopedTaskStore } from './task-store';
 import { withoutMountedPromptContextBlocks } from './prompt-context-blocks';
+import { UI_COMPOSITION_REVIEW } from './ui-composition-policy';
 
 export type { VisualTaskRequirement } from '../../shared/orch-types';
 export interface VisualHandoffContext {
@@ -431,7 +432,8 @@ export async function checkVisualHandoff(ctx: VisualHandoffContext, options: {
       path: artifact.path, url: artifact.url, width: artifact.width, height: artifact.height,
       capturedAt: artifact.capturedAt,
       reviewHint: `Abra a captura em ${artifact.path} (PNG ${artifact.width}×${artifact.height} de ${artifact.url}) ` +
-        'e confira o resultado visual contra o pedido antes de aceitar a entrega; o sha256 é o da imagem que o Main verificou.',
+        'e confira o resultado visual contra o pedido antes de aceitar a entrega; o sha256 é o da imagem que o Main verificou. ' +
+        UI_COMPOSITION_REVIEW,
     };
   }
   return missing(stale ? VISUAL_CAPTURE_STALE_REASON : VISUAL_CAPTURE_MISSING_REASON);

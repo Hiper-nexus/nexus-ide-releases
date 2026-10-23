@@ -5,7 +5,7 @@ import { createVisualTaskRequirement, isReadOnlyVisualLane, visualTaskRequiremen
 import { assertLicensedAgentCapacity, licensedAgentCount } from '../license-enforcement';
 import { licenseErrorFrom } from '../../shared/license-errors';
 import { withWorkspaceDesignRule } from './workspace-design-rule';
-import { mountPromptContextBlocks } from './prompt-context-blocks';
+import { mountPromptContextBlocks, withUiCompositionPolicy } from './prompt-context-blocks';
 import {
   businessModelContextBlock,
   taskBusinessContextBlock,
@@ -65,6 +65,7 @@ import { hasBoundHandoffForExactDispatchWorker } from './task-dispatch-codec';
 import { migrateModelId } from '../../shared/model-defaults';
 import { resolveCwdForScope } from './workspace-path';
 import { withHandoffContract } from './worker-handoff-contract';
+import { UI_COMPOSITION_CONTEXT } from './ui-composition-policy';
 import { hasNexusBrowserAlternative } from './nexus-browser-policy';
 import {
   assertReleaseQualifiedMissionWorkerSpawn,
@@ -1525,10 +1526,12 @@ type BriefCandidate = Pick<
  * Blocos de contexto do projeto no brief de TODA CLI (worker, helper,
  * orquestrador): `<business-model>` e `<workspace-memory>` (este só para
  * quem recallsWorkspaceMemory). Pane interno transitório (revisor
- * automático) não recebe.
+ * automático) não recebe contexto do projeto; o baseline de composição é
+ * independente dessa opção e segue em todo brief.
  */
 export function withProjectContextBlocks(options: BriefCandidate): string | undefined {
-  if (!options.prompt || options.transient === true) return options.prompt;
+  if (!options.prompt) return options.prompt;
+  if (options.transient === true) return withUiCompositionPolicy(options.prompt);
   return mountPromptContextBlocks(options.prompt, [
     businessModelContextBlock(options.executionScope ?? options.scope, options.scope),
     recallsWorkspaceMemory(options)
@@ -1536,6 +1539,7 @@ export function withProjectContextBlocks(options: BriefCandidate): string | unde
           missionId: options.missionId ?? undefined,
         })
       : null,
+    UI_COMPOSITION_CONTEXT,
   ]);
 }
 
@@ -1548,7 +1552,8 @@ export function withProjectContextBlocks(options: BriefCandidate): string | unde
 export async function withProjectContextBlocksAsync(
   options: BriefCandidate,
 ): Promise<string | undefined> {
-  if (!options.prompt || options.transient === true) return options.prompt;
+  if (!options.prompt) return options.prompt;
+  if (options.transient === true) return withUiCompositionPolicy(options.prompt);
   const execScope = options.executionScope ?? options.scope;
   // Brief é ponto de trigger: garante o modelo extraído do HEAD em background
   // (dedup por commit + flight único), sem segurar o spawn.
@@ -1565,6 +1570,7 @@ export async function withProjectContextBlocksAsync(
           missionId: options.missionId ?? undefined,
         })
       : null,
+    UI_COMPOSITION_CONTEXT,
   ]);
 }
 

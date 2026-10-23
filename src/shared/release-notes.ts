@@ -12923,7 +12923,7 @@ export const RELEASE_076422: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+const RELEASE_076423_FULL: AppRelease = {
   version: '0.76.423',
   date: '2026-10-23',
   codename: 'Muse e MiniMax prontos no Mac',
@@ -12941,4 +12941,22 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076423: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076423: AppRelease = RELEASE_076423_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.424',
+  date: '2026-10-23',
+  codename: 'Composição de UI como regra do Nexus',
+  summary: 'As LLMs recebem uma regra básica de composição independentemente de Design Pro ou de carregar Impeccable: hierarquia, grupos e alinhamento por função, sem empilhar ou centralizar tudo por reflexo.',
+  highlights: [
+    { title: 'Regra independente de skill', detail: 'O baseline chega pelo MCP e pelos briefs compartilhados, inclusive na Via Rápida sem MCP e nas retomadas. Não depende de Design Pro (F-1655).' },
+    { title: 'Composição, não centralização', detail: 'Títulos, metadados e ações têm funções diferentes. Texto à esquerda e pilhas responsivas continuam válidos quando organizados, respeitando o design do projeto.' },
+    { title: 'Revisão visual com critério', detail: 'A captura verificada leva ao revisor o critério de hierarquia, agrupamento, espaçamento, alinhamento e overflow. Ter um screenshot não comprova qualidade visual.' },
+  ],
+  fixes: [
+    { title: 'Brief sem MCP também recebe a regra', detail: 'A montagem não depende de reconhecer palavras de UI no pedido. O bloco é deduplicado e não transforma tarefas de backend em exigências de captura (F-1655).' },
+    { title: 'Limites explícitos', detail: 'A entrega da instrução não garante obediência da LLM. Sem inspeção de tela, não se deve anunciar validação visual. Conversas antigas não recebem contexto retroativamente.' },
+  ],
+};
+
+export const RELEASE_076424: AppRelease = CURRENT_RELEASE;

@@ -10,6 +10,7 @@ import { operatorBusinessModelContext } from "./operator-business-model";
 import { ensureBusinessModel } from "../context/business-model/business-model-ensure";
 import { joinPromptContextBlocks } from "./prompt-context-blocks";
 import { operatorWorkspaceMemoryContext } from "./operator-workspace-memory";
+import { UI_COMPOSITION_POLICY } from "./ui-composition-policy";
 
 /**
  * Minimal MCP (Model Context Protocol) server core: JSON-RPC 2.0 message
@@ -267,6 +268,7 @@ export async function handleMcpMessage(
         operatorBusinessModelContext(ctx, "mcp"),
         operatorUiKitContext(ctx, "mcp"),
         operatorWorkspaceMemoryContext(ctx, "mcp"),
+        UI_COMPOSITION_POLICY,
       ]);
       return ok(id, {
         protocolVersion: version,

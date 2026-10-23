@@ -52,7 +52,8 @@ beforeEach(() => {
 afterEach(() => {
   disposeWorkspaceMemoryStores();
   getFeatureFlagRegistry().clearOverride(FEATURE_FLAG_IDS.workspaceMemory);
-  for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  // Windows can retain a short-lived background Git handle after disposal.
+  for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 describe('<workspace-memory> no "+ Pane" pelos canais do <business-model>', () => {
@@ -124,7 +125,10 @@ describe('<workspace-memory> no "+ Pane" pelos canais do <business-model>', () =
     replaceOrchSettings({ workspaceMemoryInjection: false });
     try {
       expect(await instructionsFor({ role: 'user', providerId: 'grok' })).not.toContain('<workspace-memory');
-      expect(withProjectContextBlocks({ prompt: 'instale com pnpm', scope })).toBe('instale com pnpm');
+      const brief = withProjectContextBlocks({ prompt: 'instale com pnpm', scope })!;
+      expect(brief).not.toContain('<workspace-memory');
+      expect(brief).toContain('# Nexus UI composition baseline');
+      expect(brief.endsWith('\n\ninstale com pnpm')).toBe(true);
     } finally {
       replaceOrchSettings({ workspaceMemoryInjection: previous });
     }

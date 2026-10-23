@@ -8,6 +8,7 @@ import { getOrchSettings } from '../persistence/settings-store';
 import { canUseNexusMcp } from './cli-mcp-inject';
 import { isPaneMetaTask } from './mission-fast-lane';
 import { NEXUS_BROWSER_BRIEF_RULE } from './nexus-browser-policy';
+import { withoutMountedPromptContextBlocks, withUiCompositionPolicy } from './prompt-context-blocks';
 
 /**
  * UI-shaped work, detectado no brief da tarefa + título do pane/nome do agente.
@@ -76,7 +77,7 @@ export function charterTierForWorker(
   if (input.readOnly === true || category === 'scout' || category === 'architect') {
     return { engineering: false, design: false, lean: false };
   }
-  const corpus = [input.prompt, ...(input.hints ?? [])]
+  const corpus = [withoutMountedPromptContextBlocks(input.prompt), ...(input.hints ?? [])]
     .filter(Boolean)
     .join('\n');
   // Pergunta aos panes / meta-de-pane: entrega é RESPOSTA, não diff — as três
@@ -138,7 +139,7 @@ export function withHandoffContract(
     'nunca o apague nem reinstale (npm ci, rm -rf, rimraf): no Node 24 a remoção ' +
     'recursiva atravessa o link e apaga as dependências do checkout de origem.';
   const visualVerification = isUiShapedWork(
-    [prompt, ...(hints.hints ?? [])].filter(Boolean).join('\n'),
+    [withoutMountedPromptContextBlocks(prompt), ...(hints.hints ?? [])].filter(Boolean).join('\n'),
   )
     ? 'Validação visual de interface ou jogo: abra e exercite a entrega com as ' +
       'ferramentas de navegador disponíveis neste pane (para fluxos de múltiplos passos ' +
@@ -236,5 +237,5 @@ export function withHandoffContract(
       : `\n\n${UI_KIT_BRIEF_LINE}`
     : '';
   const lean = orch.leanCode && tier.lean ? `\n\n${PONYTAIL_RULES}` : '';
-  return `${prompt}${charter}${design}${lean}\n\n${autonomy}${visualVerification ? `\n\n${visualVerification}` : ''}\n\n${peerRead}${memoryDoctrine ? `\n\n${memoryDoctrine}` : ''}${browserDoctrine ? `\n\n${browserDoctrine}` : ''}\n\n${contract}`;
+  return withUiCompositionPolicy(`${prompt}${charter}${design}${lean}\n\n${autonomy}${visualVerification ? `\n\n${visualVerification}` : ''}\n\n${peerRead}${memoryDoctrine ? `\n\n${memoryDoctrine}` : ''}${browserDoctrine ? `\n\n${browserDoctrine}` : ''}\n\n${contract}`);
 }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   WORKSPACE_DESIGN_RULE_HEADING,
@@ -23,6 +23,12 @@ function catalog(): string {
 const noCatalog = () => ({ catalogDir: join(workspace(), 'missing') });
 
 describe('workspace design rule', () => {
+  it('operator UI hook carries the baseline even with Design Pro disabled', () => {
+    const text = operatorDesignContext('Crie a tela de tarefas', workspace(), {
+      ...noCatalog(), charter: null,
+    });
+    expect(text).toContain('# Nexus UI composition baseline');
+  });
   it('names the applied contract and requires evidence without injecting its contents', () => {
     const root = workspace();
     mkdirSync(join(root, '.context/docs'), { recursive: true });
@@ -62,7 +68,9 @@ describe('workspace design rule', () => {
       const prompt = withWorkspaceDesignRule(
         'Crie a tela de checkout de pagamentos', workspace(), undefined, { catalogDir: dir },
       );
-      expect(prompt).toContain(join(dir, 'stripe.md'));
+      // Display paths are home-relative and use '/' before the catalog item,
+      // even on Windows. Assert the selected directory/item, not host spelling.
+      expect(prompt.replaceAll('\\', '/')).toContain(`${basename(dir)}/stripe.md`);
       expect(prompt).toContain('linear');
       expect(prompt).not.toContain('README');
       // Worker não propõe contrato: a sugestão de import é só do operador.
