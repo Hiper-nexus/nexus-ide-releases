@@ -221,7 +221,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
     // Same cost-based prior for MiniMax: the `mcode` TUI takes no effort argv
     // (only headless `exec` does), so the model's native default stands.
-    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
+    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M2.7-highspeed' },
     // Haiku 5.5 ($0,10/$0,50, anthropic.com/claude/haiku): primeiro no trivial;
     // sem nota própria herda o piso do 4.5 (F-217). O 4.5 fica logo abaixo como
@@ -247,7 +247,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'deepseek', model: 'deepseek-flash', effort: 'low' },
     { adapterId: 'qwen', model: 'qwen3.8-max', effort: 'low' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
-    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
+    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M2.7-highspeed' },
     // Sonnet 5 é mais novo e mais barato que o 4.6 ($2/$10 × $3/$15).
     // CLI 2.1.284: mesma faixa de custo; catálogo da CLI filtra disponibilidade.
@@ -267,7 +267,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'deepseek', model: 'deepseek-flash', effort: 'medium' },
     { adapterId: 'qwen', model: 'qwen3.8-max', effort: 'medium' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
-    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
+    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'medium' },
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'medium' },
@@ -329,7 +329,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // catálogo e ausente da CLI instalada, gerava "CLI sem o modelo roteado"
     // em toda decisão; o pro cobre a vaga por eliminação.
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro' },
-    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
+    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
     { adapterId: 'devin', model: 'swe-2-high' },
     { adapterId: 'openclaude', model: 'opus' },
@@ -364,7 +364,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'agy', model: 'gemini-3.8-flash-high', effort: 'high' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'xhigh' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro' },
-    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
+    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
     // F-1391: mesmo par do hard (wonder-full; spark-1.3 de reserva).
     { adapterId: 'muse', model: 'muse-wonder-full-1.0' },

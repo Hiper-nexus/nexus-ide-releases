@@ -1,23 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_ROUTING_TABLE, routeTask, type TaskTier } from './task-router';
+import { DEFAULT_ROUTING_TABLE, resolveRoutableModel, routeTask, type TaskTier } from './task-router';
 import { routingOverridesFrom } from './jev-task-routing';
 
 const highspeed = 'minimax/MiniMax-M2.7-highspeed';
 const m3 = 'minimax/MiniMax-M3';
-const flashPreview = 'minimax/MiniMax-M3.1-Flash-Preview';
+const flashGa = 'minimax/MiniMax-M3.1-Flash';
 const base = 'minimax/MiniMax-M2.7';
-const models = [m3, flashPreview, highspeed, base];
+const models = [m3, flashGa, highspeed, base];
 const catalog = { version: 1 as const, adapters: {} };
 
 describe('MiniMax task routing', () => {
+  it('F-1649: resolves the retired alias only when GA is offered by the CLI', () => {
+    const retired = 'minimax/MiniMax-M3.1-Flash-Preview';
+    expect(resolveRoutableModel(retired, [retired, flashGa])).toEqual({ ok: true, model: flashGa });
+    expect(resolveRoutableModel(retired, [retired])).toMatchObject({ ok: false });
+  });
+
   // Regra do operador (29/09): o modelo mais novo vem primeiro em todo tier,
   // com ou sem benchmark publicado; o antigo fica como alternativa.
   it.each(['trivial', 'easy', 'medium', 'hard', 'critical'] satisfies TaskTier[])(
-    'offers the newest MiniMax (M3.1 Flash Preview) for %s work', (tier) => {
+    'offers the newest MiniMax (M3.1 Flash GA) for %s work', (tier) => {
       const decision = routeTask('tarefa', [
         { id: 'minimax-code', installed: true, models },
       ], DEFAULT_ROUTING_TABLE, tier, false, catalog);
-      expect(decision).toMatchObject({ adapterId: 'minimax-code', model: flashPreview });
+      expect(decision).toMatchObject({ adapterId: 'minimax-code', model: flashGa });
       expect(decision?.reason).not.toContain('nenhum candidato da tabela');
       expect(decision?.policySource).not.toBe('nexus-eval');
     },
@@ -56,6 +62,6 @@ describe('MiniMax task routing', () => {
     ], DEFAULT_ROUTING_TABLE, overrides.tierOverride, false, catalog, {
       specialtyOverride: overrides.specialtyOverride,
     });
-    expect(decision).toMatchObject({ tier: 'hard', adapterId: 'minimax-code', model: flashPreview });
+    expect(decision).toMatchObject({ tier: 'hard', adapterId: 'minimax-code', model: flashGa });
   });
 });

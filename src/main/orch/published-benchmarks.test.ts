@@ -11,6 +11,23 @@ import {
 } from './published-benchmarks';
 import { DEFAULT_ROUTING_TABLE } from './task-router';
 
+it('F-1649: GA inherits only an attributed predecessor floor, never Preview measurements as its own', () => {
+  const ga = 'minimax/MiniMax-M3.1-Flash';
+  const entry = PUBLISHED_BENCHMARKS[`minimax-code:${ga}`];
+  expect(entry).toMatchObject({
+    successorOf: 'minimax-code:minimax/MiniMax-M3.1-Flash-Preview',
+    source: 'https://agent.minimax.io/tools/m3.1-flash',
+  });
+  expect(entry.deepSWE).toBeUndefined();
+  expect(entry.terminalBench21).toBeUndefined();
+  expect(entry.swebenchVerified).toBeUndefined();
+  expect(resolvePublishedBenchmark('minimax-code', ga)).toMatchObject({
+    key: 'minimax-code:minimax/MiniMax-M3', origin: 'predecessor',
+  });
+  expect(resolvePublishedBenchmark('minimax-code', 'minimax/MiniMax-M3.1-Flash-Preview'))
+    .toMatchObject({ key: 'minimax-code:minimax/MiniMax-M3', origin: 'predecessor' });
+});
+
 /** Linhas da tabela sem número oficial publicado pelo fabricante (não se inventa nota). */
 const UNPUBLISHED_ROUTE_MODELS = new Set([
   'mimo-code:xiaomi/mimo-v2.6-pro-ultraspeed',
@@ -29,11 +46,18 @@ const UNPUBLISHED_ROUTE_MODELS = new Set([
 ]);
 
 describe('benchmarks oficiais publicados (F-675)', () => {
-  it('toda chave aponta para um modelo do catálogo builtin', () => {
+  it('toda chave é alcançável por modelo builtin ou sua cadeia histórica de atribuição', () => {
     const reachable = new Set(
       Object.entries(BUILTIN_MODEL_CATALOG.adapters ?? {}).flatMap(([adapterId, entry]) =>
         (entry.models ?? []).map(m => publishedBenchmarkKey(adapterId, m.id))),
     );
+    // Retiring an offered id must not erase the predecessor's historical
+    // evidence. Only ancestors actually referenced by a live model qualify.
+    for (const key of reachable) {
+      const entry = PUBLISHED_BENCHMARKS[key];
+      if (entry?.sameModelAs) reachable.add(entry.sameModelAs);
+      if (entry?.successorOf) reachable.add(entry.successorOf);
+    }
     const dangling = Object.keys(PUBLISHED_BENCHMARKS).filter(key => !reachable.has(key));
     expect(dangling).toEqual([]);
   });

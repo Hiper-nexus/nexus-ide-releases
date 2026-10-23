@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-16T00:00:00.000Z",
+  "updatedAt": "2026-10-22T00:00:00.000Z",
   "adapters": {
     "claude": {
       "default": "claude-sonnet-5-5",
@@ -480,10 +480,10 @@
       ]
     },
     "minimax-code": {
-      "default": "minimax/MiniMax-M3.1-Flash-Preview",
+      "default": "minimax/MiniMax-M3.1-Flash",
       "models": [
         {
-          "id": "minimax/MiniMax-M3.1-Flash-Preview",
+          "id": "minimax/MiniMax-M3.1-Flash",
           "availability": "paid",
           "costTier": "low",
           "source": "bundled"

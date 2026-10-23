@@ -45,12 +45,12 @@
   "models": {
     "flag": "--model",
     "list": [
-      "minimax/MiniMax-M3.1-Flash-Preview",
+      "minimax/MiniMax-M3.1-Flash",
       "minimax/MiniMax-M3",
       "minimax/MiniMax-M2.7-highspeed",
       "minimax/MiniMax-M2.7"
     ],
-    "default": "minimax/MiniMax-M3.1-Flash-Preview"
+    "default": "minimax/MiniMax-M3.1-Flash"
   },
   "promptInjection": {
     "method": "arg",
