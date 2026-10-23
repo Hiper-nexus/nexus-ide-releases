@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.76.430 — Navegador do agente sobrevive à aba que cai
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions. A 0.76.429 continua o carimbo macOS e não recebe estes arquivos. A 0.76.428 continua o carimbo Windows. A 0.76.427 é o pacote Linux anterior. A tag v0.76.426 ficou sem pacote Linux: a suíte recusou o hash antigo do ledger de `browser-manager.ts`.
+
+- **Renderer morto não derruba mais o app (F-1659):** a correção do F-1656 cercava só o pane que nunca tinha carregado um documento. Quando o renderer de um pane de navegador morria, a cerca continuava aberta. O próximo pedido de device (navegação do agente com `device`, `nexus_browser_responsive` ou o seletor de dispositivo do operador) chamava a emulação nativa sem view, e o processo principal morria com SIGSEGV em null+0xf8. Agora a morte do renderer fecha a cerca até a página recarregar, e o dispositivo pedido entra nesse momento.
+- **Emulação nativa por um único caminho:** `enableDeviceEmulation` e `disableDeviceEmulation` só passam por `native-device-emulation.ts`, que exige documento commitado, WebContents vivo e renderer de pé.
+- **Codex sem Fast herdado (F-1658):** panes novos e retomados começam em Standard, mesmo quando o arquivo nativo ou perfil conserva `service_tier = "priority"`. Modelo, esforço e configuração global ficam intactos.
+- **Impeccable com o launcher documentado (F-1657):** a carta deixa de proibir o launcher da skill instalada. Sem a ferramenta, o agente declara a limitação e continua, sem inventar pacote ou comando.
+
+Esta release não toma a marca Latest e não anexa arquivos Linux a releases Mac ou Windows.
+
 ## 0.76.429 — Navegador do agente sobrevive à aba que cai
 
 Carimbo macOS arm64. Traz para o Mac o que saiu na Windows 0.76.428 (F-1657 e F-1658) e fecha o resto do crash do navegador embutido (F-1659). A 0.76.425 é o carimbo macOS anterior.
