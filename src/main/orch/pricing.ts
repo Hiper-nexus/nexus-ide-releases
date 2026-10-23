@@ -142,12 +142,12 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
 
   // === Kimi / Moonshot AI (kimi.com & api.moonshot.cn/pricing) ===
   // K3: $3/$15 (morphllm 2026 + `devin models list` 2026-09-27).
-  // K3.1 Pro: a Moonshot não publicou preço no lançamento (23/10); estimativa
-  // = K3. O highspeed gasta 2× a cota do Pro (doc do Kimi Code) → 2×.
-  'kimi-code/k3.1-pro-highspeed': { inputPerM: 6, outputPerM: 30, cacheReadPerM: 0.6 },
-  'kimi-code/k3.1-pro': { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3 },
-  'kimi-k3.1-pro-highspeed': { inputPerM: 6, outputPerM: 30, cacheReadPerM: 0.6 },
-  'kimi-k3.1-pro': { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3 },
+  // K3.1 Pro: $2/$10, cache $0,20 (2/3 do K3); Highspeed: $4/$20, cache $0,20
+  // (platform.kimi.ai/docs/pricing/chat, 23/10).
+  'kimi-code/k3.1-pro-highspeed': { inputPerM: 4, outputPerM: 20, cacheReadPerM: 0.2 },
+  'kimi-code/k3.1-pro': { inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.2 },
+  'kimi-k3.1-pro-highspeed': { inputPerM: 4, outputPerM: 20, cacheReadPerM: 0.2 },
+  'kimi-k3.1-pro': { inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.2 },
   'kimi-code/k3': { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3 },
   // F-774: aliases K2.7 do config.toml do Kimi Code (api.moonshot.cn, 08/2026)
   // — sem chave própria caíam no prefixo `kimi-code` ($0,60/$2,50). A

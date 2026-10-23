@@ -1,14 +1,14 @@
 # Changelog
 
-## 0.76.431 — Kimi K3.1 Pro
+## 0.76.432 — Kimi K3.1 Pro
 
-Carimbo macOS arm64. Traz o Kimi K3.1 Pro e o K3.1 Pro Highspeed (F-1660). A 0.76.429 é o carimbo macOS anterior; a 0.76.430 continua o pacote Linux e a 0.76.428 o Windows.
+Carimbo macOS arm64. Traz o Kimi K3.1 Pro e o K3.1 Pro Highspeed (F-1660). A 0.76.429 é o carimbo macOS anterior; a 0.76.430 continua o pacote Linux e a 0.76.428 o Windows. A tag v0.76.431 ficou sem pacote: o build foi parado no typecheck para trocar a estimativa de preço pela tabela oficial da Moonshot, publicada no mesmo dia.
 
 - **K3.1 Pro no lugar do K3 (F-1660):** vira o default do Kimi e a primeira opção Kimi em todos os tiers, com o K3 logo abaixo para a CLI que ainda não lista o alias. No hard lidera quando não há Claude, à frente do GLM 5.3 (DeepSWE 66,9); no critical entra depois de Claude e Codex. Fonte: https://www.kimi.ai/blog/kimi-k3-1-pro (DeepSWE v1.1 75,5; Terminal-Bench 4.0 65,7 × Opus 5.5 66,4).
 - **Lane de julgamento:** o K3.1 Pro entra pela regra do F-779 (DeepSWE publicado ≥ 71,0 do Sonnet 5.5); um teste agora trava essa regra para todo assento de fora de Claude/Codex/Muse. O K3 (67,5) continua fora.
 - **Lane visual:** o K3.1 Pro ocupa o assento do Kimi; o K3 vira reserva do mesmo assento, para a CLI com os dois não ganhar duas vagas no rodízio.
 - **K3.1 Pro Highspeed:** mesma capacidade, 2–3× mais rápido e 2× a cota (https://www.kimi.com/code/docs/en/kimi-code/models.html). Fica no seletor com aviso e fora da rota automática, como o `grok-4.7-build-fast`.
-- **Preço:** sem tabela publicada pela Moonshot; a estimativa usa o K3 ($3/$15) e o Highspeed conta 2×.
+- **Preço oficial:** K3.1 Pro $2/$10 (cache $0,20), 2/3 do K3; Highspeed $4/$20 (cache $0,20) — https://platform.kimi.ai/docs/pricing/chat.
 
 Limite conhecido: os panes do Kimi atualizam o catálogo gerenciado numa cópia privada do `config.toml` (F-611). Se o K3.1 não aparecer no seletor, rode `kimi web --no-open` no Terminal, espere alguns segundos e feche com Ctrl+C: a CLI busca o catálogo novo ao subir. Até lá o Nexus continua no K3.
 

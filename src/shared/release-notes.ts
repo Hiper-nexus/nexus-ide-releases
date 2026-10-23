@@ -13052,7 +13052,7 @@ export const RELEASE_076430: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.431',
+  version: '0.76.432',
   date: '2026-10-23',
   codename: 'Kimi K3.1 Pro',
   summary:
@@ -13066,8 +13066,8 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
   fixes: [
     { title: 'CLI sem o K3.1 continua no K3', detail: 'Se o Kimi Code ainda não listou o modelo novo, o Nexus usa o K3 e o default da própria CLI, sem abrir pane com modelo inexistente. Na lane visual o K3 é reserva do mesmo assento (F-1660).' },
-    { title: 'Custo estimado', detail: 'A Moonshot não publicou preço do K3.1 Pro; a estimativa usa o do K3 e o Highspeed conta o dobro (F-1660).' },
+    { title: 'Custo com o preço oficial', detail: 'K3.1 Pro a $2/$10 por milhão de tokens (2/3 do K3) e Highspeed a $4/$20, com cache a $0,20 nos dois (F-1660).' },
   ],
 };
 
-export const RELEASE_076431: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076432: AppRelease = CURRENT_RELEASE;
