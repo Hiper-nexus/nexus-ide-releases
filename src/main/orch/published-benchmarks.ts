@@ -79,6 +79,9 @@ export const PUBLISHED_BENCHMARKS: Readonly<Record<string, PublishedBenchmark>> 
   'mimo-code:xiaomi/mimo-v2.6-pro': { deepSWE: 71.9, terminalBench21: 89.9, source: 'https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Pro-RL' },
   'mimo-code:xiaomi/mimo-v2.6-flash': { deepSWE: 67.9, terminalBench21: 87.6, source: 'https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Flash-RL' },
   'minimax-code:minimax/MiniMax-M3.1-Flash-Preview': { successorOf: 'minimax-code:minimax/MiniMax-M3', source: 'https://datanorth.ai/news/minimax-releases-m3-1-flash-preview' },
+  // F-1649: documented succession only, not a measured GA score. Preserve
+  // historical Preview/M3 records and attribute the inherited floor below.
+  'minimax-code:minimax/MiniMax-M3.1-Flash': { successorOf: 'minimax-code:minimax/MiniMax-M3.1-Flash-Preview', source: 'https://agent.minimax.io/tools/m3.1-flash' },
   'minimax-code:minimax/MiniMax-M3': { swebenchVerified: 80.5, terminalBench21: 66.0, source: 'https://www.minimax.io/blog/minimax-m3' },
   'minimax-code:minimax/MiniMax-M2.7': { swebenchVerified: 79.9, terminalBench21: 51.1, source: 'https://www.minimax.io/blog/minimax-m3' },
   'minimax-code:minimax/MiniMax-M2.7-highspeed': { sameModelAs: 'minimax-code:minimax/MiniMax-M2.7', source: 'https://www.minimax.io/models/text/m27' },

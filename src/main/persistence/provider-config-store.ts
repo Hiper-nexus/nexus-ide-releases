@@ -64,7 +64,7 @@ import { noteLiveIdentity } from './provider-live-identity';
 import { DRAIN_THRESHOLD, isHeadroomDraining } from '../quota/account-headroom';
 import { resolveCliLoginCommand } from '../../shared/cli-login';
 import { kimiLoginCommand } from '../../shared/kimi-login-command';
-import { cachedCliBinaryVersion, revalidateExecutable, resolveCliBinary, realUserHome } from '../path-resolver';
+import { cachedCliBinaryVersion, revalidateExecutable, resolveCliBinary, realUserHome, refreshUserPath, type CliBinaryResolution } from '../path-resolver';
 import { cliVersionWarnings } from '../adapters/cli-compatibility';
 import {
   availableEfforts,
@@ -110,7 +110,8 @@ import {
 import type { CliVersionCheck } from '../adapters/cli-auto-update';
 import { trace } from '../observability/main-trace';
 import { execFile } from 'node:child_process';
-import { redactSecretText } from '../../shared/secret-redaction';
+import { redactSecretText, redactTerminalText } from '../../shared/secret-redaction';
+import { stripAnsi } from '../../shared/ansi-text';
 import {
   getKey,
   getSecret,
@@ -2596,7 +2597,7 @@ async function automaticCliCandidateAsync(adapterId: string): Promise<AutomaticC
   }
   try {
     return { adapterId, label: adapter.label, binPath, realBinPath, recipe,
-      prepared: prepareArgvInstallInvocation(recipe) };
+      prepared: prepareArgvInstallInvocation(recipe, adapterId) };
   } catch { return null; }
 }
 
@@ -2623,7 +2624,7 @@ function automaticCliRepairRecipe(
   if (!selection?.ok || selection.recipe.kind !== 'argv' || !isSafeAutomaticCliRecipe(selection.recipe)) {
     return null;
   }
-  try { return { recipe: selection.recipe, prepared: prepareArgvInstallInvocation(selection.recipe) }; }
+  try { return { recipe: selection.recipe, prepared: prepareArgvInstallInvocation(selection.recipe, candidate.adapterId) }; }
   catch { return null; }
 }
 
@@ -2843,11 +2844,34 @@ function recordCliAutoUpdate(adapterId: string, outcome: Omit<CliAutoUpdateOutco
   if (outcome.status === 'failed') broadcast();
 }
 
-function shortInstallError(error: unknown): string {
-  const raw = String(error instanceof Error ? error.message : error);
-  const sanitized = redactSecretText(raw).text;
-  const lines = sanitized.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
-  return (lines.at(-1) ?? 'erro desconhecido').slice(0, 200);
+// Keep only a bounded, redacted diagnostic; never replace the native Error or
+// copy its raw output. Identity, AbortError, code, signal and killed stay intact.
+const installFailureDetails = new WeakMap<Error, string>();
+
+function installOutputSummary(raw: string, maxLength: number): string | undefined {
+  // execFile already bounds each captured stream (8 MiB). Redact BEFORE
+  // selecting/capping lines so wrapped tokens and PEM bodies remain covered.
+  const lines = redactTerminalText(stripAnsi(raw)).split('\n')
+    .map(line => line.trim().replace(/^npm\s+(?:ERR!|error)\s*/iu, ''))
+    .filter(line => line && !/^(?:Command failed(?::|$)|A complete log of this run)/iu.test(line));
+  const cause = [...lines].reverse().find(line =>
+    /\b(?:err(?:or)?|fatal|failed|denied|refused|EACCES|ENOENT|unsupported|unreachable|falhou)\b/iu.test(line));
+  return (cause ?? lines.at(-1))?.slice(0, maxLength);
+}
+
+function captureInstallFailure(error: Error, stdout?: string | Buffer, stderr?: string | Buffer): Error {
+  const state = error as Error & { code?: unknown; killed?: boolean };
+  // Interrupted output is not a completed package failure.
+  if (error.name === 'AbortError' || state.code === 'ABORT_ERR' || state.killed) return error;
+  const detail = installOutputSummary(`${String(stderr ?? '')}\n${String(stdout ?? '')}`, 300);
+  if (detail) installFailureDetails.set(error, detail);
+  return error;
+}
+
+function shortInstallError(error: unknown, maxLength = 200): string {
+  const captured = error instanceof Error ? installFailureDetails.get(error) : undefined;
+  return captured?.slice(0, maxLength) ??
+    installOutputSummary(String(error instanceof Error ? error.message : error), maxLength) ?? 'erro desconhecido';
 }
 
 /**
@@ -3014,7 +3038,7 @@ export function startCliAutoUpdate(
         // tocar na instalação; em dia, só marca a checagem.
         const versionCheck = beforeVersion ? cliVersionCheck(selected.recipe) : null;
         if (beforeVersion && versionCheck) {
-          const stdout = await context.wait(availableCliVersion(selected.recipe, versionCheck, context.signal));
+          const stdout = await context.wait(availableCliVersion(selected.recipe, id, versionCheck, context.signal));
           if (cliVersionCheckUpToDate(versionCheck, beforeVersion, stdout ?? '') === true) {
             console.info(`[cli-auto-update] ${id}: up-to-date, ${beforeVersion}`);
             recordCliAutoUpdate(id, {
@@ -3067,7 +3091,7 @@ export function startCliAutoUpdate(
               await clearInstallMarker();
             };
             try {
-              await context.wait(runInstallRecipe(recipe, prepared, assertInstallCurrent, context.signal, {
+              await context.wait(runInstallRecipe(recipe, id, prepared, assertInstallCurrent, context.signal, {
                 childSignal: installAbort.signal,
                 onChildStart: (exited) => {
                   child = exited;
@@ -3102,7 +3126,7 @@ export function startCliAutoUpdate(
               await runTracked(repair.recipe, repair.prepared);
               return 'repaired';
             } catch (error) {
-              console.warn(`[cli-auto-update] ${id}: repair failed`, error);
+              console.warn(`[cli-auto-update] ${id}: repair failed`, shortInstallError(error));
               return 'broken';
             }
           };
@@ -3112,7 +3136,7 @@ export function startCliAutoUpdate(
             await runTracked(repairOnly?.recipe ?? selected.recipe,
               repairOnly?.prepared ?? selected.prepared ?? undefined);
           } catch (error) {
-            console.warn(`[cli-auto-update] ${id}: ${repairOnly ? 'repair' : 'update'} failed`, error);
+            console.warn(`[cli-auto-update] ${id}: ${repairOnly ? 'repair' : 'update'} failed`, shortInstallError(error));
             if (stopped || error === authorityChanged) return false;
             const state = await repairIfBroken();
             if (state !== 'repaired') {
@@ -3243,13 +3267,14 @@ function installedDevinDistribution(realBinPath: string): string | null {
  */
 async function availableCliVersion(
   recipe: CliInstallRecipe,
+  adapterId: string,
   check: CliVersionCheck,
   signal?: AbortSignal,
 ): Promise<string | null> {
   // A checagem só existe para receitas argv; scripts seguem o caminho atual.
   if (recipe.kind !== 'argv') return null;
   try {
-    const invocation = prepareArgvInstallInvocation({ ...recipe, argv: check.argv });
+    const invocation = prepareArgvInstallInvocation({ ...recipe, argv: check.argv }, adapterId);
     return await new Promise<string | null>((resolve) => {
       execFile(
         invocation.executable,
@@ -3290,7 +3315,9 @@ async function installedCliVersion(adapterId: string, binPath: string): Promise<
     execFile(
       executable,
       args,
-      { timeout: 10_000, maxBuffer: 16 * 1024, windowsHide: true },
+      { timeout: 10_000, maxBuffer: 16 * 1024, windowsHide: true,
+        ...(adapterId === 'muse' ? { env: { ...process.env, MUSE_LOGIN: '0', MUSE_NO_MODIFY_PATH: '1' } } : {}),
+      },
       (error, stdout) => {
         const version = String(stdout).trim().split(/\r?\n/u)[0]?.trim();
         resolve(error || !version ? null : version.slice(0, 100));
@@ -3382,7 +3409,7 @@ function trackInstallChild(run: Promise<void>, hooks?: InstallChildHooks): Promi
   return run;
 }
 
-async function runScriptInstall(
+async function runPosixScriptRecipe(
   scriptUrl: string,
   envOverrides?: Readonly<Record<string, string>>,
   assertCurrent?: () => void,
@@ -3398,15 +3425,18 @@ async function runScriptInstall(
   await fsp.writeFile(file, body, { mode: 0o700, flag: 'wx' });
   try {
     assertCurrent?.();
+    const runner = resolveInstallRunner('bash');
+    if (!runner) throw new Error('runner bash não está mais disponível');
+    const baseOptions = installExecOptions(runner);
     const options = envOverrides
-      ? { ...installExecOptions(), env: { ...process.env, ...envOverrides } }
-      : installExecOptions();
+      ? { ...baseOptions, env: { ...(baseOptions.env ?? process.env), ...envOverrides } }
+      : baseOptions;
     await trackInstallChild(new Promise<void>((resolve, reject) => {
       const child = execFile(
-        resolveRunnerPath('bash') ?? 'bash',
+        runner.binPath,
         [file],
         hooks?.childSignal ? { ...options, signal: hooks.childSignal } : options,
-        (error) => (error ? reject(error) : resolve()),
+        (error, stdout, stderr) => (error ? reject(captureInstallFailure(error, stdout, stderr)) : resolve()),
       );
       child?.stdin?.end();
     }), hooks);
@@ -3455,7 +3485,7 @@ async function runPowerShellScriptInstall(
         resolveRunnerPath('powershell') ?? 'powershell.exe',
         ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', file],
         hooks?.childSignal ? { ...options, signal: hooks.childSignal } : options,
-        (error) => (error ? reject(error) : resolve()),
+        (error, stdout, stderr) => (error ? reject(captureInstallFailure(error, stdout, stderr)) : resolve()),
       );
     }), hooks);
   } catch (error) {
@@ -3475,15 +3505,16 @@ type ArgvInstallInvocation = {
   readonly envOverrides?: Readonly<Record<string, string>>;
 };
 
-function prepareArgvInstallInvocation(recipe: Extract<CliInstallRecipe, { kind: 'argv' }>): ArgvInstallInvocation {
+function prepareArgvInstallInvocation(recipe: Extract<CliInstallRecipe, { kind: 'argv' }>, adapterId: string): ArgvInstallInvocation {
   // A Windows npm shim needs cmd.exe, which would interpret an installation
   // prefix from the filesystem as shell text. Run npm's JS entrypoint with
   // node.exe directly when updating a known global prefix instead.
-  let executable = resolveRunnerPath(recipe.runner);
-  if (!executable) throw new Error(`runner ${recipe.runner} não está mais disponível`);
+  const runner = resolveInstallRunner(recipe.runner);
+  if (!runner) throw new Error(`runner ${recipe.runner} não está mais disponível`);
+  let executable = runner.binPath;
   let args = recipe.argv.slice(1);
-  let options = installExecOptions();
-  if (recipe.env) options = { ...options, env: { ...process.env, ...recipe.env } };
+  let options = installExecOptions(runner);
+  if (recipe.env) options = { ...options, env: { ...(options.env ?? process.env), ...recipe.env } };
   if (process.platform === 'win32' && /\.(?:exe|com)$/iu.test(executable)) {
     // Native Windows executables accept argv directly. In particular, a
     // configured CLI path must never be interpolated through cmd.exe.
@@ -3499,7 +3530,7 @@ function prepareArgvInstallInvocation(recipe: Extract<CliInstallRecipe, { kind: 
     args = [npmJs, ...args];
     options = { ...options, shell: false };
   } else if (process.platform === 'win32' && path.isAbsolute(recipe.runner) && /\.cmd$/iu.test(executable)) {
-    const adapterId = path.basename(executable).replace(/\.cmd$/iu, '');
+    // Package ownership follows Main's adapter identity, not its bin alias (mcode).
     const invocation = windowsNpmShimInvocation(adapterId, executable, resolveRunnerPath('node'));
     if (!invocation) {
       throw new Error('não consegui executar a CLI atual sem o shell');
@@ -3520,6 +3551,7 @@ function describeArgvInstallInvocation(invocation: ArgvInstallInvocation): strin
 
 export async function runInstallRecipe(
   recipe: CliInstallRecipe,
+  adapterId: string,
   prepared?: ArgvInstallInvocation,
   assertCurrent?: () => void,
   signal?: AbortSignal,
@@ -3527,14 +3559,14 @@ export async function runInstallRecipe(
 ): Promise<void> {
   assertCurrent?.();
   if (recipe.kind === 'script') {
-    await runScriptInstall(recipe.scriptUrl, recipe.env, assertCurrent, signal, hooks);
+    await runPosixScriptRecipe(recipe.scriptUrl, recipe.env, assertCurrent, signal, hooks);
     return;
   }
   if (recipe.kind === 'powershell-script') {
     await runPowerShellScriptInstall(recipe.scriptUrl, recipe.replacesLocalAppDataExecutable, assertCurrent, signal, hooks);
     return;
   }
-  const invocation = prepared ?? prepareArgvInstallInvocation(recipe);
+  const invocation = prepared ?? prepareArgvInstallInvocation(recipe, adapterId);
   const execute = () => {
     // Revalida DENTRO do lock: quem esperou o brew de outro pode ter perdido a autoridade.
     assertCurrent?.();
@@ -3543,7 +3575,7 @@ export async function runInstallRecipe(
         invocation.executable,
         [...invocation.args],
         hooks?.childSignal ? { ...invocation.options, signal: hooks.childSignal } : invocation.options,
-        (error) => (error ? reject(error) : resolve()),
+        (error, stdout, stderr) => (error ? reject(captureInstallFailure(error, stdout, stderr)) : resolve()),
       );
       // F-1395: sem TTY e stdin fechado — um prompt (sudo do brew) recebe EOF e
       // falha na hora, em vez de pendurar até o timeout.
@@ -3687,19 +3719,23 @@ const RUNNER_FALLBACK_DIRS = [
 
 /** Caminho executável do runner: PATH primeiro, diretórios canônicos depois. */
 export function resolveRunnerPath(runner: string): string | null {
+  return resolveInstallRunner(runner)?.binPath ?? null;
+}
+
+function resolveInstallRunner(runner: string): CliBinaryResolution | null {
   // Returning the bare name here made the Windows packaged app call
   // `execFile('npm', ...)`. Node cannot launch npm's .cmd shim with
   // shell:false, so every install failed with `spawn npm ENOENT` even though
   // discovery had already proved that npm existed. Always return the absolute
   // file selected by the same resolver used for CLI discovery.
   const resolved = resolveCliBinary(runner);
-  if (resolved) return resolved.binPath;
+  if (resolved) return resolved;
   for (const dir of RUNNER_FALLBACK_DIRS) {
     const candidate = resolveCliBinary(runner, {
       processPath: dir,
       effectivePath: dir,
     });
-    if (candidate) return candidate.binPath;
+    if (candidate) return candidate;
   }
   return null;
 }
@@ -3711,7 +3747,7 @@ export function resolveRunnerPath(runner: string): string | null {
  * interpreter only on Windows preserves the no-shell path on POSIX while
  * making the verified installer usable in the packaged app.
  */
-function installExecOptions(): {
+function installExecOptions(runner?: CliBinaryResolution): {
   timeout: number;
   maxBuffer: number;
   windowsHide?: boolean;
@@ -3723,7 +3759,13 @@ function installExecOptions(): {
     maxBuffer: 8 * 1024 * 1024,
     ...(process.platform === 'win32'
       ? { shell: true, windowsHide: true }
-      : {}),
+      : { env: {
+          ...process.env,
+          // F-1647: a fallback can locate npm outside the inherited PATH.
+          // Keep the user's Node first; append the PATH that found this runner.
+          PATH: [...new Set([process.env.PATH ?? '', runner?.effectivePath ?? '']
+            .flatMap(value => value.split(path.delimiter)).filter(Boolean))].join(path.delimiter),
+        } }),
   };
 }
 
@@ -3745,6 +3787,7 @@ export async function maybeOfferFirstRunProvisioning(
   }
   if (!cliUpdateLease.beginProvisioning()) return;
   try {
+  if (process.platform !== 'win32') await refreshUserPath();
   const missing = listProviderSettings().filter(
     (provider) => !provider.installed && provider.canAutoInstall,
   );
@@ -3821,11 +3864,11 @@ export async function maybeOfferFirstRunProvisioning(
       continue;
     }
     try {
-      await runInstallRecipe(recipe);
+      await runInstallRecipe(recipe, provider.adapterId);
       done.push(provider.label);
     } catch (err) {
       pending.push(
-        `${provider.label} — ${err instanceof Error ? err.message.slice(0, 120) : 'falhou'}`,
+        `${provider.label} — ${shortInstallError(err, 120)}`,
       );
     } finally { cliUpdateLease.release(provider.adapterId); }
   }
@@ -3906,6 +3949,7 @@ export function registerProviderIpc(): void {
       return { ok: false, error: 'Já existe uma instalação ou atualização desta CLI em andamento.' };
     }
     try {
+    if (process.platform !== 'win32') await refreshUserPath();
     const updating = parsed.data.mode === 'update';
     if (!updating && adapter.id === 'claude') {
       // The UI can be stale, or only the native symlink may be broken.
@@ -3960,7 +4004,7 @@ export function registerProviderIpc(): void {
     const recipe = selection.recipe;
     let prepared: ArgvInstallInvocation | undefined;
     try {
-      if (recipe.kind === 'argv') prepared = prepareArgvInstallInvocation(recipe);
+      if (recipe.kind === 'argv') prepared = prepareArgvInstallInvocation(recipe, adapter.id);
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'instalador indisponível' };
     }
@@ -3972,15 +4016,12 @@ export function registerProviderIpc(): void {
     if (!confirmed) return { ok: false, error: updating ? 'atualização cancelada' : 'instalação cancelada' };
     try {
       // brew pode compilar; 15 min é teto honesto para 1ª instalação.
-      await runInstallRecipe(recipe, prepared);
+      await runInstallRecipe(recipe, adapter.id, prepared);
     } catch (err) {
       const operation = updating ? 'atualização' : 'instalação';
       return {
         ok: false,
-        error:
-          err instanceof Error
-            ? `${operation} falhou: ${err.message.slice(0, 300)}`
-            : `${operation} falhou`,
+        error: `${operation} falhou: ${shortInstallError(err, 300)}`,
       };
     }
     // Re-fold PATH + re-probe absolute bins so the new CLI is spawnable now.

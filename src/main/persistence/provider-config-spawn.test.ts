@@ -1,15 +1,20 @@
 import fsp from 'node:fs/promises';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import * as periodicFileRead from '../redline/redline-safe-read';
 import mimoRaw from '../../adapters/builtin/mimo-code.json';
 import museRaw from '../../adapters/builtin/muse.json';
 import codexRaw from '../../adapters/builtin/codex.json';
+import minimaxRaw from '../../adapters/builtin/minimax-code.json';
 import type { ChildProcess } from 'node:child_process';
 import { PROVIDER_CHANNELS } from '../../shared/provider-settings-types';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const spawnDeps = vi.hoisted(() => ({
   resolvedClaudeBin: '/usr/local/bin/claude' as string | null,
+  resolvedInstallBins: new Map<string, string>(),
+  userHome: '/fixture-quota-home',
   /** F-1397: adapters elegíveis para candidato de atualização (mutável por teste). */
   builtinIds: new Set<string>(['claude']),
   /** C5: brew resolvível só nos testes que pedem (null = sem Homebrew). */
@@ -22,6 +27,7 @@ const spawnDeps = vi.hoisted(() => ({
   downloadInstaller: vi.fn(async () => ({ ok: true, text: async () => '#!/bin/bash\nexit 0\n' })),
   systemIdleTime: vi.fn(() => 0),
   rescanBinaries: vi.fn(async () => []),
+  refreshUserPath: vi.fn(async () => process.env.PATH ?? ''),
   execFile: vi.fn<(...args: unknown[]) => ChildProcess>(),
   providersFile: { version: 3, providers: {
     claude: { upstream: 'glm' }, opencode: { upstream: 'glm' }, aider: { upstream: 'glm' },
@@ -300,7 +306,7 @@ vi.mock('../security/trusted-ipc', async (original) => ({
 vi.mock('../adapters/adapter-registry', () => ({
   isBuiltinAdapter: (id: string) => spawnDeps.builtinIds.has(id),
   getAdapter: (id: string) =>
-    id === 'codex' ? codexRaw : id === 'mimo-code'
+    id === 'minimax-code' ? minimaxRaw : id === 'codex' ? codexRaw : id === 'mimo-code'
       ? mimoRaw
       : id === 'claude'
       ? claudeAdapter
@@ -329,7 +335,7 @@ vi.mock('../adapters/adapter-registry', () => ({
   getAdapterInstallationWarning: (id: string) =>
     spawnDeps.installationWarnings.get(id),
   getAdapterResolvedBin: (id: string) =>
-    id === 'codex' ? '/mock/bin/codex' : id === 'mimo-code' ? '/usr/local/bin/mimo' : id === 'claude'
+    spawnDeps.resolvedInstallBins.get(id) ?? (id === 'codex' ? '/mock/bin/codex' : id === 'mimo-code' ? '/usr/local/bin/mimo' : id === 'claude'
       ? spawnDeps.resolvedClaudeBin
       : id === 'kimi'
         ? '/Users/test/.kimi-code/bin/kimi'
@@ -343,7 +349,7 @@ vi.mock('../adapters/adapter-registry', () => ({
           ? '/usr/local/bin/local-agent'
         : id === 'minimax-code'
           ? '/usr/local/bin/mcode'
-        : null,
+         : null),
   resolveAdapterBinary: (id: string) =>
     id === 'mimo-code' ? '/usr/local/bin/mimo' : id === 'claude'
       ? spawnDeps.resolvedClaudeBin
@@ -360,6 +366,7 @@ vi.mock('../adapters/adapter-registry', () => ({
         : null,
   rescanAdapterBinaries: spawnDeps.rescanBinaries,
   listAdapters: () => [
+    ...(spawnDeps.builtinIds.has('minimax-code') ? [minimaxRaw] : []),
     claudeAdapter,
     mimoRaw,
     kimiAdapter,
@@ -379,11 +386,12 @@ vi.mock('../adapters/adapter-registry', () => ({
 // Unit tests use synthetic absolute paths that do not exist on disk.
 vi.mock('../path-resolver', () => ({
   cachedCliBinaryVersion: () => undefined,
-  realUserHome: () => '/fixture-quota-home',
+  realUserHome: () => spawnDeps.userHome,
   revalidateExecutable: (binPath: string) =>
     typeof binPath === 'string' &&
     (binPath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(binPath)),
   resolveCliBinary: spawnDeps.resolveCliBinary,
+  refreshUserPath: spawnDeps.refreshUserPath,
 }));
 
 vi.mock('../adapters/control-args', async original => {
@@ -754,9 +762,9 @@ describe('background CLI maintenance during pane startup', () => {
         const secretBearer = 'Bearer synthetic-secret-token-abcdef1234567890';
         spawnDeps.execFile.mockImplementation((...args: unknown[]) => {
           const argv = args[1] as string[];
-          const callback = args.at(-1) as (error: Error | null, stdout: string) => void;
+          const callback = args.at(-1) as (error: Error | null, stdout: string, stderr?: string) => void;
           if (argv[0] === 'update') {
-            callback(new Error(`Command failed: claude update\nnpm ERR! 401 Unauthorized: ${secretBearer}`), '');
+            callback(new Error('Command failed: claude update'), '', `npm ERR! 401 Unauthorized: ${secretBearer}`);
           } else {
             callback(null, '1.0.0');
           }
@@ -764,6 +772,9 @@ describe('background CLI maintenance during pane startup', () => {
         });
         stop = startCliAutoUpdate('/fixture-quota-home', () => false);
         await vi.advanceTimersByTimeAsync(5_000);
+        const log = warn.mock.calls.flat().map(value => value instanceof Error ? value.stack : String(value)).join('\n');
+        expect(log).not.toContain('synthetic-secret-token-abcdef1234567890');
+        expect(log).toContain('[REDACTED]');
         warn.mockRestore();
 
         const cliUpdateCalls = traceSpy.mock.calls.filter((call) => (call[0] as { kind?: string })?.kind === 'cli-update');
@@ -1305,7 +1316,7 @@ describe('background CLI maintenance during pane startup', () => {
       await runInstallRecipe({
         kind: 'powershell-script', scriptUrl: 'https://static.devin.ai/cli/setup.ps1',
         runner: 'powershell', runnerHint: '',
-      }, undefined, undefined, undefined, { childSignal, onChildStart });
+      }, 'devin', undefined, undefined, undefined, { childSignal, onChildStart });
       expect(spawnDeps.execFile.mock.calls.at(-1)?.[1]).toContain('-File');
       expect(onChildStart).toHaveBeenCalledOnce();
       expect(psOptions?.signal).toBe(childSignal);
@@ -3300,6 +3311,380 @@ describe('F-210: instalação de Claude verifica e reutiliza o binário real', (
     expect(spawnDeps.execFile.mock.calls.at(-1)?.slice(0, 2)).toEqual([
       '/fixture-quota-home/.local/share/claude/versions/4.12.7', ['--version'],
     ]);
+  });
+});
+
+describe('F-1650: installer diagnostics from real child callbacks', () => {
+  const secret = 'sk-synthetic0123456789ABCDEFGHIJKLMN';
+  let resolver: ReturnType<typeof spawnDeps.resolveCliBinary.getMockImplementation>;
+  let stdout: string;
+  let stderr: string;
+  let failure: Error & { code?: string | number; killed?: boolean; signal?: string };
+  type RecipeKind = 'argv' | 'script' | 'powershell-script';
+
+  beforeEach(() => {
+    resolver = spawnDeps.resolveCliBinary.getMockImplementation();
+    spawnDeps.resolveCliBinary.mockImplementation(runner => runner === 'powershell'
+      ? { binPath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe' } : resolver!(runner));
+    stdout = '';
+    stderr = '';
+    failure = Object.assign(new Error('Command failed: ' + 'launcher '.repeat(80)), { code: 1 });
+    spawnDeps.confirmInstall.mockReset().mockResolvedValue({ response: 1 });
+    spawnDeps.rescanBinaries.mockReset().mockResolvedValue([]);
+    vi.spyOn(fsp, 'writeFile').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'rm').mockResolvedValue(undefined);
+    spawnDeps.execFile.mockReset().mockImplementation((...args: unknown[]) => {
+      const argv = args[1] as string[];
+      const callback = args.at(-1) as (err: Error | null, out: string, errout: string) => void;
+      if (argv.includes('--version')) callback(null, '1.2.3', '');
+      else callback(failure, stdout, stderr);
+      return { stdin: { end: () => undefined } } as unknown as ChildProcess;
+    });
+    registerProviderIpc();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks(); vi.unstubAllEnvs();
+    spawnDeps.resolveCliBinary.mockImplementation(resolver!);
+  });
+
+  async function install(kind: RecipeKind): Promise<{ ok: boolean; error?: string }> {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue(kind === 'powershell-script' ? 'win32' : 'darwin');
+    const adapterId = kind === 'argv' ? 'codex' : kind === 'script' ? 'muse' : 'agy';
+    return await spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.installCli)!({}, { adapterId }) as { ok: boolean; error?: string };
+  }
+
+  it.each(['argv', 'script', 'powershell-script'] as const)('%s reports stdout-only failure instead of the command header', async kind => {
+    stdout = 'Downloading package...\nERROR: permission denied writing destination\nSee installation guide';
+    const result = await install(kind);
+    expect(result).toMatchObject({ ok: false });
+    expect(result.error).toContain('permission denied writing destination');
+    expect(result.error).not.toContain('Command failed');
+    expect(result.error).not.toContain('launcher');
+  });
+
+  it('redacts wrapped secrets and terminal controls before bounding the diagnostic', async () => {
+    stderr = `\u001b[31mERROR: permission denied for ${secret.slice(0, 12)}\n${secret.slice(12)}\u001b[0m\n` +
+      'detail '.repeat(200) + '\nERROR: ' + 'destination not writable '.repeat(100);
+    const result = await install('argv');
+    expect(result.error).toContain('destination not writable');
+    expect(result.error!.length).toBeLessThanOrEqual(320);
+    expect(result.error).not.toMatch(/\u001b|synthetic|ABCDEFGHIJKLMN/);
+  });
+
+  it('redacts stdout secrets even when the secret itself fits inside the visible summary', async () => {
+    stdout = `ERROR: registry refused Bearer ${secret}`;
+    const result = await install('argv');
+    expect(result.error).toContain('registry refused');
+    expect(result.error).toContain('[REDACTED]');
+    expect(result.error).not.toContain(secret);
+  });
+
+  it('redacts a secret split across output lines before choosing the failure line', async () => {
+    stdout = `ERROR: registry refused ${secret.slice(0, 12)}\n${secret.slice(12)}`;
+    const result = await install('argv');
+    expect(result.error).toContain('registry refused');
+    expect(result.error).toContain('[REDACTED]');
+    expect(result.error).not.toMatch(/synthetic|ABCDEFGHIJKLMN/);
+  });
+
+  it('prefers a stdout failure to incidental stderr warnings', async () => {
+    stderr = 'Warning: update notifier unavailable';
+    stdout = 'ERROR: destination permission denied';
+    expect((await install('argv')).error).toContain('destination permission denied');
+  });
+
+  it('reports the npm cause instead of its trailing log-file notice', async () => {
+    stderr = 'npm error code EACCES\nnpm error EACCES: permission denied writing destination\n' +
+      'npm error\nnpm error A complete log of this run can be found in: /fixture/npm-debug.log';
+    const result = await install('argv');
+    expect(result.error).toContain('permission denied writing destination');
+    expect(result.error).not.toContain('npm-debug.log');
+  });
+
+  it('captures ordinary failure output without replacing or mutating the child Error', async () => {
+    stdout = 'ERROR: destination permission denied';
+    const message = failure.message;
+    await expect(runInstallRecipe({ kind: 'argv', runner: 'npm', runnerHint: '', argv: ['npm', 'install', '-g', 'fixture'] }, 'codex'))
+      .rejects.toBe(failure);
+    expect(failure).toMatchObject({ name: 'Error', code: 1, message });
+    expect(failure).not.toHaveProperty('stdout');
+  });
+
+  it('preserves the exact child error, code, name and timeout metadata', async () => {
+    failure = Object.assign(new Error('timed out'), { name: 'TimeoutError', code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM' });
+    stdout = 'ERROR: misleading partial output';
+    await expect(runInstallRecipe({ kind: 'argv', runner: 'npm', runnerHint: '', argv: ['npm', 'install', '-g', 'fixture'] }, 'codex'))
+      .rejects.toBe(failure);
+    expect(failure).toMatchObject({ name: 'TimeoutError', code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM', message: 'timed out' });
+  });
+
+  it('an aborted child stays aborted rather than being presented as a package error', async () => {
+    failure = Object.assign(new Error('The operation was aborted'), { name: 'AbortError', code: 'ABORT_ERR' });
+    stdout = 'ERROR: misleading partial download';
+    const result = await install('argv');
+    expect(result.error).toContain('The operation was aborted');
+    expect(result.error).not.toContain('partial download');
+    await expect(runInstallRecipe({ kind: 'argv', runner: 'npm', runnerHint: '', argv: ['npm', 'install', '-g', 'fixture'] }, 'codex'))
+      .rejects.toBe(failure);
+    expect(failure.name).toBe('AbortError');
+    expect(failure.code).toBe('ABORT_ERR');
+  });
+
+  it('canceling confirmation never starts the installer or captures output', async () => {
+    spawnDeps.confirmInstall.mockResolvedValueOnce({ response: 0 });
+    stdout = 'ERROR: must never appear';
+    expect(await install('argv')).toEqual({ ok: false, error: 'instalação cancelada' });
+    expect(spawnDeps.execFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('F-1648: Muse version probes cannot opt into login', () => {
+  beforeEach(() => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    vi.stubEnv('MUSE_LOGIN', '1');
+    vi.stubEnv('MUSE_NO_MODIFY_PATH', '0');
+    spawnDeps.confirmInstall.mockReset().mockResolvedValue({ response: 1 });
+    vi.spyOn(fsp, 'writeFile').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'rm').mockResolvedValue(undefined);
+    spawnDeps.execFile.mockReset().mockImplementation((...args: unknown[]) => {
+      const [file, argv, opts] = args as [string, string[], { env?: NodeJS.ProcessEnv }];
+      const callback = args.at(-1) as (err: Error | null, out: string) => void;
+      const env = opts.env ?? process.env;
+      if (file.endsWith('/muse') && argv.includes('--version')) {
+        callback(env.MUSE_LOGIN === '0' && env.MUSE_NO_MODIFY_PATH === '1' ? null : new Error('fixture refused potential device login'), 'muse 1.2.3');
+      } else callback(null, 'other-cli 2.3.4');
+      return {} as ChildProcess;
+    });
+    registerProviderIpc();
+  });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+  it('the postinstall version result succeeds under hostile inherited Muse settings', async () => {
+    const result = await spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.installCli)!({}, { adapterId: 'muse' });
+    expect(result).toMatchObject({ ok: true, version: 'muse 1.2.3' });
+    expect(process.env.MUSE_LOGIN).toBe('1');
+    expect(process.env.MUSE_NO_MODIFY_PATH).toBe('0');
+  });
+  it('does not impose Muse settings on unrelated CLI probes', async () => {
+    const result = await spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.installCli)!({}, { adapterId: 'codex' });
+    expect(result).toMatchObject({ ok: true, version: 'other-cli 2.3.4' });
+    const probe = spawnDeps.execFile.mock.calls.find(call => (call[1] as string[]).includes('--version'));
+    const env = (probe?.[2] as { env?: NodeJS.ProcessEnv }).env ?? process.env;
+    expect(env.MUSE_LOGIN).toBe('1');
+    expect(env.MUSE_NO_MODIFY_PATH).toBe('0');
+  });
+});
+
+describe('F-1647: POSIX installer PATH and recipe environment', () => {
+  let resolver: ReturnType<typeof spawnDeps.resolveCliBinary.getMockImplementation>;
+  const calls: Array<{ file: string; env: NodeJS.ProcessEnv; node: string | null }> = [];
+  let lookup: typeof import('../path-resolver').lookupInPath;
+  let prefix: string;
+  let userNode: boolean;
+
+  beforeEach(async () => {
+    lookup = (await vi.importActual<typeof import('../path-resolver')>('../path-resolver')).lookupInPath;
+    resolver = spawnDeps.resolveCliBinary.getMockImplementation();
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    spawnDeps.confirmInstall.mockClear();
+    spawnDeps.refreshUserPath.mockClear();
+    calls.length = 0;
+    vi.spyOn(fs, 'statSync').mockImplementation((candidate) => {
+      const file = String(candidate);
+      const exists = file === path.join(prefix, 'node') ||
+        (userNode && file === path.join('/chosen-node/bin', 'node'));
+      if (!exists) throw Object.assign(new Error('missing fixture executable'), { code: 'ENOENT' });
+      return { isFile: () => true, mode: 0o100755 } as fs.Stats;
+    });
+    spawnDeps.resolveCliBinary.mockImplementation(runner => {
+      if (runner === 'npm') return { binPath: `${prefix}/npm`, effectivePath: prefix, source: 'fallback-dir' };
+      if (runner === 'bash') return { binPath: '/bin/bash', effectivePath: [prefix, '/usr/bin', '/bin'].join(path.delimiter), source: 'process-path' };
+      return null;
+    });
+    spawnDeps.execFile.mockReset().mockImplementation((...args: unknown[]) => {
+      const [file, , options] = args as [string, string[], { env?: NodeJS.ProcessEnv }];
+      const env = options.env ?? process.env;
+      const node = lookup('node', env.PATH ?? '');
+      calls.push({ file, env, node });
+      (args.at(-1) as (error: Error | null, stdout: string) => void)(
+        node ? null : new Error('env: node: No such file or directory'), '');
+      return { stdin: { end: () => undefined } } as unknown as ChildProcess;
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    spawnDeps.resolveCliBinary.mockImplementation(resolver!);
+    spawnDeps.refreshUserPath.mockReset().mockImplementation(async () => process.env.PATH ?? '');
+  });
+
+  it.each([
+    ['/usr/local/opt/node@22/bin', false], ['/opt/homebrew/opt/node@22/bin', false],
+    ['/usr/local/opt/node@22/bin', true], ['/opt/homebrew/opt/node@22/bin', true],
+  ] as const)('npm at %s finds Node, preserving explicit Node = %s', async (bin, chosen) => {
+    prefix = bin;
+    userNode = chosen;
+    vi.stubEnv('PATH', [...(chosen ? ['/chosen-node/bin'] : []), '/usr/bin', '/bin'].join(path.delimiter));
+    const inherited = process.env.PATH;
+    await runInstallRecipe({ kind: 'argv', runner: 'npm', runnerHint: '',
+      argv: ['npm', 'install', '-g', '@openai/codex'], env: { npm_config_update_notifier: 'false' } }, 'codex');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].file).toBe(`${prefix}/npm`);
+    expect(calls[0].node).toBe(path.join(chosen ? '/chosen-node/bin' : prefix, 'node'));
+    expect(calls[0].env.npm_config_update_notifier).toBe('false');
+    expect(process.env.PATH).toBe(inherited);
+  });
+
+  it('POSIX recipe passes noninteractive Muse env while retaining the resolved PATH', async () => {
+    prefix = '/opt/homebrew/opt/node@22/bin';
+    userNode = false;
+    vi.stubEnv('PATH', ['/usr/bin', '/bin'].join(path.delimiter));
+    vi.stubEnv('MUSE_LOGIN', '1');
+    vi.spyOn(fsp, 'writeFile').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'rm').mockResolvedValue(undefined);
+    await runInstallRecipe({ kind: 'script', runner: 'bash', runnerHint: '',
+      scriptUrl: 'https://dev.meta.ai/install.sh',
+      env: { MUSE_LOGIN: '0', MUSE_NO_MODIFY_PATH: '1' } }, 'muse');
+    expect(calls[0].file).toBe('/bin/bash');
+    expect(calls[0].node).toBe(path.join(prefix, 'node'));
+    expect(calls[0].env).toMatchObject({ MUSE_LOGIN: '0', MUSE_NO_MODIFY_PATH: '1' });
+    expect(process.env.MUSE_LOGIN).toBe('1');
+  });
+
+  it('manual install refreshes a missed login PATH before choosing a runner', async () => {
+    prefix = '/chosen-node/bin';
+    userNode = true;
+    vi.stubEnv('PATH', ['/usr/bin', '/bin'].join(path.delimiter));
+    spawnDeps.resolveCliBinary.mockImplementation(runner =>
+      runner === 'npm' && process.env.PATH?.split(path.delimiter).includes(prefix)
+        ? { binPath: `${prefix}/npm`, effectivePath: process.env.PATH, source: 'process-path' } : null);
+    spawnDeps.refreshUserPath.mockImplementationOnce(async () => {
+      process.env.PATH = [prefix, '/usr/bin', '/bin'].join(path.delimiter);
+      return process.env.PATH;
+    });
+    spawnDeps.confirmInstall.mockResolvedValueOnce({ response: 0 });
+    registerProviderIpc();
+    const result = await spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.installCli)!({}, { adapterId: 'codex' });
+    expect(result).toMatchObject({ ok: false, error: 'instalação cancelada' });
+    expect(spawnDeps.confirmInstall).toHaveBeenCalledOnce();
+    expect(calls).toEqual([]);
+  });
+});
+
+describe.runIf(process.platform === 'win32')('F-1646: canonical identity in Windows CLI updates', () => {
+  let disk: typeof fs;
+  let root: string;
+  let shim: string;
+  let entry: string;
+  let node: string;
+  let stop: (() => Promise<void>) | undefined;
+  let version: string;
+  let resolver: (runner: string) => { binPath: string } | null;
+  let originalBuiltinIds: string[];
+  const calls: Array<{ file: string; argv: string[]; shell?: boolean }> = [];
+
+  beforeEach(async () => {
+    disk = await vi.importActual<typeof fs>('node:fs');
+    root = disk.realpathSync(disk.mkdtempSync(path.join(os.tmpdir(), 'nexus-cli-identity-')));
+    const prefix = path.join(root, 'npm prefix & space');
+    const pkg = path.join(prefix, 'node_modules', '@minimax-ai', 'code');
+    disk.mkdirSync(pkg, { recursive: true });
+    entry = path.join(pkg, 'cli.js');
+    disk.writeFileSync(entry, '// fixture: never executed');
+    disk.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({
+      name: '@minimax-ai/code', version: '0.5.8', bin: { mcode: './cli.js' },
+    }));
+    shim = path.join(prefix, 'mcode.cmd');
+    disk.writeFileSync(shim, '@ECHO off\r\n"%_prog%" "%dp0%\\node_modules\\@minimax-ai\\code\\cli.js" %*\r\n');
+    node = path.join(root, 'node.exe');
+    disk.writeFileSync(node, 'fixture: never executed');
+    disk.writeFileSync(path.join(root, 'cli-auto-update.json'), JSON.stringify({ enabled: true, checkedAt: {} }));
+    vi.spyOn(fs, 'readFileSync').mockImplementation(((file: fs.PathOrFileDescriptor, ...args: unknown[]) =>
+      typeof file === 'string' && file.startsWith(root + path.sep)
+        ? Reflect.apply(disk.readFileSync, disk, [file, ...args])
+        : JSON.stringify(spawnDeps.providersFile)) as typeof fs.readFileSync);
+    resolver = spawnDeps.resolveCliBinary.getMockImplementation()!;
+    spawnDeps.resolveCliBinary.mockImplementation(runner =>
+      runner === 'node' ? { binPath: node } : runner === shim ? { binPath: shim } : null);
+    spawnDeps.resolvedInstallBins.set('minimax-code', shim);
+    spawnDeps.userHome = root;
+    originalBuiltinIds = [...spawnDeps.builtinIds];
+    spawnDeps.builtinIds.clear();
+    spawnDeps.builtinIds.add('minimax-code');
+    spawnDeps.confirmInstall.mockClear();
+    spawnDeps.rescanBinaries.mockReset().mockResolvedValue([]);
+    spawnDeps.systemIdleTime.mockReturnValue(120);
+    version = '0.5.8';
+    calls.length = 0;
+    spawnDeps.execFile.mockReset().mockImplementation((...args: unknown[]) => {
+      const [file, argv, options] = args as [string, string[], { shell?: boolean }];
+      const callback = args.at(-1) as (error: Error | null, stdout: string) => void;
+      calls.push({ file, argv, shell: options.shell });
+      if (file === node && argv[0] === entry && argv[1] === '--version') callback(null, version);
+      else if (file === node && argv[0] === entry && argv[1] === 'update') {
+        version = '0.5.9';
+        callback(null, '');
+      } else callback(new Error('Unexpected fixture command'), '');
+      return {} as ChildProcess;
+    });
+    registerProviderIpc();
+  });
+
+  afterEach(async () => {
+    await stop?.();
+    stop = undefined;
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    spawnDeps.resolveCliBinary.mockImplementation(resolver);
+    spawnDeps.resolvedInstallBins.clear();
+    spawnDeps.userHome = '/fixture-quota-home';
+    spawnDeps.builtinIds.clear();
+    for (const id of originalBuiltinIds) spawnDeps.builtinIds.add(id);
+    disk.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('manual update launches the selected mcode package through Node without a shell', async () => {
+    const result = await spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.installCli)!(
+      {}, { adapterId: 'minimax-code', mode: 'update' });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, changed: true, version: '0.5.9' });
+    expect(calls.filter(call => call.argv.includes('update'))).toEqual([
+      { file: node, argv: [entry, 'update'], shell: false },
+    ]);
+    expect(spawnDeps.confirmInstall).toHaveBeenCalledOnce();
+    const detail = (spawnDeps.confirmInstall.mock.calls[0].at(-1) as { detail: string }).detail;
+    expect(detail).toContain(node);
+    expect(detail).toContain(JSON.stringify(entry));
+  });
+
+  it('automatic update keeps MiniMax eligible and runs the same verified entrypoint', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(fsp, 'realpath').mockResolvedValue(entry);
+    vi.spyOn(fsp, 'access').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'mkdir').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'writeFile').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'rename').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'rm').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'readFile').mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' }));
+    vi.spyOn(periodicFileRead, 'readRegularFileCappedAsync').mockResolvedValue({
+      kind: 'text', stamp: 'fixture', text: JSON.stringify({ enabled: true, checkedAt: {} }),
+    });
+    stop = startCliAutoUpdate(root, () => false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls.filter(call => call.argv.includes('update'))).toEqual([
+      { file: node, argv: [entry, 'update'], shell: false },
+    ]);
+    expect(listProviderSettings().find(info => info.adapterId === 'minimax-code')?.cliAutoUpdate)
+      .toMatchObject({ status: 'updated', fromVersion: '0.5.8', toVersion: '0.5.9' });
+  });
+
+  it.each(['different-package', 'missing-entrypoint'])('refuses %s without falling back to a shell', async variant => {
+    if (variant === 'different-package') {
+      disk.writeFileSync(shim, '@ECHO off\r\n"%_prog%" "%dp0%\\node_modules\\other-package\\cli.js" %*\r\n');
+    } else disk.unlinkSync(entry);
+    const result = await spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.installCli)!(
+      {}, { adapterId: 'minimax-code', mode: 'update' });
+    expect(result).toMatchObject({ ok: false });
+    expect(calls).toEqual([]);
+    expect(spawnDeps.confirmInstall).not.toHaveBeenCalled();
   });
 });
 

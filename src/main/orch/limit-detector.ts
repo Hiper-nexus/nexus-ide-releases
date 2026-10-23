@@ -17,6 +17,7 @@ import {
   FAILOVER_HANDOFF_HEADER,
 } from '../../shared/failover-handoff';
 import type { FailoverReasonKind } from '../../shared/account-types';
+import { compileTextPatternPrefilter } from '../../shared/required-text-hints';
 import {
   CLI_SELF_MANAGED_THROTTLE,
   LIMIT_SIGNAL_PATTERNS as PATTERNS,
@@ -28,6 +29,7 @@ import {
 // shared/ — o builder do pack de continuidade (Main e renderer) neutraliza
 // com a mesma fonte. Reexportadas aqui para os chamadores do Main.
 export { neutralizeLimitSignals, quotedLimitSignalPatterns } from '../../shared/limit-signal-patterns';
+const candidatePatterns = compileTextPatternPrefilter(PATTERNS);
 
 /**
  * - 'quota': conta/plano esgotado — cooldown longo, pinta a janela Semanal.
@@ -333,11 +335,10 @@ function stripInlineCodeSpans(line: string): string {
   let out = '';
   let cursor = 0;
   while (cursor < line.length) {
-    if (line[cursor] !== '`') {
-      out += line[cursor];
-      cursor += 1;
-      continue;
-    }
+    const nextBacktick = line.indexOf('`', cursor);
+    if (nextBacktick < 0) return out + line.slice(cursor);
+    out += line.slice(cursor, nextBacktick);
+    cursor = nextBacktick;
 
     let openerEnd = cursor;
     while (line[openerEnd] === '`') openerEnd += 1;
@@ -517,7 +518,7 @@ export function detectLimit(rawText: string, now: number = Date.now()): LimitHit
   const text = stripQuotedDiagnosticExamples(
     stripCliSelfManagedThrottle(stripFailoverHandoffPack(rawText)),
   );
-  for (const pattern of PATTERNS) {
+  for (const pattern of candidatePatterns(text)) {
     const match = pattern.re.exec(text);
     if (!match) continue;
     const parsed = parseResetCooldown(text, now);

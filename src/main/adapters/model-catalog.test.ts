@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Adapter } from '../../shared/adapter-types';
+import { adapterSchema } from '../../shared/adapter-types';
+import minimaxRaw from '../../adapters/builtin/minimax-code.json';
 import {
   BUILTIN_MODEL_CATALOG,
   DEFAULT_MODEL_CATALOG_URL,
@@ -58,6 +60,33 @@ const ADAPTER: Adapter = {
 };
 
 describe('model catalog overlays', () => {
+  it('F-1649: offers MiniMax GA as the effective default without retiring M3 or M2.7', () => {
+    const raw = adapterSchema.parse(minimaxRaw);
+    const missing = path.join(os.tmpdir(), `nexus-no-catalog-${process.pid}-f1649.json`);
+    for (const catalog of [BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG, loadModelCatalog(missing)]) {
+      const adapter = applyModelCatalogToAdapter(raw, catalog);
+      expect(adapter.models.default).toBe('minimax/MiniMax-M3.1-Flash');
+      expect(adapter.models.list).toEqual([
+        'minimax/MiniMax-M3.1-Flash', 'minimax/MiniMax-M3',
+        'minimax/MiniMax-M2.7-highspeed', 'minimax/MiniMax-M2.7',
+      ]);
+      expect(modelCatalogInfo(catalog, 'minimax-code', adapter.models.default)?.quality).toBeUndefined();
+    }
+  });
+
+  it('F-1649: a stale catalog overlay cannot reintroduce the retired MiniMax Preview default', () => {
+    const stale = mergeModelCatalogs(BUILTIN_MODEL_CATALOG, {
+      adapters: { 'minimax-code': {
+        default: 'minimax/MiniMax-M3.1-Flash-Preview',
+        models: [{ id: 'minimax/MiniMax-M3.1-Flash-Preview', source: 'local' }],
+      } },
+    });
+    const adapter = applyModelCatalogToAdapter(adapterSchema.parse(minimaxRaw), stale);
+    expect(adapter.models.default).toBe('minimax/MiniMax-M3.1-Flash');
+    expect(adapter.models.list).not.toContain('minimax/MiniMax-M3.1-Flash-Preview');
+    expect(adapter.models.list).toContain('minimax/MiniMax-M2.7');
+  });
+
   it('CLI sem listagem: o catálogo acrescenta ids sem substituir o JSON do adapter', () => {
     const BUNDLED = { ...ADAPTER, id: 'example-bundled' };
     const merged = mergeModelCatalogs(BUILTIN_MODEL_CATALOG, {
@@ -300,7 +329,10 @@ describe('published catalog JSON', () => {
         costTier: 'high',
       });
     }
-    expect(PUBLISHED_MODEL_CATALOG.updatedAt?.startsWith('2026-10-16')).toBe(true);
+    // The Codex evidence remains from 16/10; later updates to other providers
+    // must advance the catalog publication date without rewriting that evidence.
+    expect(Date.parse(PUBLISHED_MODEL_CATALOG.updatedAt!))
+      .toBeGreaterThanOrEqual(Date.parse('2026-10-16T00:00:00.000Z'));
     expect(isModelBlockedForAutoRouting(
       modelCatalogInfo(BUILTIN_MODEL_CATALOG, 'codex', 'gpt-daybreak-blue-latest'),
     )).toBe(false);
@@ -510,11 +542,17 @@ describe('remote model catalog URL', () => {
   });
 
   it('accepts a local absolute path via the env var (as file://)', () => {
+    const nativePath = process.platform === 'win32'
+      ? 'C:\\Users\\me\\dev\\nexus-ide\\resources\\model-catalog.json'
+      : '/Users/me/dev/nexus-ide/resources/model-catalog.json';
+    const expectedUrl = process.platform === 'win32'
+      ? 'file:///C:/Users/me/dev/nexus-ide/resources/model-catalog.json'
+      : 'file:///Users/me/dev/nexus-ide/resources/model-catalog.json';
     expect(
       resolveModelCatalogUrl({
-        [MODEL_CATALOG_URL_ENV]: '/Users/me/dev/nexus-ide/resources/model-catalog.json',
+        [MODEL_CATALOG_URL_ENV]: nativePath,
       }),
-    ).toBe('file:///Users/me/dev/nexus-ide/resources/model-catalog.json');
+    ).toBe(expectedUrl);
   });
 });
 

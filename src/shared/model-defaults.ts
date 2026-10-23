@@ -21,6 +21,9 @@ export const GROK_FRONTIER_MODEL = 'grok-4.7';
  * solta como `1.6` reescreveria modelo de QUALQUER provider.
  */
 export const RETIRED_MODEL_MIGRATIONS: Readonly<Record<string, string>> = Object.freeze({
+  // F-1649: official GA successor; the managed Token Plan rejected Preview.
+  // Keep the provider prefix exact: no rewrite of bare ids or other namespaces.
+  'minimax/MiniMax-M3.1-Flash-Preview': 'minimax/MiniMax-M3.1-Flash',
   'gpt-5.5': 'gpt-5.6-luna',
   'gpt-5.4': 'gpt-5.6-luna',
   'gpt-5.4-mini': 'gpt-5.6-luna',

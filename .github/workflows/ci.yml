@@ -85,11 +85,6 @@ jobs:
       - name: Oxlint (erros, incluindo supressão sem motivo)
         run: npm run lint:oxlint -- --quiet
       - run: npm run security:renderer-sinks
-      - run: npm test
-      # Tetos de trabalho determinísticos (contagem, nunca relógio); ver
-      # docs/perf-budgets.md. Também rodam no npm test; aqui a falha tem nome.
-      - name: Perf budgets
-        run: npm run test:perf
       - name: Prove Linux command namespace lifetime
         env:
           NEXUS_LINUX_OWNED_COMMAND_TEST: "1"
@@ -123,6 +118,13 @@ jobs:
           F764_WORKER_ENTRY: ${{ runner.temp }}/f764-pty/pty-analysis-worker-entry.js
           F764_ARTIFACT_DIR: ${{ runner.temp }}/f764-evidence/poison
         run: npx vitest run src/main/pty/pty-analysis-main-load.test.ts --maxWorkers=1
+      # A prova de carga roda antes da suíte longa: falhas de vazão aparecem
+      # cedo, com o mesmo workload e os mesmos limites. A suíte continua obrigatória.
+      - run: npm test
+      # Tetos de trabalho determinísticos (contagem, nunca relógio); ver
+      # docs/perf-budgets.md. Também rodam no npm test; aqui a falha tem nome.
+      - name: Perf budgets
+        run: npm run test:perf
       - name: Preserve F-764 timing and CPU profile evidence
         if: always()
         uses: actions/upload-artifact@v4

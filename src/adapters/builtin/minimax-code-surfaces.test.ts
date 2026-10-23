@@ -18,12 +18,12 @@ it('offers the official MiniMax Code CLI with its models, OAuth login and instal
   expect(adapter.bin).toBe('mcode');
   expect(adapter.auth.method).toBe('oauth');
   expect(adapter.models.list).toEqual([
-    'minimax/MiniMax-M3.1-Flash-Preview',
+    'minimax/MiniMax-M3.1-Flash',
     'minimax/MiniMax-M3',
     'minimax/MiniMax-M2.7-highspeed',
     'minimax/MiniMax-M2.7',
   ]);
-  expect(adapter.models.default).toBe('minimax/MiniMax-M3.1-Flash-Preview');
+  expect(adapter.models.default).toBe('minimax/MiniMax-M3.1-Flash');
   // Never resumes "the latest session in cwd": only an exact captured id.
   expect(adapter.spawn.resumeArgs).toEqual([]);
   expect(adapter.spawn.resumeIdArgs).toEqual(['--session']);

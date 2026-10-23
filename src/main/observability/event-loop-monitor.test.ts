@@ -1,4 +1,4 @@
-import type { IntervalHistogram } from 'node:perf_hooks';
+import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   EVENT_LOOP_TRACE_MAX_MS,
@@ -60,8 +60,8 @@ function summary(overrides: Partial<EventLoopSummary>): EventLoopSummary {
   };
 }
 
-afterEach(() => {
-  stopEventLoopMonitor();
+afterEach(async () => {
+  await stopEventLoopMonitor();
   vi.useRealTimers();
 });
 
@@ -188,18 +188,28 @@ describe('startEventLoopMonitor', () => {
   it('com o perf_hooks real, um bloqueio de 350 ms da main aparece como atraso', async () => {
     const summaries: EventLoopSummary[] = [];
     const traceSink = vi.fn();
-    startEventLoopMonitor({ windowMs: 400, resolutionMs: 10, onSummary: (s) => summaries.push(s), traceSink });
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    const until = Date.now() + 350;
-    while (Date.now() < until) {
-      // trava a main de propósito
+    const histogram = monitorEventLoopDelay({ resolution: 10 });
+    histogram.enable();
+    try {
+      // Prove native sampling before starting the 400 ms summary window.
+      // A 60 ms sleep proves neither readiness nor room for the 350 ms block:
+      // 60 + 350 crosses reset(), and a cold histogram can miss the block.
+      await vi.waitFor(() => expect(histogram.count).toBeGreaterThanOrEqual(2), { timeout: 1_000, interval: 10 });
+      startEventLoopMonitor({
+        windowMs: 400, resolutionMs: 10, createHistogram: () => histogram,
+        onSummary: (s) => summaries.push(s), traceSink,
+      }); // enable() is idempotent: the same real histogram stays warm.
+      const until = Date.now() + 350;
+      while (Date.now() < until) {
+        // trava a main de propósito, uma única vez
+      }
+      await vi.waitFor(() => expect(summaries.length).toBeGreaterThan(0), { timeout: 4_000, interval: 20 });
+      // Assert the first window, not a later unrelated stall that happens to pass.
+      expect(summaries[0].maxMs).toBeGreaterThanOrEqual(300);
+      expect(traceSink).toHaveBeenCalledWith(expect.objectContaining({ kind: 'main-event-loop', reason: 'lag' }));
+    } finally {
+      await stopEventLoopMonitor();
+      histogram.disable(); // Also closes a histogram whose readiness timed out.
     }
-    const deadline = Date.now() + 4_000;
-    while (!summaries.some((s) => s.maxMs >= 250) && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    const blocked = summaries.find((s) => s.maxMs >= 250);
-    expect(blocked?.maxMs).toBeGreaterThanOrEqual(300);
-    expect(traceSink).toHaveBeenCalledWith(expect.objectContaining({ kind: 'main-event-loop', reason: 'lag' }));
   });
 });

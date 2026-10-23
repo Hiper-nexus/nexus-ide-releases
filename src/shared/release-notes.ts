@@ -12853,7 +12853,7 @@ const RELEASE_076417_FULL: AppRelease = {
 
 export const RELEASE_076417: AppRelease = RELEASE_076417_FULL;
 
-export const CURRENT_RELEASE: AppRelease = {
+const RELEASE_076419_FULL: AppRelease = {
   version: '0.76.419',
   date: '2026-10-22',
   codename: 'A conta em uso abre sem pedir login',
@@ -12875,4 +12875,26 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: RELEASE_076417.fixes,
 };
 
-export const RELEASE_076419: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076419: AppRelease = RELEASE_076419_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.421',
+  date: '2026-10-22',
+  codename: 'Windows: MiniMax GA e instaladores corrigidos',
+  summary: 'A base da última entrega Mac chega ao Windows com MiniMax Flash GA, ' +
+    'correções na instalação e atualização das CLIs e erros de instalação mais claros.',
+  highlights: [
+    { title: 'MiniMax abre com o modelo GA', detail: 'O padrão passa a MiniMax-M3.1-Flash, e escolhas antigas do Preview são migradas. A versão retirada deixava o worker encerrar antes do primeiro turno na rota de assinatura.' },
+    { title: 'Atualizar MiniMax no Windows', detail: 'A atualização conserva a identidade minimax-code ao resolver mcode.cmd. O launcher npm validado é executado pelo Node, preservando argumentos e a instalação existente.' },
+    { title: 'Muse no Mac sem Homebrew', detail: 'O instalador nativo oficial é a primeira opção no macOS, com suporte a Intel e Apple Silicon. A atualização reconhece esse mesmo canal; instalações por cask continuam no Homebrew.' },
+    { title: 'Instaladores encontram o Node disponível', detail: 'O ambiente que localizou o gerenciador chega ao processo de instalação. A descoberta inclui Node 22 do Homebrew em Macs Intel, preservando o Node escolhido pelo usuário.' },
+    ...RELEASE_076419_FULL.highlights,
+  ],
+  fixes: [
+    { title: 'O erro real aparece na instalação', detail: 'Falhas escritas em stdout ou stderr são apresentadas com tamanho limitado e redação de segredos. O cabeçalho do comando deixa de encobrir a causa.' },
+    { title: 'Sonda Muse não inicia login', detail: 'Instalação, descoberta e verificação de versão usam a política sem login automático e sem modificar os perfis de PATH.' },
+    ...RELEASE_076419_FULL.fixes,
+  ],
+};
+
+export const RELEASE_076421: AppRelease = CURRENT_RELEASE;

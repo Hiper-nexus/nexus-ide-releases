@@ -1,4 +1,5 @@
 // Derived from can1357/oh-my-pi@03c48d073 packages/ai/src/error/rate-limit.ts (MIT)
+// See third_party/licenses/oh-my-pi-MIT.txt.
 /**
  * Classificação de esgotamento/limite a partir de TEXTO de erro de provider.
  *
@@ -14,7 +15,11 @@
  * - Sem API Bun; TypeScript puro, sem dependências.
  * - Além do reason, expomos o trecho casado (`matched`) para alimentar o campo
  *   `reason` do limit-detector do Nexus.
+ * - F-1652: hints literais obrigatórios evitam scans negativos; regex, prioridade
+ *   e taxonomia não mudam, e padrões novos sem hints continuam sendo avaliados.
  */
+
+import { compileTextPatternPrefilter, type RequiredTextHints } from '../../../shared/required-text-hints';
 
 export type RateLimitReason =
   | 'QUOTA_EXHAUSTED'
@@ -39,7 +44,7 @@ export interface RateLimitClassification {
   matched: string;
 }
 
-interface ReasonPattern {
+interface ReasonPattern extends RequiredTextHints {
   reason: ClassifiedReason;
   re: RegExp;
 }
@@ -55,61 +60,61 @@ const REASON_PATTERNS: readonly ReasonPattern[] = [
   // after …" — precisa vir ANTES de MODEL_CAPACITY (o literal "capacity"
   // pré-emptaria o branch de quota, exatamente o bug corrigido no omp).
   // Frases específicas o bastante para casar nuas.
-  { reason: 'QUOTA_EXHAUSTED', re: /quota will reset/i },
-  { reason: 'QUOTA_EXHAUSTED', re: /exhausted your capacity/i },
+  { reason: 'QUOTA_EXHAUSTED', re: /quota will reset/i, requiredTextHints: ['quota will reset'] },
+  { reason: 'QUOTA_EXHAUSTED', re: /exhausted your capacity/i, requiredTextHints: ['exhausted your capacity'] },
 
   // ── 2. MODEL_CAPACITY — transitório: capacidade do modelo/servidor.
   // omp usava includes("capacity") nu — frouxo demais para PTY ("disk
   // capacity", "capacity planning"). Exigimos semântica de falta/estouro.
-  { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /\b(?:model|server|service)\b[^\n]{0,30}\b(?:at|over|out of)\s+capacity\b/i },
-  { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /\bcapacity\s+(?:exhausted|exceeded|unavailable|constraints?)\b/i },
-  { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /\b(?:no|insufficient)\s+capacity\b/i },
+  { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /\b(?:model|server|service)\b[^\n]{0,30}\b(?:at|over|out of)\s+capacity\b/i, requiredTextHints: ['capacity'] },
+  { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /\bcapacity\s+(?:exhausted|exceeded|unavailable|constraints?)\b/i, requiredTextHints: ['capacity'] },
+  { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /\b(?:no|insufficient)\s+capacity\b/i, requiredTextHints: ['capacity'] },
   // omp: includes("overloaded") — código Anthropic; carrega erro por si. No
   // Nexus este branch preserva a semântica transitória e o backoff curto.
-  { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /\boverloaded(?:_error)?\b/i },
+  { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /\boverloaded(?:_error)?\b/i, requiredTextHints: ['overloaded'] },
   // omp: includes("529")/includes("503") nus — inaceitável em PTY (números de
   // linha, portas). Mesmo shape de prefixo do 429 legado do Nexus, ou o
   // reason-phrase do HTTP junto do código.
-  { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*(?:[:=]\s*)?|error\s*(?:[:=]\s*)?|code\s*(?:[:=]\s*)?)(?:529|503)\b/i },
-  { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /\b(?:529|503)\s+(?:service\s+unavailable|overloaded)\b/i },
+  { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*(?:[:=]\s*)?|error\s*(?:[:=]\s*)?|code\s*(?:[:=]\s*)?)(?:529|503)\b/i, requiredTextHints: ['529', '503'] },
+  { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /\b(?:529|503)\s+(?:service\s+unavailable|overloaded)\b/i, requiredTextHints: ['529', '503'] },
   // omp: includes("resource exhausted") — código do Google (gRPC). No Nexus o
   // legado classifica antes como rate-limit; mantido por fidelidade.
-  { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /resource[_\s]exhausted/i },
+  { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /resource[_\s]exhausted/i, requiredTextHints: ['resource'] },
 
   // ── 3. QUOTA — rate-limit de CONTA (Anthropic): cap local da conta, não
   // taxa transitória. O ACCOUNT_RATE_LIMIT_PATTERN do omp aceitava qualquer
   // "account" a ≤80 chars de "rate limit" — casaria prosa de instrução de
   // squad ("switch account on rate limit"). Exigimos verbo de resultado.
-  { reason: 'QUOTA_EXHAUSTED', re: /\baccount(?:'s)?\b[^\n]{0,60}\brate[-_\s]?limit(?:ed)?\b[^\n]{0,40}\b(?:exceeded|reached|hit)\b/i },
-  { reason: 'QUOTA_EXHAUSTED', re: /\baccount (?:has been|was|is) rate[-_\s]?limited\b/i },
-  { reason: 'QUOTA_EXHAUSTED', re: /rate[-_\s]?limit (?:exceeded|reached) for (?:your|this) account/i },
+  { reason: 'QUOTA_EXHAUSTED', re: /\baccount(?:'s)?\b[^\n]{0,60}\brate[-_\s]?limit(?:ed)?\b[^\n]{0,40}\b(?:exceeded|reached|hit)\b/i, requiredTextHints: ['account'] },
+  { reason: 'QUOTA_EXHAUSTED', re: /\baccount (?:has been|was|is) rate[-_\s]?limited\b/i, requiredTextHints: ['account'] },
+  { reason: 'QUOTA_EXHAUSTED', re: /rate[-_\s]?limit (?:exceeded|reached) for (?:your|this) account/i, requiredTextHints: ['account'] },
 
   // ── 4. RATE_LIMIT — transitório curto: taxa por minuto / 429 com corpo.
   // omp usava includes("per minute") nu — docs legítimas dizem "60 requests
   // per minute". Exigimos verbo de estouro perto da janela.
-  { reason: 'RATE_LIMIT_EXCEEDED', re: /\b(?:exceeded|reached|hit)\b[^\n]{0,40}\bper[- ]min(?:ute)?\b/i },
-  { reason: 'RATE_LIMIT_EXCEEDED', re: /\bper[- ]min(?:ute)?\b[^\n]{0,40}\b(?:exceeded|reached|hit)\b/i },
+  { reason: 'RATE_LIMIT_EXCEEDED', re: /\b(?:exceeded|reached|hit)\b[^\n]{0,40}\bper[- ]min(?:ute)?\b/i, requiredTextHints: ['min'] },
+  { reason: 'RATE_LIMIT_EXCEEDED', re: /\bper[- ]min(?:ute)?\b[^\n]{0,40}\b(?:exceeded|reached|hit)\b/i, requiredTextHints: ['min'] },
   // omp: includes("rate limit") nu — proibido no Nexus (prosa de squad ecoada
   // no PTY menciona a frase). Só grafias com erro embutido.
-  { reason: 'RATE_LIMIT_EXCEEDED', re: /rate[-_\s]?limit[-_\s]?(?:exceeded|reached|error)\b/i },
+  { reason: 'RATE_LIMIT_EXCEEDED', re: /rate[-_\s]?limit[-_\s]?(?:exceeded|reached|error)\b/i, requiredTextHints: ['limit'] },
   // A table/status label such as Failure|rate-limit is not a response.
-  { reason: 'RATE_LIMIT_EXCEEDED', re: /\b(?:error|failed|failure|exception)\b[^|\n]{0,40}\brate[-_\s]?limit/i },
+  { reason: 'RATE_LIMIT_EXCEEDED', re: /\b(?:error|failed|failure|exception)\b[^|\n]{0,40}\brate[-_\s]?limit/i, requiredTextHints: ['limit'] },
   // Reason-phrase do HTTP 429 — carrega erro por si.
-  { reason: 'RATE_LIMIT_EXCEEDED', re: /too many requests/i },
+  { reason: 'RATE_LIMIT_EXCEEDED', re: /too many requests/i, requiredTextHints: ['too many requests'] },
   // omp: includes("presque") (Antigravity em francês, "quase") — nu é frouxo
   // demais; exigimos vizinhança de quota/limite.
-  { reason: 'RATE_LIMIT_EXCEEDED', re: /quota[^\n]{0,30}presque|presque[^\n]{0,30}(?:atteinte?|limite|[eé]puis[eé]e?)/i },
+  { reason: 'RATE_LIMIT_EXCEEDED', re: /quota[^\n]{0,30}presque|presque[^\n]{0,30}(?:atteinte?|limite|[eé]puis[eé]e?)/i, requiredTextHints: ['presque'] },
 
   // ── 5. QUOTA — genérico: créditos/cota da conta esgotados (rotacionar).
-  { reason: 'QUOTA_EXHAUSTED', re: /quota[-_\s]?(?:exceeded|exhausted|reached|insufficient)/i },
-  { reason: 'QUOTA_EXHAUSTED', re: /insufficient[-_\s]?(?:quota|balance)/i },
+  { reason: 'QUOTA_EXHAUSTED', re: /quota[-_\s]?(?:exceeded|exhausted|reached|insufficient)/i, requiredTextHints: ['quota'] },
+  { reason: 'QUOTA_EXHAUSTED', re: /insufficient[-_\s]?(?:quota|balance)/i, requiredTextHints: ['insufficient'] },
   // omp: includes("exhausted") nu — exigimos o recurso esgotado por perto.
-  { reason: 'QUOTA_EXHAUSTED', re: /\b(?:quota|credits?|allowance|budget|balance)\b[^\n]{0,20}\bexhausted\b/i },
-  { reason: 'QUOTA_EXHAUSTED', re: /exhausted (?:your|the|all) (?:quota|credits?)/i },
+  { reason: 'QUOTA_EXHAUSTED', re: /\b(?:quota|credits?|allowance|budget|balance)\b[^\n]{0,20}\bexhausted\b/i, requiredTextHints: ['exhausted'] },
+  { reason: 'QUOTA_EXHAUSTED', re: /exhausted (?:your|the|all) (?:quota|credits?)/i, requiredTextHints: ['exhausted'] },
   // xAI SuperGrok: HTTP 403 "run out of credits" — cap local da conta.
-  { reason: 'QUOTA_EXHAUSTED', re: /(?:run out of|out of) credits\b|no credits remaining/i },
+  { reason: 'QUOTA_EXHAUSTED', re: /(?:run out of|out of) credits\b|no credits remaining/i, requiredTextHints: ['credits'] },
   // omp: "spending limit" nu casaria "set a spending limit" em docs.
-  { reason: 'QUOTA_EXHAUSTED', re: /spending[-_\s]?limit\b[^\n]{0,30}\b(?:reached|exceeded|hit)\b|\b(?:reached|exceeded|hit)\b[^\n]{0,30}\bspending[-_\s]?limit\b/i },
+  { reason: 'QUOTA_EXHAUSTED', re: /spending[-_\s]?limit\b[^\n]{0,30}\b(?:reached|exceeded|hit)\b|\b(?:reached|exceeded|hit)\b[^\n]{0,30}\bspending[-_\s]?limit\b/i, requiredTextHints: ['spending'] },
   // Códigos com underscore do USAGE_LIMIT_PATTERN do omp — error-shaped por
   // si. A forma em texto livre "usage limit" foi EXCLUÍDA de propósito: colide
   // com prosa ("Codex has no usage limit…"); o legado do Nexus tem as versões
@@ -118,10 +123,11 @@ const REASON_PATTERNS: readonly ReasonPattern[] = [
   {
     reason: 'QUOTA_EXHAUSTED',
     re: /usage_limit_reached|usage_not_included|personal-team-blocked|(?<![a-z0-9_-])limit_reached\s*[:=]\s*true\b|(?<![a-z0-9_-])(?:error|status|failed)[:\s][^\n]{0,30}\blimit_reached\b/i,
+    requiredTextHints: ['usage_', 'personal-team-blocked', 'limit_reached'],
   },
   // Provedores chineses (GLM/DeepSeek…): 额度不足 = "cota insuficiente",
   // 额度耗尽 = "cota esgotada". Específicos o bastante para casar nus.
-  { reason: 'QUOTA_EXHAUSTED', re: /额度不足|额度耗尽/ },
+  { reason: 'QUOTA_EXHAUSTED', re: /额度不足|额度耗尽/, requiredTextHints: ['额度不足', '额度耗尽'] },
 
   // ── 6. SERVER_ERROR — transitório: 5xx interno do provider.
   // omp usava includes("500")/includes("internal error") nus. Em PTY, "500"
@@ -129,14 +135,15 @@ const REASON_PATTERNS: readonly ReasonPattern[] = [
   // PRÓPRIO usuário (curl num dev server). Exigimos shape de status/código.
   // Falso positivo residual (agente cita um 500 do provider em prosa) custa
   // só 20s de cooldown, debounced pelo failover.
-  { reason: 'SERVER_ERROR', re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*(?:[:=]\s*)?|error\s*(?:[:=]\s*)?|code\s*(?:[:=]\s*)?)500\b/i },
-  { reason: 'SERVER_ERROR', re: /\b500\s+internal\s+server\s+error\b/i },
+  { reason: 'SERVER_ERROR', re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*(?:[:=]\s*)?|error\s*(?:[:=]\s*)?|code\s*(?:[:=]\s*)?)500\b/i, requiredTextHints: ['500'] },
+  { reason: 'SERVER_ERROR', re: /\b500\s+internal\s+server\s+error\b/i, requiredTextHints: ['500'] },
   // Bare codes embedded in a task ("corrija internal_error no meu app")
   // are not provider events. Require a response line or a JSON error code.
-  { reason: 'SERVER_ERROR', re: /^[ \t]*(?:[│┃⎿•·✖×!>-][ \t]*)?(?:(?:api|provider|server)\s+)?(?:(?:error|failed|failure)\s*:\s*)?(?<signal>internal[_-]server[_-]error|internal_error)\b(?:\s*:|(?=\s*$))/im },
-  { reason: 'SERVER_ERROR', re: /^[ \t]*(?:[│┃⎿•·✖×!>-][ \t]*)?(?:(?:api\s+)?error\s*:\s*)?\{[^\n]*"(?:type|code)"\s*:\s*"(?<signal>internal[_-]server[_-]error|internal_error)"/im },
-  { reason: 'SERVER_ERROR', re: /\binternal (?:server )?error\b[^\n]{0,20}\b(?:occurred|encountered)\b/i },
+  { reason: 'SERVER_ERROR', re: /^[ \t]*(?:[│┃⎿•·✖×!>-][ \t]*)?(?:(?:api|provider|server)\s+)?(?:(?:error|failed|failure)\s*:\s*)?(?<signal>internal[_-]server[_-]error|internal_error)\b(?:\s*:|(?=\s*$))/im, requiredTextHints: ['internal'] },
+  { reason: 'SERVER_ERROR', re: /^[ \t]*(?:[│┃⎿•·✖×!>-][ \t]*)?(?:(?:api\s+)?error\s*:\s*)?\{[^\n]*"(?:type|code)"\s*:\s*"(?<signal>internal[_-]server[_-]error|internal_error)"/im, requiredTextHints: ['internal'] },
+  { reason: 'SERVER_ERROR', re: /\binternal (?:server )?error\b[^\n]{0,20}\b(?:occurred|encountered)\b/i, requiredTextHints: ['internal '] },
 ];
+const candidatePatterns = compileTextPatternPrefilter(REASON_PATTERNS);
 
 /**
  * Nexus: os mesmos padrões, para o limit-detector neutralizar texto citado
@@ -152,7 +159,7 @@ export function rateLimitTextPatterns(): readonly RegExp[] {
  * limite" (a janela de PTY quase nunca é um erro).
  */
 export function classifyRateLimitText(text: string): RateLimitClassification | null {
-  for (const pattern of REASON_PATTERNS) {
+  for (const pattern of candidatePatterns(text)) {
     const match = pattern.re.exec(text);
     if (match) {
       return { reason: pattern.reason, matched: match.groups?.signal ?? match[0] };

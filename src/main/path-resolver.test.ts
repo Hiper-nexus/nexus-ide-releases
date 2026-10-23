@@ -10,6 +10,7 @@ import {
   commonCliBinDirs,
   lookupInPath,
   onCliVersionLearned,
+  probeCliBinaryVersion,
   probeLoginShellPath,
   retryLoginShellPathIfMissed,
   revalidateExecutable,
@@ -389,6 +390,29 @@ describe('path-resolver CLI binary resolution', () => {
     expect(found).toBe(executable);
   });
 
+  it.each(['muse', 'codex'])('F-1648: discovery probes %s without enabling Muse login', async adapterId => {
+    const bin = path.join(binDir, `${adapterId}.exe`);
+    fs.writeFileSync(bin, 'fixture: never executed');
+    vi.stubEnv('MUSE_LOGIN', '1');
+    vi.stubEnv('MUSE_NO_MODIFY_PATH', '0');
+    const expected = adapterId === 'muse'
+      ? { MUSE_LOGIN: '0', MUSE_NO_MODIFY_PATH: '1' }
+      : { MUSE_LOGIN: '1', MUSE_NO_MODIFY_PATH: '0' };
+    vi.mocked(execFile).mockImplementationOnce(((...args: unknown[]) => {
+      const env = (args[2] as { env: NodeJS.ProcessEnv }).env;
+      const safe = env.MUSE_LOGIN === expected.MUSE_LOGIN &&
+        env.MUSE_NO_MODIFY_PATH === expected.MUSE_NO_MODIFY_PATH;
+      (args.at(-1) as (error: Error | null, stdout: string) => void)(
+        safe ? null : new Error('fixture refused changed login policy'), `${adapterId} 1.2.3`);
+      return {};
+    }) as typeof execFile);
+    try {
+      expect(await probeCliBinaryVersion(bin, binDir, adapterId)).toBe('1.2.3');
+      expect(process.env.MUSE_LOGIN).toBe('1');
+      expect(process.env.MUSE_NO_MODIFY_PATH).toBe('0');
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it.skipIf(process.platform !== 'win32')(
     'prefers the Windows launcher over a same-named POSIX shim',
     () => {
@@ -523,6 +547,40 @@ describe('path-resolver CLI binary resolution', () => {
     expect(parts).toContain('/custom/login/bin');
     expect(parts).toContain(kimiDir);
   });
+
+  it.each(['/opt/homebrew', '/usr/local'])(
+    'F-1647: discovers keg-only Node/npm under %s without a login PATH',
+    (prefix) => {
+      const nodeBin = `${prefix}/opt/node@22/bin`;
+      const directory = fs.statSync(binDir);
+      const file = fs.statSync(executable);
+      file.mode |= 0o111;
+      const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+      // Virtual macOS filesystem: never create /usr/local or /opt on the host.
+      const stat = vi.spyOn(fs, 'statSync').mockImplementation((candidate) => {
+        const value = path.normalize(String(candidate));
+        if (value === path.normalize(nodeBin)) return directory;
+        if (['node', 'npm'].some(command => value === path.join(nodeBin, command))) return file;
+        throw Object.assign(new Error('missing fixture path'), { code: 'ENOENT' });
+      });
+      try {
+        const processPath = ['/usr/bin', '/bin'].join(path.delimiter);
+        const effectivePath = buildEffectivePath({ processPath, loginPath: '', home: tmp });
+        for (const command of ['node', 'npm']) {
+          expect(resolveCliBinary(command, { processPath, effectivePath, home: tmp })?.binPath)
+            .toBe(path.join(nodeBin, command));
+        }
+        // Discovery must not advertise a keg that is no longer installed.
+        stat.mockImplementation(() => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); });
+        const missingPath = buildEffectivePath({ processPath, loginPath: '', home: tmp });
+        expect(missingPath.split(path.delimiter)).not.toContain(nodeBin);
+        expect(resolveCliBinary('npm', { processPath, effectivePath: missingPath, home: tmp })).toBeNull();
+      } finally {
+        stat.mockRestore();
+        platform.mockRestore();
+      }
+    },
+  );
 
   it('probes the login shell asynchronously without blocking the main process', async () => {
     const value = await probeLoginShellPath(

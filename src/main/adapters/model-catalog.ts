@@ -164,12 +164,12 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       models: MIMO_CODE_MODEL_IDS.map(id => ({ id, availability: id.endsWith('ultraspeed') ? 'api-only' : 'paid', costTier: id.endsWith('ultraspeed') ? 'high' : 'low', source: 'bundled' })),
     },
     // MiniMax Code (`mcode`, Token Plan). O mais novo vem primeiro e é o
-    // padrão (regra do operador, 29/09): o M3.1 Flash Preview roda na
-    // assinatura dentro do MiniMax Code, sem preço por token.
+    // padrão (F-1649): GA substitui Preview. Oferta/entitlement continuam
+    // sendo da CLI/conta; não há preço por token ou benchmark novo aqui.
     'minimax-code': {
-      default: 'minimax/MiniMax-M3.1-Flash-Preview',
+      default: 'minimax/MiniMax-M3.1-Flash',
       models: [
-        { id: 'minimax/MiniMax-M3.1-Flash-Preview', availability: 'paid', costTier: 'low', source: 'bundled' },
+        { id: 'minimax/MiniMax-M3.1-Flash', availability: 'paid', costTier: 'low', source: 'bundled' },
         { id: 'minimax/MiniMax-M3', availability: 'paid', costTier: 'medium', source: 'bundled' },
         { id: 'minimax/MiniMax-M2.7-highspeed', availability: 'paid', costTier: 'low', source: 'bundled' },
         { id: 'minimax/MiniMax-M2.7', availability: 'paid', costTier: 'low', source: 'bundled' },
@@ -812,8 +812,9 @@ export function applyModelCatalogToAdapter(adapter: Adapter, catalog: ModelCatal
     if (!list.includes(entry.id)) list.push(entry.id);
   }
 
-  const requestedDefault = addsIds || (adapterCatalog.default && list.includes(adapterCatalog.default))
-    ? adapterCatalog.default ?? adapter.models.default
+  const catalogDefault = migrateModelId(adapterCatalog.default);
+  const requestedDefault = addsIds || (catalogDefault && list.includes(catalogDefault))
+    ? catalogDefault ?? adapter.models.default
     : adapter.models.default;
   const defaultInfo = modelCatalogInfo(catalog, adapter.id, requestedDefault);
   const defaultModel = isModelBlockedForAutoRouting(defaultInfo)

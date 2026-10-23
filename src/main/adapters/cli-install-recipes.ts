@@ -48,6 +48,7 @@
  */
 
 import { codexWindowsPrefixFits, codexWindowsShortPrefix } from './codex-windows-prefix';
+import { buildShellCommandFromArgv } from '../../shared/tui-agent-startup-shell';
 
 interface ArgvInstallRecipe {
   readonly kind: 'argv';
@@ -168,13 +169,17 @@ function brewCaskRecipe(cask: string): ArgvInstallRecipe {
 
 function scriptRecipe(
   scriptUrl: string,
-  options: { readonly automaticUpdate?: boolean } = {},
+  options: {
+    readonly automaticUpdate?: boolean;
+    readonly env?: Readonly<Record<string, string>>;
+  } = {},
 ): ScriptInstallRecipe {
   return Object.freeze({
     kind: 'script' as const,
     scriptUrl,
     runner: 'bash',
     runnerHint: BASH_HINT,
+    ...(options.env ? { env: Object.freeze({ ...options.env }) } : {}),
     ...(options.automaticUpdate ? { automaticUpdate: true } : {}),
   });
 }
@@ -306,7 +311,14 @@ const RECIPES: Readonly<Record<string, PlatformRecipes>> = Object.freeze({
     ],
   },
   muse: {
-    darwin: [brewCaskRecipe('muse-code')],
+    // F-1648: https://dev.meta.ai/docs/muse-code — official native installer,
+    // Intel/ARM, default ~/.local/bin/muse. No Node or Homebrew prerequisite.
+    darwin: [
+      scriptRecipe('https://dev.meta.ai/install.sh', {
+        env: { MUSE_LOGIN: '0', MUSE_NO_MODIFY_PATH: '1' },
+      }),
+      brewCaskRecipe('muse-code'),
+    ],
   },
 });
 
@@ -336,7 +348,12 @@ export function cliInstallCommandFor(
   if (recipe.kind === 'powershell-script') {
     return `irm ${recipe.scriptUrl} | iex`;
   }
-  return `curl -fsSL ${recipe.scriptUrl} | bash`;
+  const runner = recipe.env
+    ? buildShellCommandFromArgv([
+        'env', ...Object.entries(recipe.env).map(([key, value]) => `${key}=${value}`), 'bash',
+      ], 'posix')
+    : 'bash';
+  return `curl -fsSL ${recipe.scriptUrl} | ${runner}`;
 }
 
 /**
@@ -592,6 +609,18 @@ export function selectCliUpdateRecipe(input: CliUpdateRecipeInput): InstallRecip
         }], input.isRunnerResolvable);
       }
       continue;
+    }
+    if (candidate.kind === 'script' && input.adapterId === 'muse' && input.platform === 'darwin') {
+      // F-1648: the official installer owns this regular launcher and its
+      // versioned siblings. A cask symlink/custom destination is another channel.
+      if (!home || binPath !== `${home}/.local/bin/muse` || realPath !== binPath ||
+          (input.installationDistribution && input.installationDistribution !== 'curl-bash')) continue;
+      return selectInstallRecipe([{
+        ...candidate,
+        automaticUpdate: true,
+        // Pin the destination even if the parent has MUSE_INSTALL_DIR set.
+        env: { ...candidate.env, MUSE_INSTALL_DIR: `${home}/.local/bin` },
+      }], input.isRunnerResolvable);
     }
     if (candidate.kind === 'script' && input.adapterId === 'devin') {
       const marker = '/devin/cli/_versions/';
