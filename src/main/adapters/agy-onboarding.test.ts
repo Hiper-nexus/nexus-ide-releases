@@ -28,7 +28,7 @@ afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) fs.r
 const automatic = { source: 'pending', context: { role: 'worker', missionId: 'fixture-mission', allowedTools: null, allowedSkills: null } } as const;
 const operator = { source: 'direct-user', context: null } as const;
 
-describe('F-1642: real AGY checkout preparation', () => {
+describe('F-1645: real AGY checkout preparation', () => {
   it('projects only a completed onboarding record from the selected source, without conversations or other cache', () => {
     const { sourceHome, options } = fixture();
     write(sourceHome, stateFile, complete);
@@ -453,7 +453,7 @@ describe('F-1642: real AGY checkout preparation', () => {
   });
 });
 
-describe('F-1642: Main authority preflight contract', () => {
+describe('F-1645: Main authority preflight contract', () => {
   it('does not rely only on requiresSpawnGate for a worker with null allowlists', () => {
     expect(requiresAgyOnboardingProof(automatic)).toBe(true);
   });

@@ -888,7 +888,7 @@ export function prepareCheckoutProviderHome(
   }
   const spec = MANAGED_PROVIDER_SPECS[kind];
   const sharedFiles: string[] = [];
-  // F-1642: new preferences are local copies; proven legacy settings links stay.
+  // F-1645: new preferences are local copies; proven legacy settings links stay.
   // Reopening must not overwrite an explicit opt-out or a CLI atomic replacement.
   const consentReadPaths = kind === 'agy' ? projectAgyConsentState(sourceHome, providerHome) : [];
   // Explicit file allowlist: never project a native conversation directory.

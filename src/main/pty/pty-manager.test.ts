@@ -2240,7 +2240,7 @@ function completedAgyFixtureHome(root: string): string {
   return source;
 }
 
-describe('F-1642 AGY onboarding at physical spawn', () => {
+describe('F-1645 AGY onboarding at physical spawn', () => {
   it.each([
     { mode: 'worker pending', completed: false, direct: false, child: false, heal: false, denied: true },
     { mode: 'worker recorded consumer completion', completed: true, direct: false, child: false, heal: false, denied: false },
@@ -2326,6 +2326,14 @@ describe('F-1642 AGY onboarding at physical spawn', () => {
 });
 
 describe("AGY advisory native profile", () => {
+  // F-1645: worker de AGY só sobe com o onboarding da conta concluído no
+  // perfil nativo (fail-closed). Estes testes só rodam no macOS, por isso o
+  // ramo Windows nunca os viu tropeçar no cenário antigo, sem o registro.
+  const writeCompletedAgyOnboarding = (agySourceHome: string) => {
+    const file = path.join(agySourceHome, "antigravity-cli", "cache", "onboarding.json");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ onboardingComplete: true, consumerOnboardingComplete: true }));
+  };
   const macosIt = process.platform === "darwin" ? it : it.skip;
 
   macosIt(
@@ -2341,6 +2349,7 @@ describe("AGY advisory native profile", () => {
       const agyState = path.join(geminiHome, "antigravity-cli");
       const keychains = path.join(nativeHome, "Library", "Keychains");
       const nativeMcpConfig = path.join(agyState, "mcp_config.json");
+      writeCompletedAgyOnboarding(geminiHome);
       const binary = path.join(root, "bin", "agy");
       fs.mkdirSync(worktree, { recursive: true });
       fs.mkdirSync(isolatedElectronHome, { recursive: true });
@@ -2451,6 +2460,7 @@ describe("AGY advisory native profile", () => {
       fs.mkdirSync(nativeHome, { recursive: true });
       fs.mkdirSync(electronHome, { recursive: true });
       fs.mkdirSync(legacyGeminiHome, { recursive: true });
+      writeCompletedAgyOnboarding(legacyGeminiHome);
       const nativeUser = os.userInfo();
       const userInfoSpy = vi.spyOn(os, "userInfo").mockReturnValue({
         ...nativeUser,

@@ -13,7 +13,10 @@ const load = async () => import(pathToFileURL(helper).href);
 const temporaryRoots = [];
 afterEach(async () => { for (const root of temporaryRoots.splice(0)) await fs.rm(root, { recursive: true, force: true }); });
 async function temporary() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'nexus-rea-helper-'));
+  // O helper recusa caminho com link no meio (unsafe_path), de propósito. No
+  // macOS o tmpdir é /var/folders/…, e /var é link para /private/var: sem o
+  // realpath os testes de arquivo falhavam em todo Mac, e só no Mac.
+  const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'nexus-rea-helper-'));
   temporaryRoots.push(root);
   return root;
 }

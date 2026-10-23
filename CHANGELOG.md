@@ -1,8 +1,32 @@
 # Changelog
 
-## 0.76.417 — Windows: missões e agentes prontos para trabalhar
+## 0.76.419 — A conta em uso abre sem pedir login
 
-Candidata Windows x64 com a base funcional 0.76.413/414 e as correções do PR #160. Assinatura e publicação são etapas de validação separadas, não presumidas por estas notas.
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions. É a mesma árvore da 0.76.417, com só a versão deste pacote Linux.
+
+A 0.76.417 é o rascunho macOS (DMG, ZIP arm64 e recibos) na canônica e no espelho; esta release não toma a marca Latest, não anexa arquivos Linux a ela e não mexe no DMG. A tag v0.76.418 não está na main, não é publicada e não é movida. No espelho, a 0.76.413, a 0.76.410, a 0.76.408, a 0.76.407 e a 0.76.396 continuam com Setup, nupkg ou RELEASES; esta release não anexa arquivos Linux a elas nem mexe nesses arquivos. A 0.76.414 é o pacote Linux anterior.
+
+No desktop Linux, em relação à 0.76.414:
+
+- **A conta Claude em uso abre.** Quando só o relógio venceu o access token e o refresh token está no prazo, o pane abre e a CLI dele renova. Antes o spawn morria com "A sessão expirou" enquanto o painel mostrava a mesma conta conectada. Conta só no cofre (Reserva) renova no spawn, e uma renovação já em andamento é esperada em vez de recusada (F-1642).
+- **Login só com prova, e com um clique.** Quando a CLI recusa a sessão ou não há refresh token no prazo, a linha da conta mostra "sessão expirada" e o cartão "Não subiu" oferece «Entrar novamente» nessa conta. Recusa sem prova não ganha botão (F-1642).
+- **Ponytail 5.3.2** no contrato do worker, na skill de todo pane e no lembrete do "+ Pane". O lembrete sai também sem o Jev, só para pedido de código, e respeita "stop ponytail" até "start ponytail".
+- **Skills embutidas atualizadas, sem pré-aprovar ferramenta.** impeccable 4.7.0, superpowers 7.0.1 e bmad-templates v6.12.4. O `allowed-tools` do frontmatter é podado na cópia que chega ao pane.
+- **Missões sem Git usam a pasta que já existe** e o Nexus não cria repositório nem commit sozinho (F-1629). A escolha automática da conta continua automática no layout e no failover (F-1630).
+- **Grok deixa a própria CLI renovar** uma sessão OIDC antiga, completa e coordenável. Credencial revogada e identidade ambígua continuam recusadas (F-1636).
+- **AGY e Codex.** O AGY transporta o onboarding já feito da conta, sem aceitar termos nem telemetria no lugar da pessoa (F-1645). O Codex projeta a confiança já autorizada só no perfil privado e, na CLI 0.163.0, não mostra o convite Daybreak numa sessão nova ordinária (F-1643/F-1644).
+- **Kits, captura e REA.** A trava de instalação do kit é por raiz do monorepo, o UTF-8 entre chunks é preservado e a exclusividade só solta com prova de que o processo acabou. Captura ausente ou incompleta não aprova a entrega visual (F-1639). Pedido de engenharia reversa recebe a skill REA.
+
+O resto do desktop é o da 0.76.414.
+
+## 0.76.417 — Conta em uso sem login à toa e Windows integrado
+
+Mesma base para macOS arm64, Windows x64 e Linux x64: a main com os PRs #160 (Windows), #164 (ponytail 5.3.2), #165 (login da conta Claude) e #166 (impeccable 4.7.0, superpowers 7.0.1, bmad). Cada pacote sai na própria etapa: o macOS é compilado e notarizado neste Mac; Windows (assinatura YubiKey) e Linux têm etapas separadas, não presumidas por estas notas.
+
+- **O pane Claude da conta em uso abre** quando só o relógio venceu o access token e o refresh token está no prazo; a CLI do pane renova. Antes ele morria com "A sessão de “conta b” expirou" enquanto o painel mostrava a mesma conta "conectado". Conta só no cofre (Reserva) renova no spawn, e uma renovação já em andamento é esperada em vez de recusada (F-1642).
+- **Login só com prova, e com um clique.** Quando a CLI recusa a sessão ou não há refresh token no prazo, a linha da conta mostra "sessão expirada" e o cartão "Não subiu" do pane oferece «Entrar novamente em “conta”», pelo mesmo fluxo do painel. Recusa sem prova pede para tentar de novo, sem botão (F-1642).
+- **Ponytail 5.3.2** no contrato do worker, na skill de todo pane e no lembrete do "+ Pane", que agora sai também sem o Jev (só para pedido de código) e respeita "stop ponytail" / "modo normal" até "start ponytail".
+- **Skills embutidas atualizadas**: impeccable 4.7.0, superpowers 7.0.1 e bmad-templates v6.12.4. Skill embutida não pré-aprova ferramenta no pane: o `allowed-tools` do frontmatter é podado na origem.
 
 - Missões em pastas sem Git ou sem primeiro commit usam a pasta existente, sem criar Git/commits implicitamente (F-1629).
 - A origem automática ou explícita da escolha da conta é preservada no layout e no failover (F-1630).
@@ -10,7 +34,7 @@ Candidata Windows x64 com a base funcional 0.76.413/414 e as correções do PR #
 - Kits: licença BoardUI no perfil Windows correto; trava por raiz de instalação do monorepo; UTF-8 entre chunks; exclusividade retida quando não há prova de fim físico do processo (F-1635/F-1637/F-1638/F-1641).
 - Captura ausente/incompleta não aprova a entrega visual (F-1639).
 - REA selecionada automaticamente para pedidos de engenharia reversa. Análise estática JS/Electron no Windows x64 requer runtime revisado separado; motores nativos opcionais não estão incluídos. O ambiente privado retido é informado, nunca descrito como removido.
-- AGY transporta o registro real de onboarding da mesma conta, preserva opt-out/configuração local e sinaliza pendência antes de automissões; nenhum aceite de termos ou telemetria é fabricado (F-1642).
+- AGY transporta o registro real de onboarding da mesma conta, preserva opt-out/configuração local e sinaliza pendência antes de automissões; nenhum aceite de termos ou telemetria é fabricado (F-1645).
 - Codex projeta a confiança já autorizada somente no perfil privado. CLI 0.163.0 em sessão nova ordinária desativa o convite Daybreak; recusas explícitas, preferências, modelos, perfis e retomadas permanecem preservados (F-1643/F-1644). O modal autenticado não foi reproduzido.
 
 Limites: computer use universal continua em branch separada, fora deste pacote. O operador dispensou somente a prova instalada N→N+1 desta entrega, por ausência de VM/Sandbox e para preservar o Nexus em uso; `installedUpgradeVerified` permanece falso. Smoke do pacote, testes e assinatura YubiKey continuam obrigatórios.
