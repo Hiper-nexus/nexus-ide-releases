@@ -204,6 +204,13 @@ export interface BrowserEntry {
   /** Exact main-owned URL fence for an automated read-only design review. */
   exactNavigationLock?: string;
   restoringExactNavigation: boolean;
+  /**
+   * O primeiro documento principal já commitou, então existe RenderWidgetHostView.
+   * `enableDeviceEmulation` do Electron 43.8.3 faz
+   * `frame_host->GetView()->GetRenderWidgetHost()` sem checar o `GetView()` e
+   * mata o Main (SIGSEGV em null+0xf8) num WebContents recém-criado e escondido.
+   */
+  renderViewReady: boolean;
   /** Isolated internal relay leases; no production CDP transport is registered. */
   cdpReleases?: Set<() => void>;
   allowedPrivateTargets: Map<string, Set<string>>;
@@ -295,17 +302,27 @@ function applyBrowserDeviceEmulation(
     }
     wc.setUserAgent(tablet ? TABLET_EMULATION_USER_AGENT : MOBILE_EMULATION_USER_AGENT);
     const emulatedHeight = tablet ? TABLET_EMULATION_HEIGHT : MOBILE_EMULATION_HEIGHT;
-    wc.enableDeviceEmulation({
-      screenPosition: 'mobile',
-      screenSize: { width: width as number, height: emulatedHeight },
-      viewPosition: { x: 0, y: 0 },
-      viewSize: { width: width as number, height: emulatedHeight },
-      deviceScaleFactor: 0,
-      scale: 1,
-    });
     entry.emulatedViewport = { width: width as number, height: emulatedHeight };
+    // As métricas são do widget do documento: sem RenderWidgetHostView (pane
+    // nascido agora, nenhum commit) o nativo do Electron desreferencia null.
+    // A UA acima já vale para o primeiro request; o viewport entra no commit,
+    // pelo `did-navigate`, que reaplica `entry.emulatedViewport`.
+    if (entry.renderViewReady) {
+      wc.enableDeviceEmulation({
+        screenPosition: 'mobile',
+        screenSize: { width: width as number, height: emulatedHeight },
+        viewPosition: { x: 0, y: 0 },
+        viewSize: { width: width as number, height: emulatedHeight },
+        deviceScaleFactor: 0,
+        scale: 1,
+      });
+    }
   } else {
-    wc.disableDeviceEmulation();
+    // Mesma cerca do enable: desligar num widget que ainda não existe também
+    // desreferencia o frame host sem view.
+    if (entry.renderViewReady) {
+      wc.disableDeviceEmulation();
+    }
     entry.emulatedViewport = undefined;
     const original = originalUserAgents.get(key);
     if (original) {
@@ -962,6 +979,7 @@ async function createEntry(
     resolveHostname,
     networkProxy,
     restoringExactNavigation: false,
+    renderViewReady: false,
     navSeq: 0,
     loadGeneration: 0,
     loadsInFlight: 0,
@@ -1037,6 +1055,11 @@ async function createEntry(
   wc.on('did-navigate', (_event, url) => {
     entry.url = url;
     entry.lastNewDocNavSeq = entry.navSeq;
+    // O commit prova que o RenderWidgetHostView existe; a partir daqui a
+    // emulação pode chamar o nativo com segurança. Uma emulação pedida antes
+    // do primeiro documento (nexus_browser_open com `device`) é pendente e
+    // entra agora, no mesmo caminho que reaplica a cada navegação.
+    entry.renderViewReady = true;
     // A emulação de dispositivo é do widget do documento: o Chromium troca o
     // RenderFrameHost a cada navegação de documento e a página nova nascia no
     // layout desktop (smoke 28/09: "mobile" de 390 media viewport 989 e o

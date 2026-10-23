@@ -313,6 +313,17 @@ async function boot(): Promise<void> {
   await ensureBrowser(state.owner as never, scope, PANE);
 }
 
+/**
+ * Pane que já commitou um documento — o estado de um pane real com página
+ * aberta. O `getURL()` do fixture já devolve a página; sem o `did-navigate`
+ * o Main não teria prova do RenderWidgetHostView e a emulação de device
+ * ficaria (corretamente) pendente.
+ */
+async function bootCommitted(url = 'https://example.test/app'): Promise<void> {
+  await boot();
+  fire('did-navigate', {}, url);
+}
+
 describe('browser manager actions (after/changed, errors, judge, text)', () => {
   it('captures only a scoped masked copy and rejects navigation or mask movement', async () => {
     await boot();
@@ -1334,12 +1345,20 @@ describe('loadBrowser device emulation', () => {
     state.guest.removeListener.mockImplementation(() => state.guest);
   });
 
-  it('emulates the mobile breakpoint before navigating, reusing the real UA/viewport', async () => {
+  it('sets the device UA before navigating but only touches the native emulation after the first document commits', async () => {
+    // Electron 43.8.3: `WebContents::EnableDeviceEmulation` faz
+    // `frame_host->GetView()->GetRenderWidgetHost()` sem checar o GetView().
+    // Num pane recém-criado (vista escondida, nenhum documento) o GetView() é
+    // null e o Main morre com SIGSEGV em null+0xf8 — foi o crash de 23/10 no
+    // `nexus_browser_open` com device. A UA não depende de render view e pode
+    // ir antes; as métricas entram no commit, quando o widget existe.
     await boot();
     await loadBrowser(PANE, 'https://example.test/app', { scope, device: 'mobile' });
     expect(state.guest.setUserAgent).toHaveBeenCalledWith(
       expect.stringContaining('iPhone'),
     );
+    expect(state.guest.enableDeviceEmulation).not.toHaveBeenCalled();
+    fire('did-navigate', {}, 'https://example.test/app');
     expect(state.guest.enableDeviceEmulation).toHaveBeenCalledWith(
       expect.objectContaining({ viewSize: { width: 390, height: 844 } }),
     );
@@ -1384,6 +1403,8 @@ describe('loadBrowser device emulation', () => {
     expect(state.guest.setUserAgent).toHaveBeenCalledWith(
       expect.stringContaining('iPad'),
     );
+    expect(state.guest.enableDeviceEmulation).not.toHaveBeenCalled();
+    fire('did-navigate', {}, 'https://example.test/app');
     expect(state.guest.enableDeviceEmulation).toHaveBeenCalledWith(
       expect.objectContaining({ viewSize: { width: 800, height: 1366 } }),
     );
@@ -1393,9 +1414,23 @@ describe('loadBrowser device emulation', () => {
   it('desktop disables emulation and restores the original UA', async () => {
     await boot();
     await loadBrowser(PANE, 'https://example.test/mobile', { scope, device: 'mobile' });
+    fire('did-navigate', {}, 'https://example.test/mobile');
     await loadBrowser(PANE, 'https://example.test/desktop', { scope, device: 'desktop' });
     expect(state.guest.disableDeviceEmulation).toHaveBeenCalledOnce();
     expect(state.guest.setUserAgent).toHaveBeenLastCalledWith('desktop-ua');
+    destroyBrowser(PANE, scope);
+  });
+
+  it('never calls the native emulation on a pane that has not committed a document', async () => {
+    // Regressão do crash de 23/10: o turno do agente abriu o pane com
+    // `nexus_browser_open({device:'mobile'})` e o Main morreu antes do
+    // primeiro load. O contrato aqui é o inverso: sem commit, nem enable nem
+    // disable chegam ao WebContents.
+    await boot();
+    await loadBrowser(PANE, 'https://example.test/mobile', { scope, device: 'mobile' });
+    await loadBrowser(PANE, 'https://example.test/desktop', { scope, device: 'desktop' });
+    expect(state.guest.enableDeviceEmulation).not.toHaveBeenCalled();
+    expect(state.guest.disableDeviceEmulation).not.toHaveBeenCalled();
     destroyBrowser(PANE, scope);
   });
 
@@ -1497,7 +1532,7 @@ describe('analyzeBrowserResponsive (nexus_browser_responsive)', () => {
   });
 
   it('captures and audits mobile/tablet/desktop, then restores the native device and page', async () => {
-    await boot();
+    await bootCommitted();
     const result = await analyzeBrowserResponsive(PANE, scope);
     expect(result.breakpoints.map((b) => b.device)).toEqual(['mobile', 'tablet', 'desktop']);
     expect(result.breakpoints[0]).toMatchObject({ audit: AUDIT });
@@ -1536,7 +1571,7 @@ describe('analyzeBrowserResponsive (nexus_browser_responsive)', () => {
   });
 
   it('restores the operator\'s own mobile preview after the run', async () => {
-    await boot();
+    await bootCommitted();
     await loadBrowser(PANE, 'https://example.test/app', { scope, device: 'mobile' });
     vi.mocked(state.guest.enableDeviceEmulation).mockClear();
     await analyzeBrowserResponsive(PANE, scope, { devices: ['desktop'] });
@@ -1547,7 +1582,7 @@ describe('analyzeBrowserResponsive (nexus_browser_responsive)', () => {
   });
 
   it('restores the original state even when a breakpoint fails', async () => {
-    await boot();
+    await bootCommitted();
     let audits = 0;
     state.runAutomation.mockImplementation(async (_p, _wc, command: string) => {
       if (command !== 'layout_audit') throw new Error('unexpected');
@@ -1575,7 +1610,7 @@ describe('analyzeBrowserResponsive (nexus_browser_responsive)', () => {
   };
 
   it('does not reload the page after authority is revoked mid-run (device still restored)', async () => {
-    await boot();
+    await bootCommitted();
     let revoked = false;
     auditThen(() => { revoked = true; });
     await expect(analyzeBrowserResponsive(PANE, scope, {
@@ -1673,7 +1708,7 @@ describe('analyzeBrowserResponsive (nexus_browser_responsive)', () => {
   });
 
   it('does not reload over a click-through navigation that aborted the breakpoint load (ERR_ABORTED)', async () => {
-    await boot();
+    await bootCommitted();
     state.guest.loadURL.mockImplementationOnce(async () => {
       // The operator clicks a link while our load is in flight: Chromium
       // aborts ours and starts theirs.
